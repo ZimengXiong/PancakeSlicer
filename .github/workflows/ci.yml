@@ -14,6 +14,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      engine: ${{ steps.filter.outputs.engine }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            engine:
+              - 'engine/**'
+              - '.github/scripts/build/**'
+              - '.github/workflows/ci.yml'
+
   web:
     name: Web (tsc + build)
     runs-on: ubuntu-latest
@@ -56,6 +74,8 @@ jobs:
 
   engine:
     name: Engine (Linux Release + test slice)
+    needs: changes
+    if: needs.changes.outputs.engine == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 300
     permissions:
@@ -63,6 +83,7 @@ jobs:
     env:
       CMAKE_POLICY_VERSION_MINIMUM: '3.10'
       CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPILERCHECK: content   # the weekly runner image refresh keeps the compiler cache
       CCACHE_SLOPPINESS: pch_defines,time_macros,include_file_mtime,include_file_ctime
     steps:
       - uses: actions/checkout@v7
