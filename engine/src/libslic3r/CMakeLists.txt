@@ -833,6 +833,7 @@ target_include_directories(libslic3r SYSTEM PUBLIC ${OpenCASCADE_INCLUDE_DIR})
 find_package(JPEG REQUIRED)
 find_package(Draco REQUIRED)
 
+# deps/OCCT/OCCT.cmake builds exactly these toolkits; keep its _occt_toolkits list in step.
 set(OCCT_LIBS
     TKDESTEP
     TKDE
@@ -863,11 +864,21 @@ if (SLIC3R_CAD)
     if (NOT TARGET TKFillet)
         message(FATAL_ERROR
             "SLIC3R_CAD is ON, but the OpenCASCADE in ${CMAKE_PREFIX_PATH} was built without "
-            "BUILD_MODULE_ModelingAlgorithms. Rebuild the dependencies with -DSLIC3R_CAD=ON, "
+            "the TKFillet toolkit. Rebuild the dependencies with -DSLIC3R_CAD=ON, "
             "or configure this project with -DSLIC3R_CAD=OFF.")
     endif ()
 endif ()
 set(OCCT_LIBS "${OCCT_LIBS}" CACHE INTERNAL "OCCT toolkits linked by libslic3r")
+# OCCT built with BUILD_USE_PCH exports the precompiled headers of TKernel, TKMath, TKBRep
+# and TKBool to consumers, so CMake would merge them into libslic3r's own precompiled header
+# (pulling <windows.h> into every libslic3r source on Windows). They only speed up OCCT's
+# own build; keep them out of ours. OpenCASCADE_LIBRARIES lists every installed toolkit, so
+# this also covers toolkits reached only through another toolkit's link interface.
+foreach (_occt_lib IN LISTS OpenCASCADE_LIBRARIES OCCT_LIBS)
+    if (TARGET ${_occt_lib})
+        set_property(TARGET ${_occt_lib} PROPERTY INTERFACE_PRECOMPILE_HEADERS "")
+    endif ()
+endforeach ()
 if (WIN32)
     get_target_property(_occt_configs TKernel IMPORTED_CONFIGURATIONS)
     list(GET _occt_configs 0 _occt_fallback)
