@@ -179,7 +179,7 @@ def main():
         asset.unlink()
     print(f'Removed {duplicate_bytes} duplicated profile-asset bytes; served from bundled resources')
     server = engine / ('orca-webapp-server' + suffix)
-    env = {**os.environ, 'CGO_ENABLED': '0'}
+    env = {**os.environ, 'CGO_ENABLED': '0', 'GOARCH': {'x64': 'amd64', 'arm64': 'arm64'}[args.arch]}
     run('go', 'build', '-trimpath', '-mod=vendor', '-ldflags',
         f'-s -w -X main.buildRevision={revision} -X main.buildImage=pancakeslicer-desktop-{args.os}-{args.arch}',
         '-o', server, '.', cwd=ROOT / 'server', env=env)

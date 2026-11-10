@@ -45,7 +45,7 @@ jobs:
           TARGETS: ${{ inputs.targets }}
         run: |
           all='[{"target":"mac-arm64","os":"mac","arch":"arm64","runner":"macos-15","ext":"dmg"},
-                {"target":"mac-x64","os":"mac","arch":"x64","runner":"macos-15-intel","ext":"dmg"},
+                {"target":"mac-x64","os":"mac","arch":"x64","runner":"macos-15","ext":"dmg"},
                 {"target":"win-x64","os":"win","arch":"x64","runner":"windows-2025","ext":"exe"},
                 {"target":"linux-x64","os":"linux","arch":"x64","runner":"ubuntu-24.04","ext":"AppImage"}]'
           echo "matrix=$(jq -c --arg t "$TARGETS" '($t | split(" ") | map(select(. != ""))) as $w | map(select(($w | length) == 0 or (.target | IN($w[]))))' <<<"$all")" >> "$GITHUB_OUTPUT"
@@ -118,6 +118,9 @@ jobs:
       - name: Install build tools (macOS)
         if: runner.os == 'macOS'
         run: brew install automake texinfo libtool pkgconf nasm ninja xz ccache
+      - name: Check Rosetta (mac-x64 is cross-compiled on arm64 and qualified under Rosetta)
+        if: matrix.target == 'mac-x64'
+        run: arch -x86_64 /usr/bin/true || sudo softwareupdate --install-rosetta --agree-to-license
       - name: Install build tools (Linux)
         if: runner.os == 'Linux'
         run: |
