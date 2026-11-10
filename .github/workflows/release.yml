@@ -138,7 +138,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          choco install nasm ninja --no-progress -y
+          choco install nasm ninja ccache --no-progress -y
           'C:\Program Files\NASM' >> $env:GITHUB_PATH
 
       - name: Name the prebuilt assets
@@ -171,7 +171,7 @@ jobs:
           .github/scripts/build/prebuilt.sh publish "${{ steps.keys.outputs.deps }}" engine/deps/build OrcaSlicer_dep
 
       - name: Restore compiler cache
-        if: runner.os != 'Windows' && steps.engine.outputs.hit != 'true'
+        if: steps.engine.outputs.hit != 'true'
         id: ccache
         uses: actions/cache/restore@v6
         with:
