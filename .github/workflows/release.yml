@@ -81,7 +81,6 @@ jobs:
     timeout-minutes: 300
     permissions:
       contents: write
-      packages: write
     env:
       CMAKE_POLICY_VERSION_MINIMUM: '3.10'
       CMAKE_BUILD_PARALLEL_LEVEL: '4'   # FFmpeg's make otherwise runs unbounded -j and exhausts macOS process slots
@@ -257,11 +256,37 @@ jobs:
           done
           if [ ${#missing[@]} -gt 0 ]; then gh release upload "$TAG" "${missing[@]}"; fi
 
-      - name: Build Docker image
+      - name: Hand the Linux payload to the Docker job
         if: matrix.target == 'linux-x64'
         run: |
           cp desktop/build/source.tar.gz desktop/build/engine-linux-x64/source.tar.gz 2>/dev/null || git archive --format=tar.gz -o desktop/build/engine-linux-x64/source.tar.gz HEAD
           chmod 0644 desktop/build/engine-linux-x64/source.tar.gz
+          tar -cf docker-context.tar -C desktop/build engine-linux-x64 web   # tar keeps the payload's file modes
+      - name: Upload the Linux payload
+        if: matrix.target == 'linux-x64'
+        uses: actions/upload-artifact@v7
+        with:
+          name: docker-context
+          path: docker-context.tar
+          retention-days: 3
+
+  docker:
+    name: Docker image
+    needs: [release, desktop]
+    if: ${{ !cancelled() && contains(needs.release.outputs.matrix, 'linux-x64') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          name: docker-context
+      - name: Build and test Docker image
+        run: |
+          mkdir -p desktop/build && tar -xf docker-context.tar -C desktop/build
           printf '**\n!engine-linux-x64/\n!engine-linux-x64/**\n!web/\n!web/**\n' > desktop/build/.dockerignore
           docker build --file deploy/Dockerfile --build-arg VERSION="${TAG#v}" --build-arg REVISION="$GITHUB_SHA" \
             --build-arg SOURCE_SHA256="$(sha256sum desktop/build/engine-linux-x64/source.tar.gz | cut -d' ' -f1)" \
@@ -271,7 +296,7 @@ jobs:
           sh deploy/test.sh http://127.0.0.1:8080
           docker rm -f test
       - name: Push Docker image
-        if: matrix.target == 'linux-x64' && env.PUBLISH == 'true'
+        if: env.PUBLISH == 'true'
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
