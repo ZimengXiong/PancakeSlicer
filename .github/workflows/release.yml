@@ -115,13 +115,6 @@ jobs:
       - name: Read engine source identity
         run: python -c "import json; print('git_commit_hash=' + json.load(open('engine/scripts/engine-source.json'))['engine_source_sha'])" >> "$GITHUB_ENV"
 
-      - name: Restore compiled engine
-        id: tool
-        uses: actions/cache/restore@v6
-        with:
-          path: build-native/tool
-          key: tool-v2-${{ matrix.runner }}-${{ matrix.arch }}-${{ hashFiles('engine/src/**', 'engine/tests/fff_print/**', 'engine/deps/**', 'engine/deps_src/**', 'engine/cmake/**', 'engine/CMakeLists.txt') }}
-
       - name: Install build tools (macOS)
         if: runner.os == 'macOS'
         run: brew install automake texinfo libtool pkgconf nasm ninja xz ccache
@@ -139,55 +132,43 @@ jobs:
         with:
           arch: x64
       - name: Install build tools (Windows)
-        if: runner.os == 'Windows' && steps.tool.outputs.cache-hit != 'true'
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           choco install nasm ninja --no-progress -y
           'C:\Program Files\NASM' >> $env:GITHUB_PATH
 
-      - name: Restore native dependencies
-        id: deps
-        uses: actions/cache/restore@v6
-        with:
-          path: engine/deps/build/OrcaSlicer_dep
-          key: native-v3-${{ matrix.runner }}-${{ matrix.arch }}-${{ hashFiles('engine/deps/**', 'engine/deps_src/**') }}
-          restore-keys: native-v3-${{ matrix.runner }}-${{ matrix.arch }}-
-      - name: Build native dependencies
-        if: steps.deps.outputs.cache-matched-key == ''
+      - name: Name the prebuilt assets
+        id: keys
+        run: .github/scripts/build/keys.sh ${{ matrix.target }} ${{ matrix.os }}
+      - name: Fetch the compiled engine
+        id: engine
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          case "${{ matrix.os }}" in
-            mac) cmake -S engine/deps -B engine/deps/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-                   -DCMAKE_OSX_ARCHITECTURES=$([ "${{ matrix.arch }}" = x64 ] && echo x86_64 || echo arm64) -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
-                   '-DCMAKE_IGNORE_PREFIX_PATH=/opt/local;/usr/local;/opt/homebrew' -DSLIC3R_CAD=OFF -DSLIC3R_GUI=OFF ;;
-            win) cmake -S engine/deps -B engine/deps/build -G 'Visual Studio 18 2026' -A x64 -DDEPS_ARCH=x64 -DCMAKE_BUILD_TYPE=Release \
-                   -DSLIC3R_CAD=OFF -DSLIC3R_GUI=OFF ;;
-            linux) cmake -S engine/deps -B engine/deps/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSLIC3R_CAD=OFF -DSLIC3R_GUI=OFF ;;
-          esac
-          # The deps target also builds wxWidgets and wxInspector, which only the desktop GUI uses: wxWidgets needs GTK on
-          # Linux and its macOS patch no longer applies. Build the headless engine's dependencies that exist on this platform.
-          if [ "${{ matrix.os }}" = win ]; then
-            export PATH="/c/Strawberry/perl/bin:$PATH"   # OpenSSL's configure rejects Git Bash's Cygwin Perl
-            has() { [ -f "engine/deps/build/$1.vcxproj" ]; }
-          else
-            has() { ninja -C engine/deps/build -t targets all | grep -q "^$1:"; }
-          fi
-          targets=()
-          for t in dep_Boost dep_TBB dep_OpenSSL dep_CURL dep_Cereal dep_Draco dep_NLopt dep_OpenVDB dep_SLVS dep_OpenCV dep_Eigen \
-                   dep_CGAL dep_GLFW dep_OCCT dep_FREETYPE dep_PNG dep_JPEG dep_ZLIB dep_EXPAT dep_libnoise dep_python3 dep_FFMPEG \
-                   dep_Assimp dep_DataChannel dep_Qhull; do
-            if has "$t"; then targets+=("$t"); fi
-          done
-          echo "Building: ${targets[*]}"
-          cmake --build engine/deps/build --config Release --target "${targets[@]}" --parallel 4
-      - name: Cache native dependencies
-        if: steps.deps.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: engine/deps/build/OrcaSlicer_dep
-          key: ${{ steps.deps.outputs.cache-primary-key }}
+          rc=0; .github/scripts/build/prebuilt.sh fetch "${{ steps.keys.outputs.engine }}" build-native/tool || rc=$?
+          case $rc in 0) echo "hit=true" >> "$GITHUB_OUTPUT" ;; 3) echo "hit=false" >> "$GITHUB_OUTPUT" ;; *) exit $rc ;; esac
+      - name: Fetch native dependencies
+        id: deps   # packaging bundles libraries and notices from the prefix, so it is needed even with a prebuilt engine
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          rc=0; .github/scripts/build/prebuilt.sh fetch "${{ steps.keys.outputs.deps }}" engine/deps/build || rc=$?
+          case $rc in 0) echo "hit=true" >> "$GITHUB_OUTPUT" ;; 3) echo "hit=false" >> "$GITHUB_OUTPUT" ;; *) exit $rc ;; esac
+      - name: Build native dependencies
+        if: steps.deps.outputs.hit == 'false'
+        run: .github/scripts/build/deps.sh ${{ matrix.os }} ${{ matrix.arch }}
+      - name: Check and publish native dependencies
+        if: steps.deps.outputs.hit == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Publish only a prefix the engine configures against.
+          .github/scripts/build/engine.sh ${{ matrix.os }} ${{ matrix.arch }} --configure-only
+          .github/scripts/build/prebuilt.sh publish "${{ steps.keys.outputs.deps }}" engine/deps/build OrcaSlicer_dep
 
       - name: Restore compiler cache
-        if: runner.os != 'Windows' && steps.tool.outputs.cache-hit != 'true'
+        if: runner.os != 'Windows' && steps.engine.outputs.hit != 'true'
         id: ccache
         uses: actions/cache/restore@v6
         with:
@@ -195,37 +176,19 @@ jobs:
           key: ccache-v2-${{ matrix.runner }}-${{ matrix.arch }}-${{ github.run_id }}
           restore-keys: ccache-v2-${{ matrix.runner }}-${{ matrix.arch }}-
       - name: Build Release engine
-        if: steps.tool.outputs.cache-hit != 'true'
-        run: |
-          common=(-DCMAKE_BUILD_TYPE=Release -DSLIC3R_GUI=OFF -DSLIC3R_CAD=OFF -DBUILD_TESTS=ON -DDEP_BUILD_DIR="$GITHUB_WORKSPACE/engine/deps/build")
-          case "${{ matrix.os }}" in
-            mac) ccache --max-size=1500M
-                 cmake -S engine -B build-native -G 'Ninja Multi-Config' "${common[@]}" \
-                   -DCMAKE_OSX_ARCHITECTURES=$([ "${{ matrix.arch }}" = x64 ] && echo x86_64 || echo arm64) -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 \
-                   '-DCMAKE_IGNORE_PREFIX_PATH=/opt/local;/usr/local;/opt/homebrew' -DLIBLZMA_INCLUDE_DIR="$(brew --prefix xz)/include" \
-                   -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache ;;
-            win) cmake -S engine -B build-native -G 'Visual Studio 18 2026' -A x64 "${common[@]}" ;;
-            linux) ccache --max-size=1500M
-                 cmake -S engine -B build-native -G 'Ninja Multi-Config' "${common[@]}" \
-                   -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache ;;
-          esac
-          cmake --build build-native --config Release --target nonplanar_slice_tool --parallel 4
-          mkdir -p build-native/tool
-          # macOS links the tool as an .app bundle; take the executable itself.
-          find build-native/tests/fff_print -path '*Release*' -type f \( -name nonplanar_slice_tool -o -name nonplanar_slice_tool.exe \) -exec cp {} build-native/tool/ \;
-          ls -la build-native/tool
+        if: steps.engine.outputs.hit != 'true'
+        run: .github/scripts/build/engine.sh ${{ matrix.os }} ${{ matrix.arch }}
       - name: Save compiler cache
         if: always() && steps.ccache.outcome == 'success'
         uses: actions/cache/save@v6
         with:
           path: .ccache
           key: ${{ steps.ccache.outputs.cache-primary-key }}
-      - name: Cache compiled engine
-        if: steps.tool.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: build-native/tool
-          key: ${{ steps.tool.outputs.cache-primary-key }}
+      - name: Publish the compiled engine
+        if: steps.engine.outputs.hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/build/prebuilt.sh publish "${{ steps.keys.outputs.engine }}" build-native/tool .
 
       - name: Fetch the audited Linux engine reference
         env:
