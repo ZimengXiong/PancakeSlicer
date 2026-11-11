@@ -92,6 +92,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', () => {
     if (!win) return;
     if (win.isMinimized()) win.restore();
+    win.show();
     win.focus();
   });
   app.whenReady().then(start).catch((e) => fail(String(e?.stack ?? e)));
@@ -228,12 +229,14 @@ async function startServer(): Promise<string> {
   throw new Error(lastError);
 }
 
-function stopServer() {
+function stopServer(): Promise<void> {
   const child = server;
   server = null;
-  if (!child || child.exitCode !== null) return;
+  if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
   child.kill('SIGTERM');
-  setTimeout(() => { if (child.exitCode === null) child.kill('SIGKILL'); }, 3000).unref();
+  const timer = setTimeout(() => { if (child.exitCode === null) child.kill('SIGKILL'); }, 3000);
+  return exited.finally(() => clearTimeout(timer));
 }
 
 function fail(message: string) {
@@ -419,7 +422,8 @@ async function start() {
   win.on('close', (e) => {
     if (quitReady) return;
     e.preventDefault();
-    void prepareQuit();
+    if (MAC && !closing) win?.hide();
+    else void prepareQuit();
   });
   win.on('closed', () => { win = null; });
   const contents = win.webContents;
@@ -449,27 +453,35 @@ async function start() {
 }
 
 app.on('window-all-closed', () => app.quit());
+app.on('activate', () => { if (win && !closing) { win.show(); win.focus(); } });
 app.on('before-quit', (e) => {
   if (quitReady) { quitting = true; return; }
   e.preventDefault();
   void prepareQuit();
 });
-app.on('will-quit', stopServer);
-process.on('exit', stopServer);
+app.on('will-quit', () => void stopServer());
+process.on('exit', () => void stopServer());
 process.on('SIGTERM', () => app.quit());
 process.on('SIGINT', () => app.quit());
 
 
+let closingSince = 0;
+
 async function prepareQuit() {
-  if (closing) return;
+  if (closing) {
+    if (Date.now() - closingSince > 2000) { await stopServer(); app.exit(0); }
+    return;
+  }
   closing = true;
+  closingSince = Date.now();
   quitting = true;
   win?.setEnabled(false);
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const flush = async () => {
-      if (win && !win.webContents.isDestroyed())
-        await win.webContents.executeJavaScript('window.orcaDesktop?.flushBeforeClose?.()');
+      const contents = win?.webContents;
+      if (origin && contents && !contents.isDestroyed() && !contents.isCrashed() && contents.getURL().startsWith(origin))
+        await contents.executeJavaScript('window.orcaDesktop?.flushBeforeClose?.()');
       await projects?.flush();
     };
     const finished = await Promise.race([
@@ -479,13 +491,15 @@ async function prepareQuit() {
 
 
     if (!finished) throw new Error('Still saving your work! We\'ll keep the window open for a moment—try closing it again once saving finishes.');
+    win?.hide();
+    await stopServer();
     quitReady = true;
     app.quit();
   } catch (e) {
     quitting = false;
     closing = false;
     win?.setEnabled(true);
-    dialog.showErrorBox('Window close canceled', String(e));
+    dialog.showErrorBox('PancakeSlicer', e instanceof Error ? e.message : String(e));
   } finally {
     if (timer) clearTimeout(timer);
   }
