@@ -87,7 +87,7 @@ export function TopBar() {
           { label: 'Import from URL…', action: () => openUrlImport() },
           { label: 'Import ZIP archive…', action: () => void import('./ArchiveDialog').then((m) => m.importZipArchive(setArchive)), tip: 'Load models contained within a ZIP archive' },
           { label: 'Open G-code…', action: () => openGcode(), tip: 'Open a G-code file' },
-          { label: 'Import configs…', action: () => setState({ presetUx: { kind: 'import' } }), tip: 'Load configs' },
+          { label: 'Import profiles…', action: () => setState({ presetUx: { kind: 'import' } }), tip: 'Load printer, filament and process profiles' },
           'sep',
           { label: exportLabel, shortcut: `${MOD}+G`, action: download, disabled: !exportEnabled, tip: stale ? STALE_RESULT_TIP : exportTip },
           ...(plates ? [{ label: 'Export sliced files for all plates', action: () => void exportAll(), disabled: !exportAllEnabled, tip: 'Export sliced files for all plates' }] : []),

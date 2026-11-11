@@ -247,7 +247,7 @@ function fail(message: string) {
 
 
 function send(command: string) {
-  if (command === 'import' || command === 'export-gcode' || command === 'export-3mf') {
+  if (command === 'open' || command === 'import' || command === 'export-gcode' || command === 'export-3mf') {
 
     void win?.webContents.executeJavaScript(
       `window.dispatchEvent(new CustomEvent('orca-desktop-menu', { detail: ${JSON.stringify(command)} }))`, true,
@@ -268,11 +268,12 @@ function menu() {
       label: 'File',
       submenu: [
         item('New project', 'new', 'CmdOrCtrl+N'),
-        item('Projects', 'projects', 'CmdOrCtrl+O'),
-        item('Import', 'import', 'CmdOrCtrl+I'),
+        item('Open project…', 'open', 'CmdOrCtrl+O'),
+        { label: 'Projects', click: () => send('projects') },
+        item('Import…', 'import', 'CmdOrCtrl+I'),
         { type: 'separator' },
-        item('Export G-code', 'export-gcode', 'CmdOrCtrl+E'),
-        item('Export project (.3mf)', 'export-3mf', 'CmdOrCtrl+Shift+E'),
+        item('Save project', 'export-3mf', 'CmdOrCtrl+S'),
+        item('Export G-code', 'export-gcode', 'CmdOrCtrl+G'),
         { type: 'separator' },
         MAC ? { role: 'close' } : { role: 'quit' },
       ],
