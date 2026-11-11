@@ -493,6 +493,7 @@ async function prepareQuit() {
 
     if (!finished) throw new Error('Still saving your work! We\'ll keep the window open for a moment—try closing it again once saving finishes.');
     win?.hide();
+    await win?.loadURL('about:blank').catch(() => {});
     await stopServer();
     quitReady = true;
     app.quit();
