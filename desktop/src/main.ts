@@ -436,9 +436,11 @@ async function start() {
   contents.setWindowOpenHandler(({ url: target }) => {
     const url = new URL(target);
     if (url.origin === origin && (url.pathname.startsWith('/help/') || ['/licence.txt', '/third-party-licences.txt'].includes(url.pathname))) {
-      const guide = new BrowserWindow({ width: 1000, height: 800, title: 'PancakeSlicer user guide',
+      const title = url.pathname.startsWith('/help/') ? 'PancakeSlicer user guide' : 'PancakeSlicer licences';
+      const guide = new BrowserWindow({ width: 1000, height: 800, title,
         webPreferences: { session: rendererSession, contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false } });
       guide.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+      if (!url.pathname.startsWith('/help/')) guide.on('page-title-updated', (event) => event.preventDefault());
       guide.webContents.on('will-navigate', (event, next) => { if (new URL(next).origin !== origin) event.preventDefault(); });
       void guide.loadURL(target).catch(console.error);
     } else if (url.protocol === 'https:' && url.origin !== origin) void shell.openExternal(target);
