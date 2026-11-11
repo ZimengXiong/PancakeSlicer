@@ -280,46 +280,64 @@ Corners bead_corners(const ToolPose &a, const ToolPose &b, double width, double 
     }
     return corners;
 }
-bool swept_bead_contact(const Corners &bead, const Vec3d &a, const Vec3d &b, const Nonplanar::HeadBox &box)
+// The bead's 15 separating axes, unit length, or zero where the axis is degenerate. A sweep touches the box only if
+// every axis keeps [enter, leave] open, so the order only decides how soon a miss is found: the side normal and the
+// top normal reject most misses and go first.
+using BeadAxes = std::array<Vec3d, 15>;
+BeadAxes bead_axes(const Corners &bead)
 {
-    double enter = 0., leave = 1.;
-    const Vec3d centre = 0.5 * (box.min + box.max), half = 0.5 * (box.max - box.min);
-    auto overlap = [&](const Vec3d &raw_axis) {
+    constexpr std::array<size_t, 15> slot { 2, 1, 3, 4, 0, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14 };
+    BeadAxes axes;
+    size_t   n   = 0;
+    auto     add = [&](const Vec3d &raw_axis) {
         const double length = raw_axis.norm();
-        if (length < 1e-12) return true;
-        const Vec3d axis = raw_axis / length;
-        double lo = Inf, hi = -Inf;
-        for (const Vec3d &corner : bead) {
-            const double p = axis.dot(corner - a - centre);
-            lo = std::min(lo, p); hi = std::max(hi, p);
-        }
-        const double radius = axis.cwiseAbs().dot(half), speed = axis.dot(b - a);
-        lo += ContactTolerance; hi -= ContactTolerance;
-        if (std::abs(speed) < 1e-12)
-            return lo < radius && hi > -radius;
-        double t0 = (lo - radius) / speed, t1 = (hi + radius) / speed;
-        if (t0 > t1) std::swap(t0, t1);
-        enter = std::max(enter, t0); leave = std::min(leave, t1);
-        return enter < leave;
+        axes[slot[n++]] = length < 1e-12 ? Vec3d::Zero().eval() : (raw_axis / length).eval();
     };
     const std::array<Vec3d, 3> edges { bead[4] - bead[0], bead[2] - bead[0], bead[1] - bead[0] };
     for (int k = 0; k < 3; ++k) {
-        if (!overlap(Vec3d::Unit(k)) || !overlap(edges[k].cross(edges[(k + 1) % 3])))
-            return false;
+        add(Vec3d::Unit(k));
+        add(edges[k].cross(edges[(k + 1) % 3]));
         for (int j = 0; j < 3; ++j)
-            if (!overlap(edges[k].cross(Vec3d::Unit(j)))) return false;
+            add(edges[k].cross(Vec3d::Unit(j)));
+    }
+    return axes;
+}
+bool swept_bead_contact(const Corners &bead, const BeadAxes &axes, const Vec3d &a, const Vec3d &b, const Nonplanar::HeadBox &box)
+{
+    double enter = 0., leave = 1.;
+    const Vec3d centre = 0.5 * (box.min + box.max), half = 0.5 * (box.max - box.min), sweep = b - a;
+    std::array<Vec3d, 8> rel;
+    for (size_t i = 0; i < bead.size(); ++i)
+        rel[i] = bead[i] - a - centre;
+    for (const Vec3d &axis : axes) {
+        if (axis.isZero(0.)) continue;
+        double lo = Inf, hi = -Inf;
+        for (const Vec3d &r : rel) {
+            const double p = axis.dot(r);
+            lo = std::min(lo, p); hi = std::max(hi, p);
+        }
+        const double radius = axis.cwiseAbs().dot(half), speed = axis.dot(sweep);
+        lo += ContactTolerance; hi -= ContactTolerance;
+        if (std::abs(speed) < 1e-12) {
+            if (!(lo < radius && hi > -radius)) return false;
+            continue;
+        }
+        double t0 = (lo - radius) / speed, t1 = (hi + radius) / speed;
+        if (t0 > t1) std::swap(t0, t1);
+        enter = std::max(enter, t0); leave = std::min(leave, t1);
+        if (!(enter < leave)) return false;
     }
     return true;
 }
-double swept_bead_lift(const Corners &bead, const Vec3d &a, const Vec3d &b, const Nonplanar::HeadBox &box, double limit)
+double swept_bead_lift(const Corners &bead, const BeadAxes &axes, const Vec3d &a, const Vec3d &b, const Nonplanar::HeadBox &box, double limit)
 {
     const Vec3d up = Vec3d::UnitZ();
-    if (swept_bead_contact(bead, a + limit * up, b + limit * up, box))
+    if (swept_bead_contact(bead, axes, a + limit * up, b + limit * up, box))
         return limit;
     double lo = 0., hi = limit;
     while (hi - lo > 1e-4) {
         const double mid = 0.5 * (lo + hi);
-        (swept_bead_contact(bead, a + mid * up, b + mid * up, box) ? lo : hi) = mid;
+        (swept_bead_contact(bead, axes, a + mid * up, b + mid * up, box) ? lo : hi) = mid;
     }
     return hi;
 }
@@ -367,9 +385,22 @@ public:
         for (auto &[key, cell] : m_cells)
             std::sort(m_ids.begin() + cell.begin, m_ids.begin() + cell.end,
                       [this](uint32_t x, uint32_t y) { return m_bounds[x].second.z() > m_bounds[y].second.z(); });
+        m_min32.assign((m_ids.size() + 31) / 32, uint32_t(-1));
+        m_min1024.assign((m_ids.size() + 1023) / 1024, uint32_t(-1));
+        for (size_t i = 0; i < m_ids.size(); ++i) {
+            m_min32[i / 32]     = std::min(m_min32[i / 32], m_ids[i]);
+            m_min1024[i / 1024] = std::min(m_min1024[i / 1024], m_ids[i]);
+        }
     }
     struct PreparedBox { Nonplanar::HeadBox box; bool ring; };
-    using PreparedHead = std::vector<PreparedBox>;
+    // Head-relative bounds over the finite boxes outside the tip ring; a leaf lists boxes[order[first, last)].
+    struct FloorNode { Vec3d min, max; uint32_t first, last, right; };
+    struct PreparedHead
+    {
+        std::vector<PreparedBox> boxes;
+        std::vector<FloorNode>   nodes;
+        std::vector<uint32_t>    order;
+    };
     static PreparedHead prepare(const Nonplanar::HeadEnvelope &head)
     {
         PreparedHead out;
@@ -377,8 +408,33 @@ public:
             auto box = prepared_box(raw, head);
             if (box.min.z() > box.max.z()) continue;
             const bool ring = tip_ring(raw, head, box.nozzle, box.infinite_x || box.infinite_y);
-            out.push_back({ std::move(box), ring });
+            if (!ring && !box.infinite_x && !box.infinite_y) out.order.push_back(uint32_t(out.boxes.size()));
+            out.boxes.push_back({ std::move(box), ring });
         }
+        auto build = [&out](auto &self, uint32_t first, uint32_t last) -> void {
+            const size_t node = out.nodes.size();
+            FloorNode    bounds { Vec3d::Constant(Inf), Vec3d::Constant(-Inf), first, last, 0 };
+            Vec3d        c_lo = Vec3d::Constant(Inf), c_hi = Vec3d::Constant(-Inf);
+            for (uint32_t n = first; n < last; ++n) {
+                const Nonplanar::HeadBox &box = out.boxes[out.order[n]].box;
+                bounds.min = bounds.min.cwiseMin(box.min); bounds.max = bounds.max.cwiseMax(box.max);
+                c_lo = c_lo.cwiseMin(box.min + box.max); c_hi = c_hi.cwiseMax(box.min + box.max);
+            }
+            out.nodes.push_back(bounds);
+            if (last - first <= 4) return;
+            int axis;
+            (c_hi - c_lo).maxCoeff(&axis);
+            const uint32_t mid = first + (last - first) / 2;
+            std::nth_element(out.order.begin() + first, out.order.begin() + mid, out.order.begin() + last, [&out, axis](uint32_t x, uint32_t y) {
+                const auto &bx = out.boxes[x].box, &by = out.boxes[y].box;
+                const double cx = bx.min[axis] + bx.max[axis], cy = by.min[axis] + by.max[axis];
+                return cx < cy || (cx == cy && x < y);
+            });
+            self(self, first, mid);
+            out.nodes[node].right = uint32_t(out.nodes.size());
+            self(self, mid, last);
+        };
+        if (!out.order.empty()) build(build, 0, uint32_t(out.order.size()));
         return out;
     }
     double clearance(const Vec3d &a, const Vec3d &b, const PreparedHead &head,
@@ -386,11 +442,11 @@ public:
     {
         struct Query { const PreparedBox *prepared; Vec3d lo, hi; std::array<int, 3> c0, c1; };
         thread_local std::vector<Query> queries;
-        thread_local std::vector<uint32_t> by_floor;
         thread_local std::vector<const Cell *> cells;
-        queries.clear(); by_floor.clear(); cells.clear();
+        queries.clear(); cells.clear();
+        bool floor_boxes = false;
         Vec3d any_lo = Vec3d::Constant(Inf), any_hi = Vec3d::Constant(-Inf);
-        for (const PreparedBox &prepared : head) {
+        for (const PreparedBox &prepared : head.boxes) {
             Query &q = queries.emplace_back();
             q.prepared = &prepared;
             q.lo = a.cwiseMin(b) + prepared.box.min; q.hi = a.cwiseMax(b) + prepared.box.max;
@@ -399,6 +455,8 @@ public:
         double best = Inf;
         size_t best_q = queries.size();
         t_last_struck = uint32_t(-1);
+        // The bead last measured: the same bead meets many head boxes in a row.
+        struct { uint32_t id = uint32_t(-1); Corners corners; BeadAxes axes; } bead;
         auto measure = [&](size_t qi, uint32_t id) {
             const Query &q = queries[qi];
             const Nonplanar::HeadBox &box = q.prepared->box;
@@ -414,11 +472,15 @@ public:
                                          m_result.moves[m_upright[id].move].layer_id == layer;
             if (gap > best && !same_layer_ring) return;
             if (gap < -ContactTolerance && !infinite) {
-                const Corners bead = corners(id);
-                if (!swept_bead_contact(bead, a, b, box))
+                if (bead.id != id) {
+                    bead.id      = id;
+                    bead.corners = corners(id);
+                    bead.axes    = bead_axes(bead.corners);
+                }
+                if (!swept_bead_contact(bead.corners, bead.axes, a, b, box))
                     gap = 0.;
                 else if (m_exact_depth)
-                    gap = std::max(gap, -swept_bead_lift(bead, a, b, box, std::max(0., bh.z() - q.lo.z())));
+                    gap = std::max(gap, -swept_bead_lift(bead.corners, bead.axes, a, b, box, std::max(0., bh.z() - q.lo.z())));
             }
             if (ring && gap < -ContactTolerance && gap >= -SameLayerTolerance && m_result.moves[m_upright[id].move].layer_id == layer) {
                 tolerated = true;
@@ -437,39 +499,55 @@ public:
             } else if (q.prepared->ring) {
                 visit(q.lo, q.hi, [&](uint64_t key) {
                     if (auto it = m_cells.find(key); it != m_cells.end())
-                        for (uint32_t i = it->second.begin; i < it->second.end; ++i) {
+                        for (uint32_t i = next_laid(it->second.begin, it->second.end, limit); i < it->second.end;
+                             i = next_laid(i + 1, it->second.end, limit)) {
                             const uint32_t id = m_ids[i];
-                            if (id >= limit) continue;
                             const double below = q.lo.z() - m_bounds[id].second.z();
                             if (below > best && below >= -ContactTolerance) break;
                             measure(qi, id);
                         }
                 });
             } else {
-                by_floor.push_back(uint32_t(qi));
+                floor_boxes = true;
                 any_lo = any_lo.cwiseMin(q.lo); any_hi = any_hi.cwiseMax(q.hi);
             }
         }
-        if (by_floor.empty()) {
+        if (!floor_boxes) {
             if (best_q < queries.size()) component = queries[best_q].prepared->box.name;
             return best;
         }
-        std::sort(by_floor.begin(), by_floor.end(), [&](uint32_t x, uint32_t y) { return queries[x].lo.z() < queries[y].lo.z(); });
-        const double floor = queries[by_floor.front()].lo.z();
+        // A bead's state change is the least (gap, box) over the pairs it meets, whatever order they are measured in,
+        // and a pair gapped wider than the best so far changes nothing: descend the box hierarchy past such subtrees.
+        const double floor = any_lo.z();
+        const Vec3d  ab_lo = a.cwiseMin(b), ab_hi = a.cwiseMax(b);
         visit(any_lo, any_hi, [&](uint64_t key) {
             if (auto it = m_cells.find(key); it != m_cells.end()) cells.push_back(&it->second);
         });
         std::sort(cells.begin(), cells.end(), [](const Cell *x, const Cell *y) { return x->top > y->top; });
         for (const Cell *cell : cells) {
             if (floor - cell->top > best) break;
-            for (uint32_t i = cell->begin; i < cell->end; ++i) {
+            for (uint32_t i = next_laid(cell->begin, cell->end, limit); i < cell->end; i = next_laid(i + 1, cell->end, limit)) {
                 const uint32_t id = m_ids[i];
-                if (id >= limit) continue;
-                const double top = m_bounds[id].second.z();
-                if (floor - top > best) break;
-                for (const uint32_t qi : by_floor) {
-                    if (queries[qi].lo.z() - top > best) break;
-                    if (meets(queries[qi], id)) measure(qi, id);
+                const auto &[bl, bh] = m_bounds[id];
+                if (floor - bh.z() > best) break;
+                std::array<uint32_t, 64> stack;
+                size_t depth = 0;
+                stack[depth++] = 0;
+                while (depth > 0) {
+                    const uint32_t   index = stack[--depth];
+                    const FloorNode &node  = head.nodes[index];
+                    const Vec3d lo = ab_lo + node.min, hi = ab_hi + node.max;
+                    double gap = -Inf;
+                    for (int axis = 0; axis < 3; ++axis)
+                        gap = std::max(gap, std::max(lo[axis] - bh[axis], bl[axis] - hi[axis]));
+                    if (gap > best) continue;
+                    if (node.last - node.first > 4) {
+                        stack[depth++] = node.right;
+                        stack[depth++] = index + 1;
+                        continue;
+                    }
+                    for (uint32_t n = node.first; n < node.last; ++n)
+                        if (meets(queries[head.order[n]], id)) measure(head.order[n], id);
                 }
             }
         }
@@ -484,6 +562,17 @@ private:
         const Vec3d        a    = move_tip(m_result, bead.last, m_rotary), b = move_tip(m_result, bead.move, m_rotary);
         return bead_corners({ a + (double(bead.piece) / bead.pieces) * (b - a), Vec3d::UnitZ() },
                             { a + (double(bead.piece + 1) / bead.pieces) * (b - a), Vec3d::UnitZ() }, move.width, move.height);
+    }
+    // The first position from i on, before end, holding a bead laid before limit; the cell order is kept.
+    uint32_t next_laid(uint32_t i, uint32_t end, size_t limit) const
+    {
+        while (i < end) {
+            if (i % 1024 == 0 && m_min1024[i / 1024] >= limit) i += 1024;
+            else if (i % 32 == 0 && m_min32[i / 32] >= limit) i += 32;
+            else if (m_ids[i] < limit) return i;
+            else ++i;
+        }
+        return end;
     }
     template<class Fn> void visit_bead(size_t id, Fn fn) const { visit(m_bounds[id].first, m_bounds[id].second, fn); }
     static std::array<int, 3> cell_of(const Vec3d &p)
@@ -507,6 +596,8 @@ private:
     std::unordered_map<uint64_t, Cell>                               m_cells;
     std::vector<std::array<int, 6>>                                  m_bead_cells;
     std::vector<uint32_t>                                            m_ids;
+    // The least bead id in each 32 and 1024 positions of m_ids.
+    std::vector<uint32_t>                                            m_min32, m_min1024;
 };
 
 class TiltedBeads
