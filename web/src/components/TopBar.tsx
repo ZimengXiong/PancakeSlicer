@@ -98,7 +98,7 @@ export function TopBar() {
           ...(generic3mf ? [{ label: 'Export generic 3MF', action: () => void import('../plater/exportModel').then((m) => m.exportModel('generic3mf')), disabled: !hasMeshes, tip: 'Export a standard 3MF file for other slicers' }] : []),
           { label: 'Export toolpaths as OBJ', disabled: !toolpaths || tab !== 'preview', tip: 'Export toolpaths as OBJ',
             action: () => void import('../preview/objExport').then((m) => m.exportToolpathsObj(exportName || 'toolpaths')) },
-          { label: 'Export preset bundle…', action: () => setState({ presetUx: { kind: 'export' } }), tip: 'Export current configuration to files' },
+          { label: 'Export profiles…', action: () => setState({ presetUx: { kind: 'export' } }), tip: 'Export profiles to files' },
         ];
   const devReset = useDevReset();
   const update = useUpdate();
@@ -109,7 +109,7 @@ export function TopBar() {
     if (!next || next === name) return;
     if (projectId && projectState !== 'blank') void renameProject(projectId, next); else setState({ projectName: next });
   };
-  const appItems: MenuItem[] = [{label:`PancakeSlicer v${APP_VERSION}`,header:true} as MenuItem,...(update ? [{label:`Update available: v${update.version}`,action:()=>openUpdate(update)} as MenuItem] : []),{label:'About PancakeSlicer',action:()=>setState({appDialog:'about'})},{label:'Report a problem…',action:reportProblem},'sep',{label:'Add model…',action:openFileDialog},{label:'File',sub:fileItems},{label:'Settings',action:showSettings},{label:'Projects',action:showProjects},{label:'Rename project…',action:()=>void renameHere()},{label:'Setup',action:()=>openSetup('printer')},{label:'Profiles',action:()=>setState({presetUx:{kind:'presets',type:'machine'}})},'sep',...(devReset ? [{label:'Start over',action:()=>void startOver().catch(()=>{})} as MenuItem,'sep' as const] : []),{label: 'Edit', sub: [
+  const appItems: MenuItem[] = [{label:`PancakeSlicer v${APP_VERSION}`,header:true} as MenuItem,...(update ? [{label:`Update available: v${update.version}`,action:()=>openUpdate(update)} as MenuItem] : []),{label:'About PancakeSlicer',action:()=>setState({appDialog:'about'})},{label:'Report a problem…',action:reportProblem},'sep',{label:'Add model…',action:openFileDialog},{label:'File',sub:fileItems},{label:'Settings',action:()=>{if(tab==='projects'||tab==='device')setState({tab:'prepare'});showSettings();}},{label:'Projects',action:showProjects},{label:'Rename project…',action:()=>void renameHere(),disabled:tab==='projects'},{label:'Setup',action:()=>openSetup('printer')},{label:'Profiles',action:()=>setState({presetUx:{kind:'presets',type:'machine'}})},'sep',...(devReset ? [{label:'Start over',action:()=>void startOver().catch(()=>{})} as MenuItem,'sep' as const] : []),{label: 'Edit', sub: [
           { label: undoLabel ? `Undo ${undoLabel}` : 'Undo', shortcut: `${MOD}+Z`, action: undo, disabled: !undoLabel },
           { label: redoLabel ? `Redo ${redoLabel}` : 'Redo', shortcut: `${MOD}+Y`, action: redo, disabled: !redoLabel },
           ...(undoLabel || redoLabel ? [{ label: 'History', sub: [
