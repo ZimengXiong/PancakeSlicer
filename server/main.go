@@ -250,14 +250,16 @@ func warmPresets(presets *PresetIndex) error {
 	if _, err := presets.names(); err != nil {
 		return err
 	}
-	for _, name := range []string{"BBL", "Prusa", "Custom"} {
-		vendor, err := presets.vendor(name)
-		if err == nil {
-			_, err = filamentCatalogResponse(vendor)
+	go func() {
+		for _, name := range []string{"BBL", "Prusa", "Custom"} {
+			vendor, err := presets.vendor(name)
+			if err == nil {
+				_, err = filamentCatalogResponse(vendor)
+			}
+			if err != nil {
+				log.Printf("cannot preload %s presets: %v", name, err)
+			}
 		}
-		if err != nil {
-			log.Printf("cannot preload %s presets: %v", name, err)
-		}
-	}
+	}()
 	return nil
 }
