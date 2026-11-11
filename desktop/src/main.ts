@@ -402,9 +402,8 @@ function restrictNetwork(target: Electron.Session) {
 async function start() {
   restrictNetwork(session.defaultSession);
   menu();
-  const [url] = await Promise.all([startServer(), storage()]);
-  origin = url;
-  if (app.commandLine.hasSwitch('service-only')) return;
+  const serving = Promise.all([startServer(), storage()]);
+  if (app.commandLine.hasSwitch('service-only')) { [origin] = await serving; return; }
   const rendererSession = session.fromPartition('orca-service-renderer', { cache: false });
   restrictNetwork(rendererSession);
   if (rendererSession.isPersistent() || rendererSession.getStoragePath() !== null) throw new Error('Oops! The app window needs an isolated in-memory session to run safely.');
@@ -415,7 +414,7 @@ async function start() {
     minHeight: 600,
     show: false,
     title: 'PancakeSlicer',
-    backgroundColor: '#ffffff',
+    backgroundColor: '#363636',
     webPreferences: { session: rendererSession, preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false },
   });
   win.once('ready-to-show', () => win?.show());
@@ -449,7 +448,9 @@ async function start() {
     } else if (url.protocol === 'https:' && url.origin !== origin) void shell.openExternal(target);
     return { action: 'deny' };
   });
-  await win.loadURL(url);
+  await win.loadURL(`data:text/html,<html style="background:%23363636"></html>`);
+  [origin] = await serving;
+  if (win && !closing) await win.loadURL(origin);
 }
 
 app.on('window-all-closed', () => app.quit());
