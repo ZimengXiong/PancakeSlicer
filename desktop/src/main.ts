@@ -131,12 +131,11 @@ async function bundleIdentity(web: string, engine: string): Promise<BundleIdenti
     if (!/^[a-f0-9]{40}$/.test(expected[key]) || expected[key] !== webIdentity[key]) throw new Error('Oops! This app bundle is missing some build info or looks corrupted. Try reinstalling PancakeSlicer.');
   }
   if (fs.readFileSync(path.join(web, 'REVISION.txt'), 'utf8').trim() !== expected.client_source) throw new Error('Oops! The bundled web interface doesn\'t match this app version. Try reinstalling PancakeSlicer.');
-  for (const [name, key] of [
+  const hashes = await Promise.all(([
     [`orca-webapp-server${EXE}`, 'server_binary_sha256'], [`nonplanar_slice_tool${EXE}`, 'native_binary_sha256'],
     ['surface-manifest.json', 'native_manifest_sha256'], ['artifact-qualification.ready', 'native_qualification_sha256'],
-  ] as const) {
-    if (!/^[a-f0-9]{64}$/.test(expected[key]) || await fileHash(path.join(engine, name)) !== expected[key]) throw new Error('Oops! One of the app\'s bundled files looks modified or corrupted. Try reinstalling PancakeSlicer.');
-  }
+  ] as const).map(async ([name, key]) => /^[a-f0-9]{64}$/.test(expected[key]) && await fileHash(path.join(engine, name)) === expected[key]));
+  if (!hashes.every(Boolean)) throw new Error('Oops! One of the app\'s bundled files looks modified or corrupted. Try reinstalling PancakeSlicer.');
   if (!/^[a-f0-9]{64}$/.test(expected.native_resources_sha256)) throw new Error('Oops! Required app resources are missing from this installation. Try reinstalling PancakeSlicer.');
   const schemas = JSON.parse(fs.readFileSync(path.join(engine, 'schemas.json'), 'utf8')) as Record<string, number>;
   if (!Object.keys(schemas).length || !Object.values(schemas).every((v) => Number.isInteger(v) && v > 0)) throw new Error('Oops! Bundled server configuration files are missing. Try reinstalling PancakeSlicer.');
