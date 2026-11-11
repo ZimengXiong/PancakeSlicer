@@ -14,7 +14,7 @@ export function AboutContent({ info }: { info: BuildInfo }) {
     {about?.image && <><dt>Image</dt><dd>{about.image}</dd></>}
     <dt>Links</dt><dd className="about-links">{link(GITHUB_URL, 'GitHub')}</dd>
     <dt>Licence</dt><dd>{link('https://www.gnu.org/licenses/agpl-3.0.html', about?.license || 'AGPL-3.0')}<Sep/>{link('/third-party-licences.txt', 'Third-party licences')}</dd>
-    {source && <><dt>Source</dt><dd>{link(source, source.replace(/^https?:\/\//, ''))}</dd></>}
+    {source && <><dt>Source</dt><dd>{link(source, source.replace(/^https?:\/\//, '').replace(/[0-9a-f]{40}/, (sha) => sha.slice(0, 7)))}</dd></>}
   </dl>;
 }
 

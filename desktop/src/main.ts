@@ -187,7 +187,7 @@ async function startServer(): Promise<string> {
   const nonce = randomBytes(32).toString('hex');
   env.ORCA_DESKTOP_READY_NONCE = nonce;
   delete env.ORCA_WEB_SOURCE_ARCHIVE;
-  env.ORCA_WEB_SOURCE_URL = `https://github.com/ZimengXiong/PancakeSlicer/archive/${expected.server_source}.tar.gz`;
+  env.ORCA_WEB_SOURCE_URL = 'https://github.com/ZimengXiong/PancakeSlicer';
   delete env.ORCA_BUILD_REVISION;
   delete env.ORCA_BUILD_IMAGE;
 
