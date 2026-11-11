@@ -298,7 +298,16 @@ private:
 
 }
 
-ClearanceRepair::ClearanceRepair(Print &print) : m_print(print)
+ClearanceReport ClearanceRepair::verify(const Print &print, const GCodeProcessorResult &result, const ClearanceParams &params,
+                                        const ToolKinematics &kinematics)
+{
+    const auto cancel = [&print] { print.throw_if_canceled(); };
+    if (print.m_clearance_repair == nullptr)
+        return verify_clearance(result, params, kinematics, cancel);
+    return print.m_clearance_repair->m_memo->verify(result, params, kinematics, cancel);
+}
+
+ClearanceRepair::ClearanceRepair(Print &print) : m_print(print), m_memo(std::make_unique<ClearanceMemo>())
 {
     m_max_passes = print.config().nonplanar_repair_iterations.value;
     m_guard_warnings = stage_cache_guard_warnings(print);
@@ -315,8 +324,7 @@ void ClearanceRepair::check_export(Print &print, GCodeProcessorResult &result)
         params.head = resolve_head_envelope(print.config());
         params.contact_bar = true;
         params.cone_tolerance = 0.05;
-        result.clearance_report = verify_clearance(result, params, *make_tool_kinematics(print.config()),
-                                                    [&print] { print.throw_if_canceled(); });
+        result.clearance_report = verify(print, result, params, *make_tool_kinematics(print.config()));
         result.clearance = result.clearance_report.per_move;
         if (result.clearance_report.hit_moves > 0) {
             const std::string message = Slic3r::format(_u8L("Non-planar waves: %1% moves hit printed material."),
@@ -362,8 +370,7 @@ void ClearanceRepair::check_export(Print &print, GCodeProcessorResult &result)
             ClearanceParams params;
             params.head = resolve_head_envelope(print.config());
             const auto      started = std::chrono::steady_clock::now();
-            ClearanceReport report  = verify_clearance(result, params, *make_tool_kinematics(print.config()),
-                                                      [&print] { print.throw_if_canceled(); });
+            ClearanceReport report  = verify(print, result, params, *make_tool_kinematics(print.config()));
             const auto      checked = std::chrono::steady_clock::now();
             if (self->m_pass == 0)
                 self->m_first_hits = report.hit_moves;
@@ -408,7 +415,7 @@ void ClearanceRepair::check_export(Print &print, GCodeProcessorResult &result)
         params.cone_tolerance = curved_tops_cone_tolerance(print);
     if (const char *tol = std::getenv("NP_CONTACT_CONE_TOL"); tol != nullptr)
         params.cone_tolerance = std::max(0., std::atof(tol));
-    ClearanceReport report = verify_clearance(result, params, ThreeAxisKinematics(), [&print] { print.throw_if_canceled(); });
+    ClearanceReport report = verify(print, result, params, ThreeAxisKinematics());
     const size_t hits = report.hit_moves;
     self->m_planned.clear();
     const bool stalled = self->m_pass > 0 && hits == self->m_last_hits && report.min_clearance == self->m_last_min;
@@ -749,7 +756,7 @@ bool ClearanceRepair::oneshot_step(GCodeProcessorResult &result)
     ClearanceParams params;
     params.head            = resolve_head_envelope(m_print.config());
     params.contact_bar     = true;
-    ClearanceReport report = verify_clearance(result, params, *make_tool_kinematics(m_print.config()), [this] { m_print.throw_if_canceled(); });
+    ClearanceReport report = verify(m_print, result, params, *make_tool_kinematics(m_print.config()));
     const size_t    hits   = report.hit_moves;
     for (PrintObject *object : objects) {
         OneShotState &s = object->oneshot_state();
@@ -991,7 +998,7 @@ bool ClearanceRepair::step_down_conformal(const GCodeProcessorResult &result)
     params.head           = resolve_head_envelope(m_print.config());
     params.contact_bar    = true;
     params.cone_tolerance = curved_tops_cone_tolerance(m_print);
-    const ClearanceReport report = verify_clearance(result, params, *make_tool_kinematics(m_print.config()), [this] { m_print.throw_if_canceled(); });
+    const ClearanceReport report = verify(m_print, result, params, *make_tool_kinematics(m_print.config()));
     if (report.hit_moves == 0)
         return changed;
     const Locator locator(m_print);
@@ -1120,7 +1127,7 @@ bool ClearanceRepair::step_down_slant(const GCodeProcessorResult &result)
     params.head           = resolve_head_envelope(m_print.config());
     params.contact_bar    = true;
     params.cone_tolerance = curved_tops_cone_tolerance(m_print);
-    const ClearanceReport report = verify_clearance(result, params, *make_tool_kinematics(m_print.config()), [this] { m_print.throw_if_canceled(); });
+    const ClearanceReport report = verify(m_print, result, params, *make_tool_kinematics(m_print.config()));
     if (report.hit_moves == 0)
         return false;
     for (PrintObject *object : picked) {
@@ -1164,7 +1171,7 @@ bool ClearanceRepair::refuse_struck_morph(const GCodeProcessorResult &result)
     params.head           = resolve_head_envelope(m_print.config());
     params.contact_bar    = true;
     params.cone_tolerance = curved_tops_cone_tolerance(m_print);
-    const size_t hits = verify_clearance(result, params, *make_tool_kinematics(m_print.config()), [this] { m_print.throw_if_canceled(); }).hit_moves;
+    const size_t hits = verify(m_print, result, params, *make_tool_kinematics(m_print.config())).hit_moves;
     if (hits == 0)
         return false;
     for (PrintObject *object : picked) {
@@ -1206,7 +1213,7 @@ bool ClearanceRepair::step_down_morph_direction(const GCodeProcessorResult &resu
     params.head           = resolve_head_envelope(m_print.config());
     params.contact_bar    = true;
     params.cone_tolerance = curved_tops_cone_tolerance(m_print);
-    const size_t hits = verify_clearance(result, params, *make_tool_kinematics(m_print.config()), [this] { m_print.throw_if_canceled(); }).hit_moves;
+    const size_t hits = verify(m_print, result, params, *make_tool_kinematics(m_print.config())).hit_moves;
     if (hits == 0)
         return false;
     for (PrintObject *object : picked) {
@@ -1224,7 +1231,7 @@ size_t ClearanceRepair::curved_contacts(const Print &print, const GCodeProcessor
     ClearanceParams params;
     params.head        = resolve_head_envelope(print.config());
     params.contact_bar = true;
-    const ClearanceReport report = verify_clearance(result, params, *make_tool_kinematics(print.config()), [&print] { print.throw_if_canceled(); });
+    const ClearanceReport report = verify(print, result, params, *make_tool_kinematics(print.config()));
     size_t contacts = 0;
     for (size_t i = 0; i < result.moves.size() && i < report.per_move.size(); ++i)
         if (report.per_move[i] < 0.f && result.moves[i].type == EMoveType::Extrude && result.state(result.moves[i]).nonplanar_patch_shell != 0xFF)
@@ -1245,7 +1252,7 @@ bool ClearanceRepair::contact_guard(const GCodeProcessorResult &result, size_t c
         ClearanceParams params;
         params.head        = resolve_head_envelope(m_print.config());
         params.contact_bar = true;
-        contacts = verify_clearance(result, params, *make_tool_kinematics(m_print.config()), [this] { m_print.throw_if_canceled(); }).hit_moves;
+        contacts = verify(m_print, result, params, *make_tool_kinematics(m_print.config())).hit_moves;
     }
     if (contacts == 0)
         return false;
@@ -1293,7 +1300,7 @@ bool ClearanceRepair::curved_tops_step(GCodeProcessorResult &result)
     params.contact_bar = true;
     params.cone_tolerance = curved_tops_cone_tolerance(m_print);
     const auto      started = std::chrono::steady_clock::now();
-    ClearanceReport report = verify_clearance(result, params, ThreeAxisKinematics(), [this] { m_print.throw_if_canceled(); });
+    ClearanceReport report = verify(m_print, result, params, ThreeAxisKinematics());
     BOOST_LOG_TRIVIAL(warning) << "Curved tops clearance pass " << m_curved_pass << ": " << report.hit_moves
                                << " hits, " << report.hit_body_moves << " body hits, " << report.cone_graze_moves << " grazes, verify "
                                << std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count() << " s";

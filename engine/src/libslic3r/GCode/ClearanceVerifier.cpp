@@ -29,6 +29,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <mutex>
 #include <fstream>
@@ -1894,6 +1895,61 @@ ClearanceReport verify_clearance(const GCodeProcessorResult &result, const Clear
         report.omissions.emplace_back("Rotary homing poses are undefined; the first explicit XYZ endpoint is checked without inventing its incoming sweep.");
     return report;
 }
+namespace {
+template<class T> uint32_t bits32(const T &value)
+{
+    static_assert(sizeof(T) == 4);
+    uint32_t out;
+    std::memcpy(&out, &value, 4);
+    return out;
+}
+template<class T> bool same_bits(const T &a, const T &b) { return std::memcmp(&a, &b, sizeof(T)) == 0; }
+bool same_params(const ClearanceParams &a, const ClearanceParams &b)
+{
+    return a.head == b.head && same_bits(a.head.contact_tolerance, b.head.contact_tolerance) && a.head.duct_graze_limit == b.head.duct_graze_limit &&
+           same_bits(a.pitch, b.pitch) && same_bits(a.sweep, b.sweep) && same_bits(a.bead_eps, b.bead_eps) && a.contact_bar == b.contact_bar &&
+           same_bits(a.cone_tolerance, b.cone_tolerance);
+}
+}
+
+void ClearanceMemo::fingerprint(const GCodeProcessorResult &result, std::vector<std::array<uint32_t, 8>> &moves,
+                                std::vector<std::array<uint64_t, 5>> &joints)
+{
+    moves.clear();
+    moves.reserve(result.moves.size());
+    for (const auto &move : result.moves)
+        moves.push_back({ bits32(move.position.x()), bits32(move.position.y()), bits32(move.position.z()), bits32(move.width),
+                          bits32(move.height), move.gcode_id, move.layer_id,
+                          uint32_t(uint8_t(move.type)) | uint32_t(uint8_t(move.extrusion_role)) << 8 |
+                              uint32_t(result.state(move).nonplanar_patch_shell) << 16 | uint32_t(move.timing_only) << 24 |
+                              uint32_t(move.clearance_pose_known) << 25 | uint32_t(move.clearance_from_unknown) << 26 });
+    joints.clear();
+    joints.reserve(result.joints.size());
+    for (const JointPose &pose : result.joints) {
+        static_assert(sizeof(JointPose) == 5 * sizeof(uint64_t));
+        std::array<uint64_t, 5> &words = joints.emplace_back();
+        std::memcpy(words.data(), &pose, sizeof(pose));
+    }
+}
+
+ClearanceReport ClearanceMemo::verify(const GCodeProcessorResult &result, const ClearanceParams &params, const ToolKinematics &kinematics,
+                                      const std::function<void()> &throw_if_canceled)
+{
+    static const bool struck_log = std::getenv("NP_VERIFY_STRUCK") != nullptr;
+    if (kinematics.rotary_count() != 0 || struck_log)
+        return verify_clearance(result, params, kinematics, throw_if_canceled);
+    fingerprint(result, m_scratch_moves, m_scratch_joints);
+    if (m_valid && m_scratch_joints == m_joints && m_scratch_moves == m_moves && same_params(params, m_params))
+        return m_report;
+    m_valid = false;
+    m_report = verify_clearance(result, params, kinematics, throw_if_canceled);
+    m_params = params;
+    m_moves.swap(m_scratch_moves);
+    m_joints.swap(m_scratch_joints);
+    m_valid = true;
+    return m_report;
+}
+
 void mark_clearance_override(const Print &print, GCodeProcessorResult &result)
 {
     result.clearance_report.clearance_override = Nonplanar::clearance_override_active(print.config());

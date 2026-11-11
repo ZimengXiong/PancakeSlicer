@@ -2,7 +2,9 @@
 #include "libslic3r/Nonplanar/HeadEnvelope.hpp"
 #include "libslic3r/BoundingBox.hpp"
 #include "libslic3r/Point.hpp"
+#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -102,6 +104,22 @@ struct ClearanceReport
 ClearanceReport verify_clearance(const GCodeProcessorResult &result, const ClearanceParams &params,
                                  const ToolKinematics &kinematics,
                                  const std::function<void()> &throw_if_canceled = {});
+// Answers a repeated verify_clearance() from the last sweep while the moves, joints and parameters are bit-identical.
+// Rotary kinematics always sweep afresh.
+class ClearanceMemo
+{
+public:
+    ClearanceReport verify(const GCodeProcessorResult &result, const ClearanceParams &params, const ToolKinematics &kinematics,
+                           const std::function<void()> &throw_if_canceled = {});
+private:
+    static void fingerprint(const GCodeProcessorResult &result, std::vector<std::array<uint32_t, 8>> &moves,
+                            std::vector<std::array<uint64_t, 5>> &joints);
+    bool                                 m_valid = false;
+    ClearanceParams                      m_params;
+    ClearanceReport                      m_report;
+    std::vector<std::array<uint32_t, 8>> m_moves, m_scratch_moves;
+    std::vector<std::array<uint64_t, 5>> m_joints, m_scratch_joints;
+};
 class TableGuard
 {
 public:

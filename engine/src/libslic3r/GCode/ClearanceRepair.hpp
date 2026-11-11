@@ -16,6 +16,9 @@ class PrintObject;
 class ModelObject;
 struct GCodeProcessorResult;
 struct ClearanceReport;
+struct ClearanceParams;
+class ClearanceMemo;
+class ToolKinematics;
 
 namespace Nonplanar {
 
@@ -46,6 +49,8 @@ public:
     bool plan_upright(const GCodeProcessorResult &result, const ClearanceReport &report);
 
 private:
+    static ClearanceReport verify(const Print &print, const GCodeProcessorResult &result, const ClearanceParams &params,
+                                  const ToolKinematics &kinematics);
     bool oneshot_step(GCodeProcessorResult &result);
     bool curved_tops_step(GCodeProcessorResult &result);
     int m_curved_pass = 0;
@@ -73,6 +78,7 @@ private:
     std::string summary(size_t hits_now) const;
 
     Print                   &m_print;
+    std::unique_ptr<ClearanceMemo> m_memo;
     int                      m_max_passes = 0;
     int                      m_pass       = 0;
     size_t                   m_first_hits = 0;
