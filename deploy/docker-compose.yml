@@ -1,10 +1,11 @@
 # PancakeSlicer: web UI, service and slicing engine in one container.
 #   docker compose -f deploy/docker-compose.yml up -d
-# Then open http://\<host\>:6868.
+# Then open http://<host>:6868.
+# The image is a multi-arch manifest (linux/amd64 + linux/arm64); Docker auto-selects the right variant.
 name: pancakeslicer
 services:
   pancakeslicer:
-    image: ghcr.io/sabhyaaggarwal/pancakeslicer:latest
+    image: ghcr.io/zimengxiong/pancakeslicer:latest
     container_name: pancakeslicer
     restart: unless-stopped
     ports:

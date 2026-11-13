@@ -68,17 +68,22 @@ jobs:
           echo "all=$chosen" >> "$GITHUB_OUTPUT"
           echo "desktop=$(jq -c 'map(select(.os != "linux"))' <<<"$chosen")" >> "$GITHUB_OUTPUT"
           echo "linux=$(jq -r 'any(.os == "linux")' <<<"$chosen")" >> "$GITHUB_OUTPUT"
+      - name: Debug outputs
+        run: |
+          echo "all=${{ steps.matrix.outputs.all }}"
+          echo "desktop=${{ steps.matrix.outputs.desktop }}"
+          echo "linux=${{ steps.matrix.outputs.linux }}"
       - name: Create the draft release
         if: env.PUBLISH == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --draft --target "$GITHUB_SHA" --title "PancakeSlicer ${TAG}" --notes ""
+            gh release create "$TAG" --draft --target "$GITHUB_SHA" --title "PancakeSlicer ${TAG#v}" --notes ""
           fi
-          source="PancakeSlicer-${TAG}-source.tar.gz"
+          source="PancakeSlicer-${TAG#v}-source.tar.gz"
           if ! gh release view "$TAG" --json assets --jq '.assets[].name' | grep -qxF "$source"; then
-            git archive --format=tar.gz --prefix="PancakeSlicer-${TAG}/" -o "$source" HEAD
+            git archive --format=tar.gz --prefix="PancakeSlicer-${TAG#v}/" -o "$source" HEAD
             gh release upload "$TAG" "$source"
           fi
 
@@ -265,8 +270,8 @@ jobs:
           npm ci --prefix web
           npm ci --prefix desktop
           if [ "$PUBLISH" = true ]; then
-            npm pkg set version="${TAG}" --prefix desktop
-            npm pkg set version="${TAG}" --prefix web
+            npm pkg set version="${TAG#v}" --prefix desktop
+            npm pkg set version="${TAG#v}" --prefix web
           fi
           npm run build --prefix web
       - name: Bundle engine shared libraries
@@ -320,7 +325,7 @@ jobs:
           git archive --format=tar.gz -o desktop/build/engine-${{ matrix.target }}/source.tar.gz HEAD
           chmod 0644 desktop/build/engine-${{ matrix.target }}/source.tar.gz
           printf '**\n!engine-${{ matrix.target }}/ \n!engine-${{ matrix.target }}/**\n!web/\n!web/**\n' > desktop/build/.dockerignore
-          docker build --file deploy/Dockerfile --build-arg VERSION="${TAG}" --build-arg REVISION="$GITHUB_SHA" \
+          docker build --file deploy/Dockerfile --build-arg VERSION="${TAG#v}" --build-arg REVISION="$GITHUB_SHA" \
             --build-arg SOURCE_SHA256="$(sha256sum desktop/build/engine-${{ matrix.target }}/source.tar.gz | cut -d' ' -f1)" \
             --tag pancakeslicer:ci desktop/build
           docker run -d --name test -p 6868:6868 pancakeslicer:ci
@@ -333,13 +338,13 @@ jobs:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
-          version="${TAG}"
+          version="${TAG#v}"
           echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
-          for repo in ghcr.io/SabhyaAggarwal/pancakeslicer docker.io/SabhyaAggarwal/pancakeslicer; do
+          for repo in ghcr.io/zimengxiong/pancakeslicer docker.io/zimengxiong/pancakeslicer; do
             for t in "$version" latest; do docker tag pancakeslicer:ci "$repo:$t"; docker push "$repo:$t"; done
           done
-          docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/SabhyaAggarwal/pancakeslicer:$version
+          docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/zimengxiong/pancakeslicer:$version
 
   desktop:
     name: ${{ matrix.target }}
@@ -398,8 +403,8 @@ jobs:
           npm ci --prefix web
           npm ci --prefix desktop
           if [ "$PUBLISH" = true ]; then
-            npm pkg set version="${TAG}" --prefix desktop
-            npm pkg set version="${TAG}" --prefix web
+            npm pkg set version="${TAG#v}" --prefix desktop
+            npm pkg set version="${TAG#v}" --prefix web
           fi
           npm run build --prefix web
       - name: Qualify and stage the payload
