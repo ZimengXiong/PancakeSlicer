@@ -33,10 +33,10 @@ jobs:
         run: |
           owner=${GITHUB_REPOSITORY_OWNER,,}
           ids=$(gh api --paginate "users/$owner/packages/container/pancakeslicer/versions" \
-            --jq ".[] | select(.metadata.container.tags | index(\"$VERSION\")) | .id")
+            --jq ".[] | select(.metadata.container.tags | any(. == \"$VERSION\" or . == \"$VERSION-amd64\" or . == \"$VERSION-arm64\")) | .id")
           for id in $ids; do gh api -X DELETE "users/$owner/packages/container/pancakeslicer/versions/$id"; echo "deleted GHCR version $id"; done
           [ -n "$ids" ] || echo "no GHCR version tagged $VERSION"
-      - name: Delete the Docker Hub tag
+      - name: Delete the Docker Hub tags
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -44,6 +44,8 @@ jobs:
         run: |
           jwt=$(curl -fsS -H 'Content-Type: application/json' -d "{\"username\":\"$DOCKERHUB_USERNAME\",\"password\":\"$DOCKERHUB_TOKEN\"}" \
             https://hub.docker.com/v2/users/login | jq -r .token)
-          code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE -H "Authorization: JWT $jwt" \
-            "https://hub.docker.com/v2/repositories/zimengxiong/pancakeslicer/tags/$VERSION/")
-          case $code in 204) echo "deleted Docker Hub tag $VERSION" ;; 404) echo "no Docker Hub tag $VERSION" ;; *) echo "Docker Hub returned $code"; exit 1 ;; esac
+          for tag in "$VERSION" "$VERSION-amd64" "$VERSION-arm64"; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE -H "Authorization: JWT $jwt" \
+              "https://hub.docker.com/v2/repositories/zimengxiong/pancakeslicer/tags/$tag/")
+            case $code in 204) echo "deleted Docker Hub tag $tag" ;; 404) echo "no Docker Hub tag $tag" ;; *) echo "Docker Hub returned $code"; exit 1 ;; esac
+          done

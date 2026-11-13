@@ -1,21 +1,22 @@
 # PancakeSlicer: web UI, service and slicing engine in one container.
 #   docker compose -f deploy/docker-compose.yml up -d
 # Then open http://<host>:6868.
-# The image is a multi-arch manifest (linux/amd64 + linux/arm64); Docker auto-selects the right variant.
 name: pancakeslicer
 services:
   pancakeslicer:
-    image: ghcr.io/zimengxiong/pancakeslicer:latest
+    image: zimengxiong/pancakeslicer:latest
     container_name: pancakeslicer
     restart: unless-stopped
     ports:
       - "6868:6868"
     environment:
-      ORCA_WEB_MAX_JOBS: "2"
-      ORCA_WEB_PRINTER_NETWORK: lan
-      PANCAKE_STAGE_CACHE_MAX_MB: "1024"
+      ORCA_WEB_MAX_JOBS: "2"                 # slices running at once; more queue
+      ORCA_WEB_PRINTER_NETWORK: lan           # lan | off | comma-separated CIDRs/host names
+      PANCAKE_STAGE_CACHE_MAX_MB: "1024"      # engine stage cache cap (disposable)
+      # ORCA_WEB_BEARER_TOKEN: change-me      # require a token for changes (recommended if exposed)
     volumes:
-      - pancakeslicer-data:/data
+      - pancakeslicer-data:/data              # projects, profiles, printers, preferences, jobs
+      # - pancakeslicer-cache:/data/jobs/stage-cache   # optional: keep the disposable cache out of backups
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -24,3 +25,4 @@ services:
 
 volumes:
   pancakeslicer-data:
+  # pancakeslicer-cache:
