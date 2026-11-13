@@ -174,3 +174,29 @@ jobs:
             desktop/dist/*.AppImage
             desktop/dist/*.deb
             desktop/dist/*.tar.gz
+      - name: Build and test the Docker image
+        if: env.PUBLISH == 'true'
+        run: |
+          git archive --format=tar.gz -o desktop/build/engine-linux-arm64/source.tar.gz HEAD
+          chmod 0644 desktop/build/engine-linux-arm64/source.tar.gz
+          printf '**\n!engine-linux-arm64/ \n!engine-linux-arm64/**\n!web/\n!web/**\n' > desktop/build/.dockerignore
+          docker build --file deploy/Dockerfile --build-arg VERSION="${TAG#v}" --build-arg REVISION="$GITHUB_SHA" \
+            --build-arg SOURCE_SHA256="$(sha256sum desktop/build/engine-linux-arm64/source.tar.gz | cut -d' ' -f1)" \
+            --tag pancakeslicer:ci desktop/build
+          docker run -d --name test -p 6868:6868 pancakeslicer:ci
+          for i in $(seq 30); do curl -fsS http://127.0.0.1:6868/api/healthz && break; sleep 2; done
+          sh deploy/test.sh http://127.0.0.1:6868
+          docker rm -f test
+      - name: Push the Docker image to sabhyaaggarwal GHCR
+        if: env.PUBLISH == 'true'
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          version="${TAG#v}"
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+          for repo in ghcr.io/sabhyaaggarwal/pancakeslicer docker.io/sabhyaaggarwal/pancakeslicer; do
+            for t in "$version" latest; do docker tag pancakeslicer:ci "$repo:$t"; docker push "$repo:$t"; done
+          done
+          docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/sabhyaaggarwal/pancakeslicer:$version
