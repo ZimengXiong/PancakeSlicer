@@ -159,13 +159,15 @@ jobs:
         run: |
           python desktop/scripts/stage-ci.py --os linux --arch arm64 --tool build-native/tool/nonplanar_slice_tool \
             --reference desktop/build/reference --engine-source "${{ steps.keys.outputs.source }}"
+      - name: Rename engine directory for Dockerfile (expects engine-linux-x64)
+        run: cp -r desktop/build/engine-linux-arm64 desktop/build/engine-linux-x64
       - name: Build and test the Docker image
         run: |
-          git archive --format=tar.gz -o desktop/build/engine-linux-arm64/source.tar.gz HEAD
-          chmod 0644 desktop/build/engine-linux-arm64/source.tar.gz
-          printf '**\n!engine-linux-arm64/ \n!engine-linux-arm64/**\n!web/\n!web/**\n' > desktop/build/.dockerignore
+          git archive --format=tar.gz -o desktop/build/engine-linux-x64/source.tar.gz HEAD
+          chmod 0644 desktop/build/engine-linux-x64/source.tar.gz
+          printf '**\n!engine-linux-x64/ \n!engine-linux-x64/**\n!web/\n!web/**\n' > desktop/build/.dockerignore
           docker build --file deploy/Dockerfile --build-arg VERSION="${TAG#v}" --build-arg REVISION="$GITHUB_SHA" \
-            --build-arg SOURCE_SHA256="$(sha256sum desktop/build/engine-linux-arm64/source.tar.gz | cut -d' ' -f1)" \
+            --build-arg SOURCE_SHA256="$(sha256sum desktop/build/engine-linux-x64/source.tar.gz | cut -d' ' -f1)" \
             --tag pancakeslicer:ci desktop/build
           docker run -d --name test -p 6868:6868 pancakeslicer:ci
           for i in $(seq 30); do curl -fsS http://127.0.0.1:6868/api/healthz && break; sleep 2; done
