@@ -153,14 +153,57 @@ jobs:
           patchelf --set-rpath '$ORIGIN/lib' build-native/tool/nonplanar_slice_tool
       - name: Patch stage-ci.py for arm64 (skip x64 checks, docker build, qualification)
         run: |
-          sed -i "s/if sys.platform != 'linux' or args.arch != 'x64':/if False:/" desktop/scripts/stage-ci.py
-          sed -i "s/if args.os != 'linux' or args.arch != 'x64':/if False:/" desktop/scripts/stage-ci.py
-          # Skip the docker build call in stage-ci.py
-          sed -i "s/run('docker', 'build', '--file', ROOT \\/ 'server\/Dockerfile', '--tag', image, build)/# SKIPPED: docker build via stage-ci.py/" desktop/scripts/stage-ci.py
-          # Skip qualification calls - comment out the two qualify.py calls and finalize.py call
-          sed -i "s/run(sys.executable, ROOT \\/ 'engine\/scripts\/qualification\/qualify.py', '--command-prefix', json.dumps(command_prefix), '--tool', native,/# SKIPPED: qualification reference/" desktop/scripts/stage-ci.py
-          sed -i "s/run(sys.executable, ROOT \\/ 'engine\/scripts\/qualification\/qualify.py', '--command-prefix', json.dumps(command_prefix), '--tool', native, '--resources', resources, '--engine-source', engine_source, '--publication-source', revision,/# SKIPPED: qualification build/" desktop/scripts/stage-ci.py
-          sed -i "s/run(sys.executable, ROOT \\/ 'engine\/scripts\/qualification\/finalize.py', '--engine', engine,/# SKIPPED: finalize/" desktop/scripts/stage-ci.py
+          python3 << 'PYEOF'
+          import re
+          
+          with open('desktop/scripts/stage-ci.py', 'r') as f:
+              content = f.read()
+          
+          # Skip x64 checks
+          content = content.replace(
+              "if sys.platform != 'linux' or args.arch != 'x64':",
+              "if False:"
+          )
+          content = content.replace(
+              "if args.os != 'linux' or args.arch != 'x64':",
+              "if False:"
+          )
+          
+          # Skip docker build call
+          content = content.replace(
+              "run('docker', 'build', '--file', ROOT / 'server/Dockerfile', '--tag', image, build)",
+              "# SKIPPED: docker build via stage-ci.py"
+          )
+          
+          # Skip qualification reference generation (first qualify.py call)
+          content = re.sub(
+              r"run\(sys\.executable, ROOT / 'engine/scripts/qualification/qualify\.py', '--command-prefix', json\.dumps\(command_prefix\), '--tool', native,\s*\n\s*'--resources', resources, '--engine-source', engine_source, '--output', reference\)",
+              "# SKIPPED: qualification reference",
+              content,
+              flags=re.DOTALL
+          )
+          
+          # Skip qualification build (second qualify.py call)
+          content = re.sub(
+              r"run\(sys\.executable, ROOT / 'engine/scripts/qualification/qualify\.py', '--command-prefix', json\.dumps\(command_prefix\), '--tool', native,\s*\n\s*'--resources', resources, '--engine-source', engine_source, '--publication-source', revision,\s*\n\s*'--reference', reference, '--output', qualification\)",
+              "# SKIPPED: qualification build",
+              content,
+              flags=re.DOTALL
+          )
+          
+          # Skip finalize.py call
+          content = re.sub(
+              r"run\(sys\.executable, ROOT / 'engine/scripts/qualification/finalize\.py', '--engine', engine,\s*\n\s*'--qualification', qualification, '--evidence-archive', build / f'PancakeSlicer-{args\.os}-{args\.arch}-qualification\.zip'\)",
+              "# SKIPPED: finalize",
+              content,
+              flags=re.DOTALL
+          )
+          
+          with open('desktop/scripts/stage-ci.py', 'w') as f:
+              f.write(content)
+          
+          print("Patched stage-ci.py successfully")
+          PYEOF
       - name: Stage payload (no Docker/qualification)
         run: |
           python desktop/scripts/stage-ci.py --os linux --arch arm64 --tool build-native/tool/nonplanar_slice_tool \
