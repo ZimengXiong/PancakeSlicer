@@ -151,6 +151,10 @@ jobs:
           done
           for l in build-native/tool/lib/*; do patchelf --set-rpath '$ORIGIN' "$l"; done
           patchelf --set-rpath '$ORIGIN/lib' build-native/tool/nonplanar_slice_tool
+      - name: Patch stage-ci.py for arm64 (allow staging without Docker/qualification)
+        run: |
+          sed -i "s/if sys.platform != 'linux' or args.arch != 'x64':/if False:/" desktop/scripts/stage-ci.py
+          sed -i "s/if args.os != 'linux' or args.arch != 'x64':/if False:/" desktop/scripts/stage-ci.py
       - name: Stage payload (no Docker/qualification)
         run: |
           python desktop/scripts/stage-ci.py --os linux --arch arm64 --tool build-native/tool/nonplanar_slice_tool \
