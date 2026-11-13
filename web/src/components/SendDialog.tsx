@@ -82,11 +82,14 @@ function SendView({ close, printer, head, edit }: { close: () => void; printer: 
   const fits = connectionOutput(kind) === output;
   const single = useStore((s) => s.filamentSlots.length === 1);
   const machineConfig = useStore((s) => effectiveConfig(s, 'machine'));
-  const capabilities = printerCapabilities(useStore((s) => printerModel(s, printer)) || connection.model || '');
-  const [leveling, setLeveling] = useState(true);
+  const resolvedModel = useStore((s) => printerModel(s, printer)) || connection.model || '';
+  const elegooCC = kind === 'elegoolink' && !/2$/.test(resolvedModel) && (!resolvedModel || /^Elegoo Centauri/i.test(resolvedModel));
+  const capabilities = printerCapabilities(resolvedModel);
+  const [leveling, setLeveling] = useState(kind !== 'elegoolink');
   const [flowCali, setFlowCali] = useState(false);
   const [vibration, setVibration] = useState(true);
   const [timelapse, setTimelapse] = useState(false);
+  const [bedType, setBedType] = useState(0);
   const filamentKey = useStore((s) => JSON.stringify(s.filamentSlots.map((name, i) => {
     const config = effectiveConfig(s, 'filament', i), base = resolvePreset(s, 'filament', name).base;
     return { key: name, type: valueAt(config.filament_type, 0), color: filamentColor(s, i + 1), name: (base?.name ?? name).replace(/\s+@.*$/, ''),
@@ -133,7 +136,11 @@ function SendView({ close, printer, head, edit }: { close: () => void; printer: 
   const send = async (start: boolean) => {
     if (!jobId) return;
     if (start && warnings.length && !await confirmDialog('Check printer setup', warnings.join('\n'), ['Print anyway', 'Cancel'])) return;
-    const options = !bambu ? {} : { bed_leveling: leveling, flow_cali: flowCali, vibration_cali: vibration, timelapse: capabilities.timelapse && timelapse, ...(trays && shown.length === filaments.length && shown.every((id) => id >= 0) ? { ams_mapping: shown, ams_mapping_2: physicalMapping(shown, trays) } : {}) };
+    const options = bambu
+      ? { bed_leveling: leveling, flow_cali: flowCali, vibration_cali: vibration, timelapse: capabilities.timelapse && timelapse, ...(trays && shown.length === filaments.length && shown.every((id) => id >= 0) ? { ams_mapping: shown, ams_mapping_2: physicalMapping(shown, trays) } : {}) }
+      : elegooCC
+        ? { bed_leveling: leveling, timelapse, bed_type: bedType }
+        : {};
     await printerSend.submit(printer, jobId, { start, filename: exportFilename(), ...options });
   };
   const handOff = async () => {
@@ -199,6 +206,15 @@ function SendView({ close, printer, head, edit }: { close: () => void; printer: 
         <label className="modal-check"><Check checked={flowCali} disabled={busy} onCheckedChange={setFlowCali} />Flow calibration</label>
         <label className="modal-check"><Check checked={vibration} disabled={busy} onCheckedChange={setVibration} />Vibration calibration</label>
         {capabilities.timelapse && <label className="modal-check"><Check checked={timelapse} disabled={busy} onCheckedChange={setTimelapse} />Timelapse</label>}
+      </div>}
+      {elegooCC && fits && <div className="send-options" role="group" aria-label="Print options">
+        <label className="modal-check"><Check checked={leveling} disabled={busy} onCheckedChange={setLeveling} />Heated bed leveling</label>
+        <label className="modal-check"><Check checked={timelapse} disabled={busy} onCheckedChange={setTimelapse} />Timelapse</label>
+        <label className="form-row"><span>Build plate</span>
+          <Dropdown className="combo" value={bedType} disabled={busy} aria-label="Build plate"
+            onValueChange={(next) => setBedType(Number(next))}
+            options={[{ value: 0, label: 'Side A (Textured)' }, { value: 1, label: 'Side B (Smooth)' }]} />
+        </label>
       </div>}
       {bambu && fits && (
         <section className="send-section" aria-label="Filaments"><div className="send-section-head"><h3>Filaments</h3>

@@ -4,7 +4,7 @@ import { printerCapabilities } from './capabilities';
 import type { Transfer } from '../flow/transfer';
 import { joinParts, SEP } from '../separator';
 
-export type ConnectionKind = 'bambu-lan' | 'bambu-connect' | 'moonraker' | 'octoprint' | 'prusalink' | 'duet';
+export type ConnectionKind = 'bambu-lan' | 'bambu-connect' | 'moonraker' | 'octoprint' | 'prusalink' | 'duet' | 'elegoolink';
 export interface PrinterConnection {
   printer: string; id: string; name: string; kind: ConnectionKind;
   host?: string; serial?: string; model?: string; url?: string; auth?: string; username?: string;
@@ -31,7 +31,7 @@ export interface PrinterConnections {
 
 export const KIND_LABEL: Record<ConnectionKind, string> = {
   'bambu-lan': 'Bambu Lab (LAN)', 'bambu-connect': 'Bambu Connect', moonraker: 'Klipper (Moonraker)',
-  octoprint: 'OctoPrint', prusalink: 'PrusaLink', duet: 'Duet (RepRapFirmware)',
+  octoprint: 'OctoPrint', prusalink: 'PrusaLink', duet: 'Duet (RepRapFirmware)', elegoolink: 'Elegoo Link',
 };
 export const connectionOutput = (kind: ConnectionKind) => (kind === 'bambu-lan' || kind === 'bambu-connect' ? 'gcode.3mf' : 'gcode');
 

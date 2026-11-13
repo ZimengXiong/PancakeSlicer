@@ -93,6 +93,17 @@ func (s *Server) printerJobThumbnail(w http.ResponseWriter, r *http.Request) {
 }
 
 func controlHostDevice(ctx context.Context, p *PrinterConfig, secret string, in bambuControlRequest) error {
+	if p.Kind == "elegoolink" {
+		if classifyElegooModel(p) == elegooCC2 {
+			return errors.New("Live temperature and light controls aren't supported over this connection type.")
+		}
+		if classifyElegooModel(p) == elegooOther && !testElegooCC(ctx, p, secret).OK {
+			octo := *p
+			octo.Kind = "octoprint"
+			return controlHostDevice(ctx, &octo, secret, in)
+		}
+		return controlElegooDevice(ctx, p, in)
+	}
 	if in.Value == nil || in.Control != "nozzle" && in.Control != "bed" {
 		return errors.New("This printer connection only supports setting nozzle and bed temperatures.")
 	}

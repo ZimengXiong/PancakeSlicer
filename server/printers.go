@@ -50,6 +50,7 @@ type PrinterConfig struct {
 var connectionKinds = map[string]string{
 	"bambu-lan": "Bambu Lab (LAN)", "bambu-connect": "Bambu Connect", "moonraker": "Klipper (Moonraker)",
 	"octoprint": "OctoPrint", "prusalink": "PrusaLink", "duet": "Duet (RepRapFirmware)",
+	"elegoolink": "Elegoo Link",
 }
 
 type ConnectionView struct {
@@ -80,7 +81,7 @@ func (p *PrinterConfig) validate(resources string) error {
 		return errors.New("Printer name must be 200 characters or fewer (with no control characters).")
 	}
 	switch p.Kind {
-	case "prusalink", "octoprint", "moonraker", "duet":
+	case "prusalink", "octoprint", "moonraker", "duet", "elegoolink":
 		u, err := url.Parse(p.URL)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 			return errors.New("Please enter a base http:// or https:// URL without login credentials, query parameters, or #fragments.")
@@ -129,7 +130,7 @@ func (p *PrinterConfig) validate(resources string) error {
 		}
 		return nil
 	default:
-		return errors.New("kind must be bambu-lan, bambu-connect, moonraker, octoprint, prusalink or duet")
+		return errors.New("kind must be bambu-lan, bambu-connect, moonraker, octoprint, prusalink, duet or elegoolink")
 	}
 	switch p.TLS {
 	case "", "system", "bambu-ca", "tofu":
@@ -473,6 +474,7 @@ func (s *Server) sendJob(w http.ResponseWriter, r *http.Request) {
 		Start         *bool  `json:"start"`
 		Filename      string `json:"filename"`
 		BedLeveling   *bool  `json:"bed_leveling"`
+		BedType       *int   `json:"bed_type"`
 		FlowCali      bool   `json:"flow_cali"`
 		Timelapse     bool   `json:"timelapse"`
 		VibrationCali *bool  `json:"vibration_cali"`
@@ -583,7 +585,10 @@ func (s *Server) sendJob(w http.ResponseWriter, r *http.Request) {
 	m.history.record(view)
 	m.hub.changed()
 	audit(map[string]any{"event": "send_accepted", "job_id": j.ID, "printer": p.Printer, "kind": p.Kind, "client": client, "start_print": start, "bytes": st.Size()})
-	options := bambuOptions{bedLeveling: body.BedLeveling == nil || *body.BedLeveling, flowCali: body.FlowCali, timelapse: body.Timelapse, vibrationCali: body.VibrationCali == nil || *body.VibrationCali, useAMS: body.UseAMS, amsMapping: body.AMSMapping, amsMapping2: body.AMSMapping2}
+	options := bambuOptions{bedLeveling: (body.BedLeveling != nil && *body.BedLeveling) || (body.BedLeveling == nil && p.Kind != "elegoolink"), flowCali: body.FlowCali, timelapse: body.Timelapse, vibrationCali: body.VibrationCali == nil || *body.VibrationCali, useAMS: body.UseAMS, amsMapping: body.AMSMapping, amsMapping2: body.AMSMapping2}
+	if body.BedType != nil && (*body.BedType == 0 || *body.BedType == 1) {
+		options.bedType = *body.BedType
+	}
 	if body.AMSMapping != nil {
 		options.useAMS = false
 		for _, t := range body.AMSMapping {
@@ -628,6 +633,7 @@ func (u *upload) placed() string {
 
 type bambuOptions struct {
 	bedLeveling, flowCali, timelapse, vibrationCali, useAMS bool
+	bedType                                                 int
 	amsMapping                                              []int
 	amsMapping2                                             []bambuTrayAddress
 }
@@ -660,6 +666,8 @@ func (s *Server) runSend(ctx context.Context, stopTimeout context.CancelFunc, j 
 			message, err = sendBambu(ctx, u)
 		case "duet":
 			message, err = sendDuet(ctx, u)
+		case "elegoolink":
+			message, err = sendElegoo(ctx, u)
 		default:
 			message, err = sendHTTP(ctx, u)
 		}

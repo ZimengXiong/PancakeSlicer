@@ -218,7 +218,7 @@ func (s *Server) connectionBody(w http.ResponseWriter, r *http.Request) (*connec
 		return nil, false
 	}
 	if connectionKinds[body.Kind] == "" {
-		fail(w, 400, "kind must be bambu-lan, bambu-connect, moonraker, octoprint, prusalink or duet")
+		fail(w, 400, "kind must be bambu-lan, bambu-connect, moonraker, octoprint, prusalink, duet or elegoolink")
 		return nil, false
 	}
 	body.Name, body.Host, body.Serial, body.AccessCode = strings.TrimSpace(body.Name), strings.TrimSpace(body.Host), strings.ToUpper(strings.TrimSpace(body.Serial)), strings.TrimSpace(body.AccessCode)
@@ -318,8 +318,11 @@ func (s *Server) putConnection(w http.ResponseWriter, r *http.Request) {
 	sp := storedPrinter{Printer: key, TLS: map[bool]string{true: "tofu"}[body.Kind == "bambu-lan"], Model: body.Model}
 	if prev != nil {
 		sp.ID = prev.id
+		if prev.Kind == body.Kind {
+			sp.Model = cmp.Or(body.Model, prev.model)
+		}
 		if prev.Kind == "bambu-lan" && body.Kind == "bambu-lan" && prev.Host == body.Host && prev.Serial == body.Serial {
-			sp.TLS, sp.Fingerprint, sp.Model = prev.TLS, prev.Fingerprint, cmp.Or(body.Model, prev.model)
+			sp.TLS, sp.Fingerprint = prev.TLS, prev.Fingerprint
 		}
 	} else {
 		sp.ID = newSendID()
@@ -447,7 +450,7 @@ func (s *Server) adoptConnection(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, next.view())
 }
 
-var legacyHostTypes = map[string]string{"prusalink": "prusalink", "octoprint": "octoprint", "moonraker": "moonraker", "duet": "duet"}
+var legacyHostTypes = map[string]string{"prusalink": "prusalink", "octoprint": "octoprint", "moonraker": "moonraker", "duet": "duet", "elegoolink": "elegoolink"}
 
 func (s *Server) importLegacyConnection(w http.ResponseWriter, r *http.Request) {
 	m := s.sends
@@ -549,7 +552,11 @@ func (s *Server) testConnection(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
-	sp := storedPrinter{ID: "0000000000000000", Name: cmp.Or(body.Name, "the printer"), TLS: map[bool]string{true: "tofu"}[body.Kind == "bambu-lan"]}
+	savedModel := ""
+	if saved != nil && saved.Kind == body.Kind {
+		savedModel = saved.model
+	}
+	sp := storedPrinter{ID: "0000000000000000", Printer: body.Printer, Name: cmp.Or(body.Name, "the printer"), Model: cmp.Or(body.Model, savedModel), TLS: map[bool]string{true: "tofu"}[body.Kind == "bambu-lan"]}
 	p, err := s.editConfig(ctx, body, sp)
 	if err != nil {
 		stage := map[bool]string{true: "address", false: "invalid"}[errors.Is(err, errHostRefused)]
@@ -646,6 +653,8 @@ func (s *Server) controlConnection(w http.ResponseWriter, r *http.Request) {
 		err = controlBambu(ctx, p, secret, body.Action)
 	case "duet":
 		err = controlDuet(ctx, p, secret, body.Action)
+	case "elegoolink":
+		err = controlElegoo(ctx, p, secret, body.Action)
 	default:
 		err = controlHTTP(ctx, p, secret, body.Action)
 	}
