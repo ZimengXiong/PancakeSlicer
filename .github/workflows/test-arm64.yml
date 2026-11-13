@@ -151,12 +151,16 @@ jobs:
           done
           for l in build-native/tool/lib/*; do patchelf --set-rpath '$ORIGIN' "$l"; done
           patchelf --set-rpath '$ORIGIN/lib' build-native/tool/nonplanar_slice_tool
-      - name: Patch stage-ci.py for arm64 (allow staging without Docker/qualification, skip docker build)
+      - name: Patch stage-ci.py for arm64 (skip x64 checks, docker build, qualification)
         run: |
           sed -i "s/if sys.platform != 'linux' or args.arch != 'x64':/if False:/" desktop/scripts/stage-ci.py
           sed -i "s/if args.os != 'linux' or args.arch != 'x64':/if False:/" desktop/scripts/stage-ci.py
-          # Skip the docker build call in stage-ci.py (line 204)
+          # Skip the docker build call in stage-ci.py
           sed -i "s/run('docker', 'build', '--file', ROOT \\/ 'server\/Dockerfile', '--tag', image, build)/# SKIPPED: docker build via stage-ci.py/" desktop/scripts/stage-ci.py
+          # Skip qualification calls - comment out the two qualify.py calls and finalize.py call
+          sed -i "s/run(sys.executable, ROOT \\/ 'engine\/scripts\/qualification\/qualify.py', '--command-prefix', json.dumps(command_prefix), '--tool', native,/# SKIPPED: qualification reference/" desktop/scripts/stage-ci.py
+          sed -i "s/run(sys.executable, ROOT \\/ 'engine\/scripts\/qualification\/qualify.py', '--command-prefix', json.dumps(command_prefix), '--tool', native, '--resources', resources, '--engine-source', engine_source, '--publication-source', revision,/# SKIPPED: qualification build/" desktop/scripts/stage-ci.py
+          sed -i "s/run(sys.executable, ROOT \\/ 'engine\/scripts\/qualification\/finalize.py', '--engine', engine,/# SKIPPED: finalize/" desktop/scripts/stage-ci.py
       - name: Stage payload (no Docker/qualification)
         run: |
           python desktop/scripts/stage-ci.py --os linux --arch arm64 --tool build-native/tool/nonplanar_slice_tool \
