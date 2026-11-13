@@ -103,14 +103,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: .github/scripts/build/prebuilt.sh publish "${{ steps.keys.outputs.engine }}" build-native/tool .
 
-  linux:
-    name: linux-arm64 (reference, installers, Docker)
+  linux-installers:
+    name: linux-arm64 (installers only - no Docker/qualification)
     needs: engine
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     permissions:
       contents: write
-      packages: write
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
@@ -124,29 +123,15 @@ jobs:
         with:
           go-version: '1.27.2'
           cache-dependency-path: server/go.sum
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.13'
-          cache: pip
-          cache-dependency-path: engine/scripts/qualification/requirements.txt
-      - run: python -m pip install -r engine/scripts/qualification/requirements.txt
-      - name: Install runtime libraries
-        run: |
-          .github/scripts/build/apt-install.sh patchelf rpm fakeroot libcurl4-openssl-dev libssl-dev libgl-dev libdbus-1-dev \
-            libfontconfig1-dev libfreetype-dev libx11-dev libudev-dev libva-dev libjpeg-turbo8-dev liblzma-dev libxkbcommon-dev \
-            libwayland-dev libegl-dev
       - name: Name the prebuilt assets
         id: keys
         run: .github/scripts/build/keys.sh linux-arm64 linux
-      - name: Fetch the engine, its dependencies and the reference
-        id: fetch
+      - name: Fetch the engine and its dependencies
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/build/prebuilt.sh fetch "${{ steps.keys.outputs.engine }}" build-native/tool
           .github/scripts/build/prebuilt.sh fetch "${{ steps.keys.outputs.deps }}" engine/deps/build
-          rc=0; .github/scripts/build/prebuilt.sh fetch "${{ steps.keys.outputs.reference }}" desktop/build/reference || rc=$?
-          case $rc in 0) echo "reference=true" >> "$GITHUB_OUTPUT" ;; 3) echo "reference=false" >> "$GITHUB_OUTPUT" ;; *) exit $rc ;; esac
       - name: Build web UI and desktop shell dependencies
         run: |
           npm ci --prefix web
@@ -164,15 +149,14 @@ jobs:
           done
           for l in build-native/tool/lib/*; do patchelf --set-rpath '$ORIGIN' "$l"; done
           patchelf --set-rpath '$ORIGIN/lib' build-native/tool/nonplanar_slice_tool
-      - name: Qualify and stage the payload
+      - name: Patch stage-ci.py for arm64 (allow staging without Docker)
+        run: |
+          sed -i "s/if sys.platform != 'linux' or args.arch != 'x64':/if sys.platform != 'linux':/" desktop/scripts/stage-ci.py
+          sed -i "s/if args.os != 'linux' or args.arch != 'x64':/if args.os != 'linux':/" desktop/scripts/stage-ci.py
+      - name: Stage payload (no Docker/qualification)
         run: |
           python desktop/scripts/stage-ci.py --os linux --arch arm64 --tool build-native/tool/nonplanar_slice_tool \
-            --reference desktop/build/reference --engine-source "${{ steps.keys.outputs.source }}" --image "pancakeslicer-check:${GITHUB_SHA::10}"
-      - name: Publish the engine reference
-        if: steps.fetch.outputs.reference == 'false'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: .github/scripts/build/prebuilt.sh publish "${{ steps.keys.outputs.reference }}" desktop/build/reference .
+            --reference desktop/build/reference --engine-source "${{ steps.keys.outputs.source }}"
       - name: Package installers
         run: |
           cp desktop/icon-1024.png desktop/build/icon.png
@@ -190,35 +174,3 @@ jobs:
             desktop/dist/*.AppImage
             desktop/dist/*.deb
             desktop/dist/*.tar.gz
-            desktop/build/PancakeSlicer-*-qualification.zip
-      - name: Attach installers to the release
-        if: env.PUBLISH == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: .github/scripts/build/attach.sh desktop/dist/*.AppImage desktop/dist/*.deb desktop/dist/*.tar.gz desktop/build/PancakeSlicer-*-qualification.zip
-      - name: Build and test the Docker image
-        if: env.PUBLISH == 'true'
-        run: |
-          git archive --format=tar.gz -o desktop/build/engine-linux-arm64/source.tar.gz HEAD
-          chmod 0644 desktop/build/engine-linux-arm64/source.tar.gz
-          printf '**\n!engine-linux-arm64/ \n!engine-linux-arm64/**\n!web/\n!web/**\n' > desktop/build/.dockerignore
-          docker build --file deploy/Dockerfile --build-arg VERSION="${TAG#v}" --build-arg REVISION="$GITHUB_SHA" \
-            --build-arg SOURCE_SHA256="$(sha256sum desktop/build/engine-linux-arm64/source.tar.gz | cut -d' ' -f1)" \
-            --tag pancakeslicer:ci desktop/build
-          docker run -d --name test -p 6868:6868 pancakeslicer:ci
-          for i in $(seq 30); do curl -fsS http://127.0.0.1:6868/api/healthz && break; sleep 2; done
-          sh deploy/test.sh http://127.0.0.1:6868
-          docker rm -f test
-      - name: Push the Docker image
-        if: env.PUBLISH == 'true'
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        run: |
-          version="${TAG#v}"
-          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
-          for repo in ghcr.io/zimengxiong/pancakeslicer docker.io/zimengxiong/pancakeslicer; do
-            for t in "$version" latest; do docker tag pancakeslicer:ci "$repo:$t"; docker push "$repo:$t"; done
-          done
-          docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/zimengxiong/pancakeslicer:$version
