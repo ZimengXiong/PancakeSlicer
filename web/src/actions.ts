@@ -268,7 +268,6 @@ export function pickModelFiles(onFiles: (files: FileList) => unknown) {
   const input = document.createElement('input');
   input.type = 'file';
   input.multiple = true;
-  input.accept = ['stl', 'obj', '3mf', ...(canLoadStep() ? ['step', 'stp'] : [])].flatMap((e) => [`.${e}`, `.${e.toUpperCase()}`]).join(',');
   input.onchange = () => input.files && void onFiles(input.files);
   input.click();
 }
