@@ -21,6 +21,7 @@ function defaultKind(printer: string): ConnectionKind {
   const { base, config } = resolvePreset(getState(), 'machine', printer);
   if (base?.vendor === 'BBL' || /bambu/i.test(base?.name ?? '')) return 'bambu-lan';
   if (base?.vendor === 'Prusa') return 'prusalink';
+  if (base?.vendor === 'Flashforge' || /flashforge/i.test(base?.name ?? '')) return 'flashforge';
   return String(config?.gcode_flavor ?? '') === 'klipper' ? 'moonraker' : 'octoprint';
 }
 
@@ -43,14 +44,14 @@ export function ConnectionEditor({ printer, name, onSaved }: { printer: string; 
   const [working, setWorking] = useState('');
   const [error, setError] = useState('');
   const sameKind = saved?.kind === kind;
-  const bambu = kind === 'bambu-lan', http = !bambu && kind !== 'bambu-connect';
+  const bambu = kind === 'bambu-lan', flashforge = kind === 'flashforge', http = !bambu && !flashforge && kind !== 'bambu-connect';
   const digest = kind === 'prusalink' && auth === 'digest';
   const keyOptional = kind === 'moonraker' || kind === 'duet';
   const edit = (): ConnectionEdit => ({ kind, name, model: model || undefined,
-    ...(bambu ? { host: host.trim(), serial: serial.trim(), access_code: secret } : {}),
+    ...(bambu || flashforge ? { host: host.trim(), serial: serial.trim(), access_code: secret } : {}),
     ...(http ? { url: url.trim(), key: secret, auth: kind === 'prusalink' ? auth : undefined, username: digest ? user.trim() : undefined } : {}) });
   const hasSecret = !!saved?.has_secret && sameKind;
-  const ready = kind === 'bambu-connect' || (bambu ? !!host.trim() && !!serial.trim() && (!!secret || hasSecret)
+  const ready = kind === 'bambu-connect' || (flashforge ? !!host.trim() && (!secret || !!serial.trim()) : bambu ? !!host.trim() && !!serial.trim() && (!!secret || hasSecret)
     : !!url.trim() && (keyOptional || !!secret || hasSecret) && (!digest || !!user.trim()));
   const fields = useRef(0);
   const touched = () => { fields.current++; setTest(null); };
@@ -68,7 +69,7 @@ export function ConnectionEditor({ printer, name, onSaved }: { printer: string; 
       `Heads up! ${d.model ?? found} at ${d.host ?? d.url} doesn't match your ${setupModel} profile. Sending ${name} G-code to a different printer model could crash the toolhead or ruin the print. Send it anyway?`,
       ['Use anyway', 'Cancel'], true)) return;
     setKind(d.kind); touched();
-    if (d.kind === 'bambu-lan') { setHost(d.host ?? ''); setSerial(d.serial ?? ''); setModel(d.model ?? ''); }
+    if (d.kind === 'bambu-lan' || d.kind === 'flashforge') { setHost(d.host ?? ''); setSerial(d.serial ?? ''); setModel(d.model ?? ''); }
     else setUrl((d.url ?? '').replace(/^http:\/\//, ''));
   };
   const addAsNew = (d: Discovered) => run('add', async () => {
@@ -96,6 +97,12 @@ export function ConnectionEditor({ printer, name, onSaved }: { printer: string; 
         <label className="form-row"><span>Serial number</span><input className="text" value={serial} spellCheck={false} onChange={(e) => changed(setSerial)(e.target.value)} /></label>
         <label className="form-row"><span>Access code</span><input className="text" type="password" autoComplete="new-password" value={secret} placeholder={hasSecret ? 'Stored' : ''} onChange={(e) => changed(setSecret)(e.target.value)} /></label>
         <div className="hint-text connection-hint">On your printer screen, go to Settings › Network › LAN Only and turn on Developer Mode to find your access code.</div>
+      </>}
+      {flashforge && <>
+        <label className="form-row"><span>Printer IP</span><input className="text" value={host} placeholder="192.168.1.60" spellCheck={false} onChange={(e) => changed(setHost)(e.target.value)} /></label>
+        <label className="form-row"><span>Serial number (optional)</span><input className="text" value={serial} spellCheck={false} onChange={(e) => changed(setSerial)(e.target.value)} /></label>
+        <label className="form-row"><span>Check code (optional)</span><input className="text" type="password" autoComplete="new-password" value={secret} placeholder={hasSecret ? 'Stored' : ''} onChange={(e) => changed(setSecret)(e.target.value)} /></label>
+        <div className="hint-text connection-hint">The IP address is enough to send and monitor prints. Add the serial number and check code from your printer's network settings to upload through its local API instead.</div>
       </>}
       {kind === 'bambu-connect' && <div className="hint-text">{DESKTOP
         ? "Sending opens your sliced file in Bambu Connect on this computer to print through your Bambu account—handy when your printer is in cloud mode."

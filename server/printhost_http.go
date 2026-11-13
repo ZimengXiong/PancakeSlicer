@@ -133,12 +133,16 @@ func limitSendBuffer(conn net.Conn) {
 }
 
 func multipartUpload(ctx context.Context, target string, u *upload, file io.Reader, fields [][2]string) (*http.Request, error) {
+	return multipartFile(ctx, target, "file", u.filename, u.size, file, fields)
+}
+
+func multipartFile(ctx context.Context, target, field, filename string, size int64, file io.Reader, fields [][2]string) (*http.Request, error) {
 	var head strings.Builder
 	w := multipart.NewWriter(&head)
 	for _, f := range fields {
 		w.WriteField(f[0], f[1])
 	}
-	if _, err := w.CreateFormFile("file", u.filename); err != nil {
+	if _, err := w.CreateFormFile(field, filename); err != nil {
 		return nil, err
 	}
 	tail := "\r\n--" + w.Boundary() + "--\r\n"
@@ -146,7 +150,7 @@ func multipartUpload(ctx context.Context, target string, u *upload, file io.Read
 	if err != nil {
 		return nil, err
 	}
-	req.ContentLength = int64(head.Len()) + u.size + int64(len(tail))
+	req.ContentLength = int64(head.Len()) + size + int64(len(tail))
 	req.Header.Set("Content-Type", w.FormDataContentType())
 	return req, nil
 }
