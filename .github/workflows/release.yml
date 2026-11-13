@@ -68,8 +68,9 @@ jobs:
           echo "all=$chosen" >> "$GITHUB_OUTPUT"
           echo "desktop=$(jq -c 'map(select(.os != "linux"))' <<<"$chosen")" >> "$GITHUB_OUTPUT"
           echo "linux=$(jq -r 'any(.os == "linux")' <<<"$chosen")" >> "$GITHUB_OUTPUT"
-      - name: Debug outputs
+      - name: Debug prepare outputs
         run: |
+          echo "Step outputs:"
           echo "all=${{ steps.matrix.outputs.all }}"
           echo "desktop=${{ steps.matrix.outputs.desktop }}"
           echo "linux=${{ steps.matrix.outputs.linux }}"
@@ -86,6 +87,19 @@ jobs:
             git archive --format=tar.gz --prefix="PancakeSlicer-${TAG#v}/" -o "$source" HEAD
             gh release upload "$TAG" "$source"
           fi
+
+  debug-outputs:
+    name: Debug outputs
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print prepare outputs
+        run: |
+          echo "needs.prepare.outputs.all = '${{ needs.prepare.outputs.all }}'"
+          echo "needs.prepare.outputs.desktop = '${{ needs.prepare.outputs.desktop }}'"
+          echo "needs.prepare.outputs.linux = '${{ needs.prepare.outputs.linux }}'"
+          echo "fromJSON test:"
+          echo '${{ needs.prepare.outputs.all }}' | jq .
 
   engine:
     name: engine ${{ matrix.target }}
@@ -215,7 +229,7 @@ jobs:
 
   linux:
     name: ${{ matrix.target }} (reference, installers, Docker)
-    needs: [prepare, engine]
+    needs: [prepare, engine, debug-outputs]
     if: needs.prepare.outputs.linux == 'true'
     strategy:
       fail-fast: false
@@ -230,6 +244,12 @@ jobs:
       contents: write
       packages: write
     steps:
+      - name: Debug linux matrix
+        run: |
+          echo "Matrix target: ${{ matrix.target }}"
+          echo "Matrix os: ${{ matrix.os }}"
+          echo "Matrix arch: ${{ matrix.arch }}"
+          echo "Matrix runner: ${{ matrix.runner }}"
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
