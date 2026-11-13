@@ -1,4 +1,4 @@
-name: Test ARM64
+name: Test ARM64 Docker
 
 on:
   workflow_dispatch:
@@ -11,10 +11,11 @@ on:
       publish:
         description: Push Docker images
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: read
+  packages: write
 
 env:
   TAG: ${{ inputs.tag }}
@@ -103,13 +104,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: .github/scripts/build/prebuilt.sh publish "${{ steps.keys.outputs.engine }}" build-native/tool .
 
-  linux-installers:
-    name: linux-arm64 (installers only - no Docker/qualification)
+  docker-arm64:
+    name: Build and push arm64 Docker image
     needs: engine
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     permissions:
-      contents: write
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
@@ -149,33 +151,11 @@ jobs:
           done
           for l in build-native/tool/lib/*; do patchelf --set-rpath '$ORIGIN' "$l"; done
           patchelf --set-rpath '$ORIGIN/lib' build-native/tool/nonplanar_slice_tool
-      - name: Patch stage-ci.py for arm64 (allow staging without Docker)
-        run: |
-          sed -i "s/if sys.platform != 'linux' or args.arch != 'x64':/if sys.platform != 'linux':/" desktop/scripts/stage-ci.py
-          sed -i "s/if args.os != 'linux' or args.arch != 'x64':/if args.os != 'linux':/" desktop/scripts/stage-ci.py
       - name: Stage payload (no Docker/qualification)
         run: |
           python desktop/scripts/stage-ci.py --os linux --arch arm64 --tool build-native/tool/nonplanar_slice_tool \
             --reference desktop/build/reference --engine-source "${{ steps.keys.outputs.source }}"
-      - name: Package installers
-        run: |
-          cp desktop/icon-1024.png desktop/build/icon.png
-          cp -a build-native/tool/lib desktop/build/engine-linux-arm64/lib
-          chmod -R a+rX desktop/build/engine-linux-arm64/lib
-          npm run dist:linux --prefix desktop
-      - name: Upload workflow artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: PancakeSlicer-linux-arm64
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 14
-          path: |
-            desktop/dist/*.AppImage
-            desktop/dist/*.deb
-            desktop/dist/*.tar.gz
       - name: Build and test the Docker image
-        if: env.PUBLISH == 'true'
         run: |
           git archive --format=tar.gz -o desktop/build/engine-linux-arm64/source.tar.gz HEAD
           chmod 0644 desktop/build/engine-linux-arm64/source.tar.gz
