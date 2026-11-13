@@ -161,7 +161,7 @@ jobs:
             --reference desktop/build/reference --engine-source "${{ steps.keys.outputs.source }}"
       - name: Rename engine directory for Dockerfile (expects engine-linux-x64)
         run: cp -r desktop/build/engine-linux-arm64 desktop/build/engine-linux-x64
-      - name: Build and test the Docker image
+      - name: Build and test the Docker image (using deploy/Dockerfile)
         run: |
           git archive --format=tar.gz -o desktop/build/engine-linux-x64/source.tar.gz HEAD
           chmod 0644 desktop/build/engine-linux-x64/source.tar.gz
