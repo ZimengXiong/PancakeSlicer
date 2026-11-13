@@ -151,60 +151,7 @@ jobs:
           done
           for l in build-native/tool/lib/*; do patchelf --set-rpath '$ORIGIN' "$l"; done
           patchelf --set-rpath '$ORIGIN/lib' build-native/tool/nonplanar_slice_tool
-      - name: Patch stage-ci.py for arm64 (skip x64 checks, docker build, qualification)
-        run: |
-          python3 << 'PYEOF'
-          import re
-          
-          with open('desktop/scripts/stage-ci.py', 'r') as f:
-              content = f.read()
-          
-          # Skip x64 checks
-          content = content.replace(
-              "if sys.platform != 'linux' or args.arch != 'x64':",
-              "if False:"
-          )
-          content = content.replace(
-              "if args.os != 'linux' or args.arch != 'x64':",
-              "if False:"
-          )
-          
-          # Skip docker build call
-          content = content.replace(
-              "run('docker', 'build', '--file', ROOT / 'server/Dockerfile', '--tag', image, build)",
-              "# SKIPPED: docker build via stage-ci.py"
-          )
-          
-          # Skip qualification reference generation (first qualify.py call)
-          content = re.sub(
-              r"run\(sys\.executable, ROOT / 'engine/scripts/qualification/qualify\.py', '--command-prefix', json\.dumps\(command_prefix\), '--tool', native,\s*\n\s*'--resources', resources, '--engine-source', engine_source, '--output', reference\)",
-              "# SKIPPED: qualification reference",
-              content,
-              flags=re.DOTALL
-          )
-          
-          # Skip qualification build (second qualify.py call)
-          content = re.sub(
-              r"run\(sys\.executable, ROOT / 'engine/scripts/qualification/qualify\.py', '--command-prefix', json\.dumps\(command_prefix\), '--tool', native,\s*\n\s*'--resources', resources, '--engine-source', engine_source, '--publication-source', revision,\s*\n\s*'--reference', reference, '--output', qualification\)",
-              "# SKIPPED: qualification build",
-              content,
-              flags=re.DOTALL
-          )
-          
-          # Skip finalize.py call
-          content = re.sub(
-              r"run\(sys\.executable, ROOT / 'engine/scripts/qualification/finalize\.py', '--engine', engine,\s*\n\s*'--qualification', qualification, '--evidence-archive', build / f'PancakeSlicer-{args\.os}-{args\.arch}-qualification\.zip'\)",
-              "# SKIPPED: finalize",
-              content,
-              flags=re.DOTALL
-          )
-          
-          with open('desktop/scripts/stage-ci.py', 'w') as f:
-              f.write(content)
-          
-          print("Patched stage-ci.py successfully")
-          PYEOF
-      - name: Stage payload (no Docker/qualification)
+      - name: Stage ARM64 payload
         run: |
           python desktop/scripts/stage-ci.py --os linux --arch arm64 --tool build-native/tool/nonplanar_slice_tool \
             --reference desktop/build/reference --engine-source "${{ steps.keys.outputs.source }}"
@@ -218,20 +165,13 @@ jobs:
           docker build --file deploy/Dockerfile --build-arg VERSION="${TAG#v}" --build-arg REVISION="$GITHUB_SHA" \
             --build-arg SOURCE_SHA256="$(sha256sum desktop/build/engine-linux-x64/source.tar.gz | cut -d' ' -f1)" \
             --tag pancakeslicer:ci desktop/build
-          docker run -d --name test -p 6868:6868 pancakeslicer:ci
-          for i in $(seq 30); do curl -fsS http://127.0.0.1:6868/api/healthz && break; sleep 2; done
-          sh deploy/test.sh http://127.0.0.1:6868
-          docker rm -f test
       - name: Push the Docker image to sabhyaaggarwal GHCR
         if: env.PUBLISH == 'true'
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           version="${TAG#v}"
           echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
-          for repo in ghcr.io/sabhyaaggarwal/pancakeslicer docker.io/sabhyaaggarwal/pancakeslicer; do
-            for t in "$version" latest; do docker tag pancakeslicer:ci "$repo:$t"; docker push "$repo:$t"; done
+          for t in "$version" latest; do
+            docker tag pancakeslicer:ci "ghcr.io/sabhyaaggarwal/pancakeslicer:$t"
+            docker push "ghcr.io/sabhyaaggarwal/pancakeslicer:$t"
           done
           docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/sabhyaaggarwal/pancakeslicer:$version

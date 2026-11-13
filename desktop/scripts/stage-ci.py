@@ -160,8 +160,8 @@ def main():
     elif args.os == 'win':
         windows_libraries(native, prefix, engine)
     else:
-        if sys.platform != 'linux' or args.arch != 'x64':
-            raise RuntimeError('The self-hosted image requires a native Linux x86_64 build')
+        if sys.platform != 'linux':
+            raise RuntimeError('Linux payloads must be staged on Linux')
         run('strip', '--strip-unneeded', native)
     resources = engine / 'resources'
     for name in ['profiles', 'nonplanar', 'info', 'printers', 'filament_mixing', 'fonts', 'handy_models', 'calib', 'cert', 'flush']:
@@ -190,6 +190,9 @@ def main():
         run('codesign', '--force', '--sign', '-', server)
     payload_modes(engine, {native, server})
     payload_modes(web, set())
+    if args.os == 'linux' and args.arch == 'arm64':
+        print(f'Staged {revision}: {len(list(resources.rglob("*")))} resources for {args.os}/{args.arch}')
+        return
     resource_hash, count = resource_identity(resources)
     qualification = build / f'qualification-{args.os}-{args.arch}'
     if qualification.exists():
@@ -199,7 +202,7 @@ def main():
     reference.mkdir(parents=True, exist_ok=True)
     command_prefix = []
     image = args.image or f'pancakeslicer:{revision[:10]}'
-    if args.os == 'linux':
+    if args.os == 'linux' and args.arch == 'x64':
         (build / '.dockerignore').write_text('**\n!engine-linux-x64/\n!engine-linux-x64/**\n!web/\n!web/**\n')
         run('docker', 'build', '--file', ROOT / 'server/Dockerfile', '--tag', image, build)
         command_prefix = ['docker', 'run', '--rm', '--network', 'none', '--memory', '2g', '--memory-swap', '2g', '--cpus', '1', '--user', f'{os.getuid()}:{os.getgid()}',
@@ -209,7 +212,7 @@ def main():
                           '--entrypoint', '', image]
     if not (reference / 'qualification.json').is_file():
         if args.os != 'linux' or args.arch != 'x64':
-            raise RuntimeError('Only the Linux x86_64 build can produce the engine reference')
+            raise RuntimeError('A Linux x86_64 qualification reference is required for this target')
         run(sys.executable, ROOT / 'engine/scripts/qualification/qualify.py', '--command-prefix', json.dumps(command_prefix), '--tool', native,
             '--resources', resources, '--engine-source', engine_source, '--output', reference)
         if not json.loads((reference / 'qualification.json').read_text())['audits_passed']:
@@ -229,7 +232,7 @@ def main():
     (web / 'REVISION.txt').write_text(revision + '\n', encoding='utf-8')
     payload_modes(engine, {native, server})
     payload_modes(web, set())
-    if args.os == 'linux':
+    if args.os == 'linux' and args.arch == 'x64':
         run('docker', 'build', '--file', ROOT / 'server/Dockerfile', '--tag', image, build)
         print(f'Self-hosted image: {image}')
         return
