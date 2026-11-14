@@ -13,7 +13,7 @@ export interface Api {
   presets(vendor: string, models: string[], update?: (c: PresetCatalog) => void, names?: string[]): Promise<PresetCatalog>;
   submit(req: JobRequest, signal?: AbortSignal, onUpload?: (fraction: number) => void): Promise<string>;
   status(id: string): Promise<JobStatus>;
-  events(id: string, on: { progress(e: ProgressEvent): void; done(s: JobStatus): void; error(msg: string): void; log?(stream: string, line: string): void; result?(s: JobStatus): void }): () => void;
+  events(id: string, on: { progress(e: ProgressEvent): void; done(s: JobStatus): void; error(msg: string): void; log?(stream: string, line: string): void; result?(s: JobStatus): void; timeoutWarning?(): void }): () => void;
   cancel(id: string): Promise<void>;
   downloadUrl(id: string): string;
   movesUrl(id: string): string;
@@ -131,7 +131,11 @@ const realApi: Api = {
       if (finished) return;
       last = e.seq;
       switch (e.type) {
-        case 'message': case 'progress': case 'state': {
+        case 'message': case 'progress': case 'state': case 'timeout_warning': {
+          try {
+            if (JSON.parse(e.data).timeout_warning === true) on.timeoutWarning?.();
+          } catch {
+          }
           const p = parseProgress(e.data);
           if (p) on.progress(p);
           if (/"state"\s*:\s*"(done|failed|canceled)"/.test(e.data)) void finish();

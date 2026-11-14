@@ -75,18 +75,19 @@ type JobRequest struct {
 }
 
 type Event struct {
-	Seq           uint64   `json:"seq"`
-	QueuePosition *int     `json:"queue_position,omitempty"`
-	ETA           *float64 `json:"eta_seconds,omitempty"`
-	ReplayGap     bool     `json:"replay_gap,omitempty"`
-	ID            int      `json:"id"`
-	Type          string   `json:"type"`
-	Stream        string   `json:"stream,omitempty"`
-	Line          string   `json:"line,omitempty"`
-	State         JobState `json:"state,omitempty"`
-	Error         string   `json:"error,omitempty"`
-	Stage         string   `json:"stage,omitempty"`
-	Pct           *float64 `json:"pct,omitempty"`
+	Seq            uint64   `json:"seq"`
+	QueuePosition  *int     `json:"queue_position,omitempty"`
+	ETA            *float64 `json:"eta_seconds,omitempty"`
+	ReplayGap      bool     `json:"replay_gap,omitempty"`
+	ID             int      `json:"id"`
+	Type           string   `json:"type"`
+	Stream         string   `json:"stream,omitempty"`
+	Line           string   `json:"line,omitempty"`
+	State          JobState `json:"state,omitempty"`
+	Error          string   `json:"error,omitempty"`
+	Stage          string   `json:"stage,omitempty"`
+	Pct            *float64 `json:"pct,omitempty"`
+	TimeoutWarning bool     `json:"timeout_warning,omitempty"`
 }
 
 const maxEvents = 20000
@@ -112,25 +113,26 @@ type Job struct {
 	clearanceOnce sync.Once
 	clearance     clearanceVerdict
 
-	mu            sync.Mutex
-	transitions   []JobTransition
-	transitionSeq uint64
-	state         JobState
-	started       time.Time
-	finished      time.Time
-	errMsg        string
-	exitCode      *int
-	slice         json.RawMessage
-	events        []Event
-	dropped       int
-	eventBytes    int
-	changed       chan struct{}
-	cancel        context.CancelFunc
-	stopReason    string
-	stage         string
-	progress      *float64
-	send          *Transfer
-	resultReady   bool
+	mu             sync.Mutex
+	transitions    []JobTransition
+	transitionSeq  uint64
+	state          JobState
+	started        time.Time
+	finished       time.Time
+	errMsg         string
+	exitCode       *int
+	slice          json.RawMessage
+	events         []Event
+	dropped        int
+	eventBytes     int
+	changed        chan struct{}
+	cancel         context.CancelFunc
+	stopReason     string
+	stage          string
+	progress       *float64
+	send           *Transfer
+	resultReady    bool
+	timeoutWarning bool
 }
 
 type JobView struct {
@@ -153,6 +155,7 @@ type JobView struct {
 	ETA            *float64        `json:"eta_seconds,omitempty"`
 	ResultReady    bool            `json:"result_ready,omitempty"`
 	HasSurfaceGrid bool            `json:"has_surface_grid"`
+	TimeoutWarning bool            `json:"timeout_warning,omitempty"`
 }
 
 func (j *Job) View() JobView {
@@ -171,7 +174,7 @@ func (j *Job) snapshotView() JobView {
 	defer j.mu.Unlock()
 	v := JobView{ID: j.ID, RetryOf: j.RetryOf, State: j.state, Created: j.Created, Error: j.errMsg, ExitCode: j.exitCode,
 		Stage: j.stage, Progress: j.progress, Request: j.Request, QueuePosition: j.queuePosition, ETA: j.eta, EventsURL: "/api/jobs/" + j.ID + "/events", Slice: j.slice,
-		ResultReady: j.resultReady && !j.state.Finished()}
+		ResultReady: j.resultReady && !j.state.Finished(), TimeoutWarning: j.timeoutWarning}
 	if !j.started.IsZero() {
 		t := j.started
 		v.Started = &t
@@ -794,6 +797,30 @@ func (m *JobManager) run(ctx context.Context, j *Job) {
 		ctx, cancel = context.WithTimeout(ctx, m.cfg.JobTimeout)
 	}
 	defer cancel()
+	warningTimer := time.NewTimer(m.cfg.JobWarningTimeout)
+	warningDone := make(chan struct{})
+	defer func() {
+		close(warningDone)
+		if !warningTimer.Stop() {
+			select {
+			case <-warningTimer.C:
+			default:
+			}
+		}
+	}()
+	go func() {
+		select {
+		case <-warningTimer.C:
+			j.mu.Lock()
+			if !j.state.Finished() {
+				j.timeoutWarning = true
+				j.appendLocked(Event{Type: "timeout_warning", State: j.state, Error: fmt.Sprintf("slicing has exceeded the %s warning threshold", m.cfg.JobWarningTimeout), TimeoutWarning: true})
+				j.persistLocked()
+			}
+			j.mu.Unlock()
+		case <-warningDone:
+		}
+	}()
 	if ctx.Err() != nil {
 		j.setState(StateInterrupted, "worker interrupted before preparation")
 		return

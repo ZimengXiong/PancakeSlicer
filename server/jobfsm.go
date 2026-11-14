@@ -160,6 +160,7 @@ type jobRecord struct {
 	Progress       *float64           `json:"progress,omitempty"`
 	QueuePosition  int                `json:"queue_position"`
 	StageDurations map[string]float64 `json:"stage_durations,omitempty"`
+	TimeoutWarning bool               `json:"timeout_warning,omitempty"`
 }
 
 func atomicJobFile(name string, data []byte) error {
@@ -185,7 +186,7 @@ func (j *Job) persistLocked() {
 	r := jobRecord{ID: j.ID, Client: j.Client, Request: j.Request, Created: j.Created, State: j.state,
 		Started: j.started, Finished: j.finished, Error: j.errMsg, ExitCode: j.exitCode, Slice: j.slice,
 		IdempotencyKey: j.IdempotencyKey, RetryOf: j.RetryOf, NextEvent: j.nextEvent, TransitionSeq: j.transitionSeq,
-		Stage: j.stage, Progress: j.progress, QueuePosition: j.queuePosition, StageDurations: j.stageDurations}
+		Stage: j.stage, Progress: j.progress, QueuePosition: j.queuePosition, StageDurations: j.stageDurations, TimeoutWarning: j.timeoutWarning}
 	b, err := json.Marshal(r)
 	if err == nil {
 		err = atomicJobFile(filepath.Join(j.Dir, "job.json"), b)
@@ -273,7 +274,7 @@ func (m *JobManager) restoreJobs() error {
 		j := &Job{ID: r.ID, Client: r.Client, Dir: dir, Request: r.Request, Created: r.Created,
 			state: r.State, started: r.Started, finished: r.Finished, errMsg: r.Error, exitCode: r.ExitCode, slice: r.Slice,
 			IdempotencyKey: r.IdempotencyKey, RetryOf: r.RetryOf, nextEvent: r.NextEvent, transitionSeq: r.TransitionSeq,
-			stage: r.Stage, progress: r.Progress, queuePosition: 0, stageHistory: m.stages,
+			stage: r.Stage, progress: r.Progress, queuePosition: 0, stageHistory: m.stages, timeoutWarning: r.TimeoutWarning,
 			stageDurations: r.StageDurations, changed: make(chan struct{}), transitions: transitions}
 		if j.stageDurations == nil {
 			j.stageDurations = map[string]float64{}
