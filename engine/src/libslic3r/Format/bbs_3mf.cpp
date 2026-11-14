@@ -6792,6 +6792,24 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
     bool _BBS_3MF_Exporter::_add_project_config_file_to_archive(mz_zip_archive& archive, const DynamicPrintConfig &config, Model& model, const std::vector<Preset*> &project_presets)
     {
         DynamicPrintConfig project_config(config);
+        const auto *compatible_printers = project_config.option<ConfigOptionStrings>("print_compatible_printers", true);
+        if (!compatible_printers || compatible_printers->values.empty()) {
+            std::string printer_settings_id;
+            if (const auto *printer = project_config.option<ConfigOptionString>("printer_settings_id", true))
+                printer_settings_id = printer->value;
+            if (printer_settings_id.empty()) {
+                for (const Preset *preset : project_presets) {
+                    if (!preset || preset->type != Preset::TYPE_PRINTER)
+                        continue;
+                    if (const auto *printer = preset->config.option<ConfigOptionString>("printer_settings_id", true))
+                        printer_settings_id = printer->value;
+                    if (!printer_settings_id.empty())
+                        break;
+                }
+            }
+            if (!printer_settings_id.empty())
+                project_config.set_key_value("print_compatible_printers", new ConfigOptionStrings({printer_settings_id}));
+        }
         const auto *head_id = config.option<ConfigOptionString>("nonplanar_head");
         for (const Preset *preset : project_presets)
             if (!head_id && preset->type == Preset::TYPE_PRINTER) {
