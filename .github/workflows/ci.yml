@@ -63,6 +63,7 @@ jobs:
               - 'flake.nix'
               - 'flake.lock'
               - 'pkgs/**'
+              - '.github/workflows/ci.yml'
 
   nix:
     name: Nix flake (evaluation and packages)
