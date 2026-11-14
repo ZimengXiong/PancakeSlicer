@@ -6801,7 +6801,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 for (const Preset *preset : project_presets) {
                     if (!preset || preset->type != Preset::TYPE_PRINTER)
                         continue;
-                    if (const auto *printer = preset->config.option<ConfigOptionString>("printer_settings_id", true))
+                    if (const auto *printer = preset->config.option<ConfigOptionString>("printer_settings_id"))
                         printer_settings_id = printer->value;
                     if (!printer_settings_id.empty())
                         break;
