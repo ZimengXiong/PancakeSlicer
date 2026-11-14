@@ -2,7 +2,7 @@ import math
 from pathlib import Path
 import re
 
-NOTE = 'cross-OS geometric equivalence, not byte identity'
+NOTE = 'cross-platform geometric equivalence, not byte identity'
 RULE = 'printed layer Z strings identical; positive moving extrusion E times filament cross-section: each visible role per layer <= 0.5%, each internal role per layer <= 1.0% and total <= 0.5%; extrusion plus travel XYZ path length <= 0.5%; header model printing time <= 1%; XY arcs measured analytically; custom machine start/end excluded'
 INTERNAL = {'Internal solid infill','Sparse infill','Inner wall','Support','Support interface','Support transition','Gap infill'}
 WORD = re.compile(r'([A-Z])([-+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][-+]?[0-9]+)?)', re.I)

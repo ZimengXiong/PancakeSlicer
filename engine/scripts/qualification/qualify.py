@@ -204,10 +204,10 @@ def main():
         raise RuntimeError('Engine or resources changed during qualification')
     result['audits_passed'] = len(result['audits']) == 3 and all(v['ok'] for v in result['audits'].values())
     result['identity_passed'] = bool(args.reference) and result['identity']['benchy_flat']['gcode']['identity'] != 'diff'
-    result['cross_os'] = bool(args.reference) and result['platform']['os'] != prior['platform']['os']
+    result['cross_platform'] = bool(args.reference) and result['platform'] != prior['platform']
     result['equivalence_passed'] = bool(args.reference) and all(result['identity'][name]['geometry']['passed'] for name in ['benchy_flat','benchy'])
-    result['readiness_basis'] = geometry.NOTE if result['cross_os'] else 'same-OS byte or declared normalized flat Benchy identity'
-    result['ready'] = result['audits_passed'] and (result['equivalence_passed'] if result['cross_os'] else result['identity_passed'])
+    result['readiness_basis'] = geometry.NOTE if result['cross_platform'] else 'same-platform byte or declared normalized flat Benchy identity'
+    result['ready'] = result['audits_passed'] and (result['equivalence_passed'] if result['cross_platform'] else result['identity_passed'])
     write(args.output/'qualification.json', result)
     if args.reference and not result['ready']:
         raise RuntimeError('qualification refused; inspect recorded audits and identity differences')
