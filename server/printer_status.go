@@ -186,6 +186,9 @@ func (h *statusHub) run(ctx context.Context, mon *monitor) {
 }
 
 func pollHost(ctx context.Context, p *PrinterConfig, secret string, publish func(PrinterStatus), poke chan struct{}) error {
+	if p.Kind == "elegoolink" {
+		return pollElegoo(ctx, p, secret, publish, poke)
+	}
 	h, base, err := httpSession(ctx, p, secret)
 	if err != nil {
 		return err

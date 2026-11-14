@@ -142,7 +142,8 @@ function DevicePanel({ connection, model, cover, status, live }: { connection: P
     try { await work(); return true; } catch (e) { setError(e instanceof Error ? e.message : 'Oops! The printer didn\'t accept that command'); return false; } finally { setPending(false); }
   };
   const busy = !live || !status?.online || pending;
-  const bambu = connection.kind === 'bambu-lan', temperaturesEditable = bambu || ['moonraker', 'octoprint', 'duet'].includes(connection.kind);
+  const bambu = connection.kind === 'bambu-lan', elegoo = connection.kind === 'elegoolink' && !/2$/.test(model || connection.model || '');
+  const temperaturesEditable = bambu || ['moonraker', 'octoprint', 'duet'].includes(connection.kind) || elegoo;
   const capabilities = printerCapabilities(model);
   const { lightLabel } = capabilities;
   const dual = (status?.nozzle_temps?.length ?? 0) > 1;
@@ -153,7 +154,7 @@ function DevicePanel({ connection, model, cover, status, live }: { connection: P
     await controlPrinter(connection.printer, action);
   });
   const fans = bambu ? Object.entries(status?.fans ?? {}).filter(([name]) => status?.controls?.fans?.[name] && capabilities.fans.includes(name)).sort(([a], [b]) => ['part', 'auxiliary', 'chamber'].indexOf(a) - ['part', 'auxiliary', 'chamber'].indexOf(b)) : [];
-  const light = bambu ? status?.light : undefined, speed = bambu ? status?.speed_mode : undefined;
+  const light = (bambu || elegoo) ? status?.light : undefined, speed = bambu ? status?.speed_mode : undefined;
   const trays = status?.trays ?? [], units = new Map<number, Tray[]>();
   const slotMatches = usePrinterSlots(bambu ? connection.printer : undefined);
   const matchOf = (t: Tray) => slotMatches.slots?.slots.find((m) => m.slot === slotOf(t));

@@ -21,6 +21,7 @@ function defaultKind(printer: string): ConnectionKind {
   const { base, config } = resolvePreset(getState(), 'machine', printer);
   if (base?.vendor === 'BBL' || /bambu/i.test(base?.name ?? '')) return 'bambu-lan';
   if (base?.vendor === 'Prusa') return 'prusalink';
+  if (/^Elegoo Centauri/.test(printerModel(getState(), printer))) return 'elegoolink';
   return String(config?.gcode_flavor ?? '') === 'klipper' ? 'moonraker' : 'octoprint';
 }
 
@@ -45,8 +46,9 @@ export function ConnectionEditor({ printer, name, onSaved }: { printer: string; 
   const sameKind = saved?.kind === kind;
   const bambu = kind === 'bambu-lan', http = !bambu && kind !== 'bambu-connect';
   const digest = kind === 'prusalink' && auth === 'digest';
-  const keyOptional = kind === 'moonraker' || kind === 'duet';
-  const edit = (): ConnectionEdit => ({ kind, name, model: model || undefined,
+  const setupModel = useStore((s) => String(resolvePreset(s, 'machine', printer).config?.printer_model ?? '')) || undefined;
+  const keyOptional = kind === 'moonraker' || kind === 'duet' || kind === 'elegoolink';
+  const edit = (): ConnectionEdit => ({ kind, name, model: kind === 'elegoolink' ? setupModel : model || undefined,
     ...(bambu ? { host: host.trim(), serial: serial.trim(), access_code: secret } : {}),
     ...(http ? { url: url.trim(), key: secret, auth: kind === 'prusalink' ? auth : undefined, username: digest ? user.trim() : undefined } : {}) });
   const hasSecret = !!saved?.has_secret && sameKind;
@@ -61,7 +63,6 @@ export function ConnectionEditor({ printer, name, onSaved }: { printer: string; 
     try { await action(); } catch (e) { setError(errorText(e)); } finally { setWorking(''); }
   };
   const modelOf = (preset?: string) => preset ? machines.find((m) => m.name === preset)?.model : undefined;
-  const setupModel = useStore((s) => String(resolvePreset(s, 'machine', printer).config?.printer_model ?? '')) || undefined;
   const use = async (d: Discovered) => {
     const found = modelOf(d.preset);
     if (found && setupModel && found !== setupModel && !await confirmDialog('Printer model mismatch',
@@ -108,9 +109,10 @@ export function ConnectionEditor({ printer, name, onSaved }: { printer: string; 
           </label>
         )}
         {digest && <label className="form-row"><span>User</span><input className="text" value={user} autoComplete="off" spellCheck={false} onChange={(e) => changed(setUser)(e.target.value)} /></label>}
-        <label className="form-row"><span>{digest || kind === 'duet' ? 'Password' : 'API key'}{keyOptional ? ' (optional)' : ''}</span>
+        <label className="form-row"><span>{kind === 'elegoolink' ? 'Access code' : digest || kind === 'duet' ? 'Password' : 'API key'}{keyOptional ? ' (optional)' : ''}</span>
           <input className="text" type="password" autoComplete="new-password" value={secret} placeholder={hasSecret ? 'Stored' : ''} onChange={(e) => changed(setSecret)(e.target.value)} />
         </label>
+        {kind === 'elegoolink' && <div className="hint-text connection-hint">Only Centauri 2 uses an access code (default 123456).</div>}
       </>}
       {working === 'test' && <div role="status" className="hint-text">Testing…</div>}
       {test && (test.ok ? <div role="status" className="send-ok">{sentence(test.message)}</div>

@@ -127,6 +127,9 @@ func jsonMessage(raw []byte) string {
 }
 
 func testHost(ctx context.Context, p *PrinterConfig, secret string) PrinterTest {
+	if p.Kind == "elegoolink" {
+		return testElegoo(ctx, p, secret)
+	}
 	if p.Kind == "duet" {
 		h, base, err := httpSession(ctx, p, secret)
 		if err == nil {

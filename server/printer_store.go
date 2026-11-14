@@ -218,7 +218,7 @@ func (s *Server) connectionBody(w http.ResponseWriter, r *http.Request) (*connec
 		return nil, false
 	}
 	if connectionKinds[body.Kind] == "" {
-		fail(w, 400, "kind must be bambu-lan, bambu-connect, moonraker, octoprint, prusalink or duet")
+		fail(w, 400, "kind must be bambu-lan, bambu-connect, moonraker, octoprint, prusalink, duet or elegoolink")
 		return nil, false
 	}
 	body.Name, body.Host, body.Serial, body.AccessCode = strings.TrimSpace(body.Name), strings.TrimSpace(body.Host), strings.ToUpper(strings.TrimSpace(body.Serial)), strings.TrimSpace(body.AccessCode)
@@ -447,7 +447,7 @@ func (s *Server) adoptConnection(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, next.view())
 }
 
-var legacyHostTypes = map[string]string{"prusalink": "prusalink", "octoprint": "octoprint", "moonraker": "moonraker", "duet": "duet"}
+var legacyHostTypes = map[string]string{"prusalink": "prusalink", "octoprint": "octoprint", "moonraker": "moonraker", "duet": "duet", "elegoolink": "elegoolink"}
 
 func (s *Server) importLegacyConnection(w http.ResponseWriter, r *http.Request) {
 	m := s.sends
@@ -476,6 +476,12 @@ func (s *Server) importLegacyConnection(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	edit := &connectionEdit{Kind: kind, Name: strings.TrimSpace(body.Name), URL: strings.TrimSpace(c["print_host"]), Key: c["printhost_apikey"]}
+	if kind == "elegoolink" {
+		// Upstream ElegooLink treats every printer outside the Centauri family as OctoPrint.
+		if edit.Model = c["printer_model"]; !strings.HasPrefix(edit.Model, "Elegoo Centauri") {
+			edit.Kind, edit.Model = "octoprint", ""
+		}
+	}
 	if port := strings.TrimSpace(c["printhost_port"]); port != "" && !strings.Contains(strings.TrimPrefix(strings.TrimPrefix(edit.URL, "http://"), "https://"), ":") {
 		edit.URL += ":" + port
 	}
@@ -549,7 +555,7 @@ func (s *Server) testConnection(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
-	sp := storedPrinter{ID: "0000000000000000", Name: cmp.Or(body.Name, "the printer"), TLS: map[bool]string{true: "tofu"}[body.Kind == "bambu-lan"]}
+	sp := storedPrinter{ID: "0000000000000000", Name: cmp.Or(body.Name, "the printer"), Model: body.Model, TLS: map[bool]string{true: "tofu"}[body.Kind == "bambu-lan"]}
 	p, err := s.editConfig(ctx, body, sp)
 	if err != nil {
 		stage := map[bool]string{true: "address", false: "invalid"}[errors.Is(err, errHostRefused)]
@@ -646,6 +652,8 @@ func (s *Server) controlConnection(w http.ResponseWriter, r *http.Request) {
 		err = controlBambu(ctx, p, secret, body.Action)
 	case "duet":
 		err = controlDuet(ctx, p, secret, body.Action)
+	case "elegoolink":
+		err = controlElegoo(ctx, p, body.Action)
 	default:
 		err = controlHTTP(ctx, p, secret, body.Action)
 	}
