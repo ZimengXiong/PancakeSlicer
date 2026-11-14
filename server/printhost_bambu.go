@@ -419,7 +419,7 @@ func mqttProjectFile(ctx context.Context, p *PrinterConfig, u *upload, plate, md
 		"project_id": "0", "profile_id": "0", "task_id": "0", "subtask_id": "0", "subtask_name": name,
 		"file": u.filename, "url": "file:///sdcard/" + u.filename, "md5": md5sum,
 		"timelapse": u.options.timelapse, "bed_type": "auto", "bed_leveling": u.options.bedLeveling, "flow_cali": u.options.flowCali,
-		"vibration_cali": u.options.vibrationCali, "layer_inspect": false, "use_ams": u.options.useAMS, "ams_mapping": legacyMapping, "ams_mapping_2": addresses,
+		"vibration_cali": u.options.vibrationCali, "layer_inspect": false, "use_ams": u.options.useAMS, "ams_mapping": legacyMapping, "ams_mapping2": addresses,
 	}}); err != nil {
 		return fail(err)
 	}
