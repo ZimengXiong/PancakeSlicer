@@ -17,7 +17,7 @@ buildNpmPackage {
 
   installPhase = ''
     mkdir -p $out/share/pancakeslicer/web
-    cp -R web/dist/. $out/share/pancakeslicer/web/
+    cp -R dist/. $out/share/pancakeslicer/web/
   '';
 
   meta = {
