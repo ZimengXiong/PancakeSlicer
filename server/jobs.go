@@ -789,7 +789,10 @@ func (m *JobManager) toolArgs(j *Job) []string {
 }
 
 func (m *JobManager) run(ctx context.Context, j *Job) {
-	ctx, cancel := context.WithTimeout(ctx, m.cfg.JobTimeout)
+	cancel := func() {}
+	if m.cfg.JobTimeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, m.cfg.JobTimeout)
+	}
 	defer cancel()
 	if ctx.Err() != nil {
 		j.setState(StateInterrupted, "worker interrupted before preparation")
