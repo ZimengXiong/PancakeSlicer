@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -88,13 +89,14 @@ func buildPrinterCatalog(root string) ([]catalogVendor, error) {
 			m := catalogModel{ID: model.Name, Name: model.Name, Family: model.Family, Nozzles: []string{}}
 			for _, n := range strings.Split(model.Nozzles, ";") {
 				if n = strings.TrimSpace(n); n != "" {
-					m.Nozzles = append(m.Nozzles, n)
+					m.Nozzles = append(m.Nozzles, nozzleKey(n))
 				}
 			}
 			slices.SortFunc(m.Nozzles, func(a, b string) int {
-				x, _ := strconv.ParseFloat(a, 64)
-				y, _ := strconv.ParseFloat(b, 64)
-				return int(math.Copysign(1, x-y))
+				if x, y := leadingNumber(a), leadingNumber(b); x != y {
+					return int(math.Copysign(1, x-y))
+				}
+				return strings.Compare(a, b)
 			})
 			if _, err := os.Stat(filepath.Join(dir, model.Name+"_cover.png")); err == nil {
 				m.Cover = "/api/printer-catalog/covers/" + url.PathEscape(id) + "/" + url.PathEscape(model.Name)
@@ -179,14 +181,31 @@ func machinesByNozzle(machines map[string]rawPreset, model string) map[string]st
 		if firstConfigText(config["printer_model"]) != model {
 			continue
 		}
-		n, err := strconv.ParseFloat(firstConfigText(config["nozzle_diameter"]), 64)
-		if err != nil {
+		key := firstConfigText(config["printer_variant"])
+		if key == "" {
+			key = firstConfigText(config["nozzle_diameter"])
+		}
+		if key = nozzleKey(key); key == "" {
 			continue
 		}
-		key := strconv.FormatFloat(n, 'f', -1, 64)
 		if cur, ok := out[key]; !ok || name < cur {
 			out[key] = name
 		}
 	}
 	return out
+}
+
+var leadingNumberPattern = regexp.MustCompile(`^\d*\.?\d+`)
+
+func leadingNumber(s string) float64 {
+	n, _ := strconv.ParseFloat(leadingNumberPattern.FindString(s), 64)
+	return n
+}
+
+func nozzleKey(variant string) string {
+	variant = strings.TrimSpace(variant)
+	if n, err := strconv.ParseFloat(variant, 64); err == nil {
+		return strconv.FormatFloat(n, 'f', -1, 64)
+	}
+	return variant
 }

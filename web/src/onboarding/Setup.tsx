@@ -9,7 +9,6 @@ import { createProfileFromBase } from '../profiles/catalog';
 import { addCatalogFamilies, useCatalog } from '../profiles/catalog-add';
 import { FIRST_SCREEN, loadedCatalog, PRINTER_CATALOG, printerCatalog, type CatalogFamily, type CatalogVendor } from '../profiles/catalog-reads';
 import { profileKey } from '../profiles/identity';
-import { nozzleOf } from '../profiles/machines';
 import { discoverPrinters, saveConnection, testConnection, type ConnectionEdit, type ConnectionKind, type ConnectionTest, type Discovered } from '../printers/connections';
 import { setup, TOUR_PAGES, useSetup } from './setup-flow';
 import { TOUR } from './tour';
@@ -23,19 +22,19 @@ const send = setup.send;
 const VENDOR_NAMES: Record<string, string> = { BBL: 'Bambu Lab' };
 const vendorName = (id: string, name = id) => VENDOR_NAMES[id] ?? name;
 
-interface PrinterModel { id: string; vendor: string; vendorName: string; model: string; cover?: string; nozzles: number[]; machines: Record<string, string>; presets: SystemPreset[] }
-interface Choices { model: PrinterModel | null; nozzles: number[]; connection: ConnectionEdit | null; filaments: Set<string> | null; families: CatalogFamily[] }
+interface PrinterModel { id: string; vendor: string; vendorName: string; model: string; cover?: string; nozzles: string[]; machines: Record<string, string>; presets: SystemPreset[] }
+interface Choices { model: PrinterModel | null; nozzles: string[]; connection: ConnectionEdit | null; filaments: Set<string> | null; families: CatalogFamily[] }
 let choices: Choices = { model: null, nozzles: [], connection: null, filaments: null, families: [] };
 
 const toModels = (vendors: CatalogVendor[]): PrinterModel[] => vendors.flatMap((v) => v.models.map((m) => ({ id: `${v.id}|${m.id}`, vendor: v.id,
-  vendorName: vendorName(v.id, v.name), model: m.name, cover: m.cover, nozzles: m.nozzles.map(Number).filter((n) => n > 0), machines: m.machines ?? {}, presets: [] })));
-async function loadModel(m: PrinterModel, nozzles: number[]): Promise<SystemPreset[]> {
-  const mine = () => getState().machines.filter((p) => p.vendor === m.vendor && (p.model ? p.model === m.model : /^(.*?)\s+[\d.]+\s*nozzle$/i.exec(p.name)?.[1] === m.model));
-  if (!nozzles.every((n) => mine().some((p) => Math.abs(nozzleOf(p) - n) < 1e-6))) {
+  vendorName: vendorName(v.id, v.name), model: m.name, cover: m.cover, nozzles: m.nozzles.filter((n) => m.machines?.[n]), machines: m.machines ?? {}, presets: [] })));
+async function loadModel(m: PrinterModel, nozzles: string[]): Promise<SystemPreset[]> {
+  const names = nozzles.map((n) => m.machines[n]).filter((x): x is string => !!x);
+  if (!names.length) throw new Error(`No ${m.model} preset found for ${nozzles.join(', ')} mm.`);
+  const mine = () => getState().machines.filter((p) => p.vendor === m.vendor && names.includes(p.name));
+  if (mine().length < names.length) {
     const api = getState().api;
     if (!api) throw new Error('Not connected to the slicing service.');
-    const names = nozzles.map((n) => m.machines[String(n)] ?? Object.entries(m.machines).find(([k]) => Number(k) === n)?.[1]).filter((x): x is string => !!x);
-    if (!names.length) throw new Error(`No ${m.model} preset found for ${nozzles.join(', ')} mm.`);
     const cat = await api.presets(m.vendor, [], undefined, names);
     const union = (current: SystemPreset[], incoming: SystemPreset[]) => { const keys = new Set(current.map(catalogKey)); return [...current, ...incoming.filter((p) => !keys.has(catalogKey(p)))]; };
     setState((st) => ({ machines: union(st.machines, cat.machines), processes: union(st.processes, cat.processes), filaments: union(st.filaments, cat.filaments) }));
@@ -112,12 +111,12 @@ function Printer() {
   const [vendor, setVendor] = useState<string | null>(choices.model?.vendor ?? 'BBL');
   const [search, setSearch] = useState('');
   const [model, setModel] = useState<PrinterModel | null>(choices.model);
-  const [nozzles, setNozzles] = useState<number[]>(choices.nozzles);
+  const [nozzles, setNozzles] = useState<string[]>(choices.nozzles);
   const [busy, setBusy] = useState(false);
   const q = search.trim().toLowerCase();
   const shown = (models ?? []).filter((m) => q ? `${m.vendorName} ${m.model}`.toLowerCase().includes(q) : m.vendor === vendor);
-  const pick = (m: PrinterModel) => { setModel(m); setNozzles(m.nozzles.includes(0.4) ? [0.4] : m.nozzles.slice(0, 1)); };
-  const toggle = (n: number) => setNozzles((list) => list.includes(n) ? list.filter((x) => x !== n) : [...list, n].sort((a, b) => a - b));
+  const pick = (m: PrinterModel) => { setModel(m); setNozzles(m.nozzles.includes('0.4') ? ['0.4'] : m.nozzles.slice(0, 1)); };
+  const toggle = (n: string) => setNozzles((list) => list.includes(n) ? list.filter((x) => x !== n) : (model?.nozzles ?? []).filter((x) => x === n || list.includes(x)));
   const next = async () => {
     if (!model) return;
     setBusy(true);
@@ -188,7 +187,7 @@ interface FilamentRow { key: string; name: string; brand: string; material: stri
 const baseMaterial = (m: string) => { const b = m.toUpperCase().split(/[-+ ]/)[0].replace(/\d+$/, ''); return b || m; };
 function Filaments({ error }: { error: string | null }) {
   const model = choices.model;
-  const machine = model ? (model.machines[String(choices.nozzles[0])] ?? Object.entries(model.machines).find(([k]) => Number(k) === choices.nozzles[0])?.[1] ?? '') : '';
+  const machine = model?.machines[choices.nozzles[0]] ?? '';
   const { data, error: readError } = useCatalog('filament', model?.vendor ?? '', !!model);
   const rows = useMemo<FilamentRow[]>(() => (data && 'families' in data ? data.families : [])
     .filter((f) => f.variants[machine] || f.fallback)
@@ -252,7 +251,7 @@ async function applyChoices() {
     const { model, nozzles, connection } = choices;
     let printerKey: string | null = null;
     if (model) for (const n of nozzles) {
-      const preset = model.presets.find((p) => Math.abs(nozzleOf(p) - n) < 1e-6);
+      const preset = model.presets.find((p) => p.name === model.machines[n]);
       if (!preset) continue;
       const key = await createProfileFromBase('machine', catalogKey(preset));
       if (!printerKey) { printerKey = key; requestPreset('machine', 0, key); }
