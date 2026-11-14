@@ -83,7 +83,7 @@ function SendView({ close, printer, head, edit }: { close: () => void; printer: 
   const single = useStore((s) => s.filamentSlots.length === 1);
   const machineConfig = useStore((s) => effectiveConfig(s, 'machine'));
   const resolvedModel = useStore((s) => printerModel(s, printer)) || connection.model || '';
-  const elegooCC = kind === 'elegoolink' && !/2$/.test(resolvedModel) && (!resolvedModel || /^Elegoo Centauri/i.test(resolvedModel));
+  const elegooCC = kind === 'elegoolink' && !/2$/.test(resolvedModel);
   const capabilities = printerCapabilities(resolvedModel);
   const [leveling, setLeveling] = useState(kind !== 'elegoolink');
   const [flowCali, setFlowCali] = useState(false);
@@ -208,7 +208,7 @@ function SendView({ close, printer, head, edit }: { close: () => void; printer: 
         {capabilities.timelapse && <label className="modal-check"><Check checked={timelapse} disabled={busy} onCheckedChange={setTimelapse} />Timelapse</label>}
       </div>}
       {elegooCC && fits && <div className="send-options" role="group" aria-label="Print options">
-        <label className="modal-check"><Check checked={leveling} disabled={busy} onCheckedChange={setLeveling} />Heated bed leveling</label>
+        <label className="modal-check"><Check checked={leveling} disabled={busy} onCheckedChange={setLeveling} />Bed leveling</label>
         <label className="modal-check"><Check checked={timelapse} disabled={busy} onCheckedChange={setTimelapse} />Timelapse</label>
         <label className="form-row"><span>Build plate</span>
           <Dropdown className="combo" value={bedType} disabled={busy} aria-label="Build plate"

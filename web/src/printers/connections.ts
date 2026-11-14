@@ -1,6 +1,6 @@
 import { mutation, responseError } from '../api/access';
 import { getState, setState } from '../state/store';
-import { printerCapabilities } from './capabilities';
+import { printerCapabilities, printerModel } from './capabilities';
 import type { Transfer } from '../flow/transfer';
 import { joinParts, SEP } from '../separator';
 
@@ -88,7 +88,7 @@ export const LEGACY_HOST_KEYS = ['host_type', 'print_host', 'printhost_apikey', 
 export async function migrateLegacyHost(printer: string, name: string, config: Record<string, unknown>): Promise<string | null> {
   const legacy = Object.fromEntries(LEGACY_HOST_KEYS.flatMap((k) => (config[k] == null || config[k] === '' ? [] : [[k, String([config[k]].flat()[0])]])));
   if (!legacy.print_host) return null;
-  const r = await mutation(path(printer, '/legacy'), json('POST', { name, config: legacy }));
+  const r = await mutation(path(printer, '/legacy'), json('POST', { name, config: { ...legacy, printer_model: printerModel(getState(), printer) } }));
   if (r.ok) return null;
   return `${name}: ${(await responseError(r)).message}`;
 }

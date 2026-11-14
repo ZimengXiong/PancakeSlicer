@@ -21,7 +21,7 @@ function defaultKind(printer: string): ConnectionKind {
   const { base, config } = resolvePreset(getState(), 'machine', printer);
   if (base?.vendor === 'BBL' || /bambu/i.test(base?.name ?? '')) return 'bambu-lan';
   if (base?.vendor === 'Prusa') return 'prusalink';
-  if (config?.host_type === 'elegoolink' || base?.vendor === 'Elegoo') return 'elegoolink';
+  if (/^Elegoo Centauri/.test(printerModel(getState(), printer))) return 'elegoolink';
   return String(config?.gcode_flavor ?? '') === 'klipper' ? 'moonraker' : 'octoprint';
 }
 
@@ -48,7 +48,7 @@ export function ConnectionEditor({ printer, name, onSaved }: { printer: string; 
   const digest = kind === 'prusalink' && auth === 'digest';
   const setupModel = useStore((s) => String(resolvePreset(s, 'machine', printer).config?.printer_model ?? '')) || undefined;
   const keyOptional = kind === 'moonraker' || kind === 'duet' || kind === 'elegoolink';
-  const edit = (): ConnectionEdit => ({ kind, name, model: model || (kind === 'elegoolink' ? setupModel : undefined),
+  const edit = (): ConnectionEdit => ({ kind, name, model: kind === 'elegoolink' ? setupModel : model || undefined,
     ...(bambu ? { host: host.trim(), serial: serial.trim(), access_code: secret } : {}),
     ...(http ? { url: url.trim(), key: secret, auth: kind === 'prusalink' ? auth : undefined, username: digest ? user.trim() : undefined } : {}) });
   const hasSecret = !!saved?.has_secret && sameKind;
@@ -109,10 +109,10 @@ export function ConnectionEditor({ printer, name, onSaved }: { printer: string; 
           </label>
         )}
         {digest && <label className="form-row"><span>User</span><input className="text" value={user} autoComplete="off" spellCheck={false} onChange={(e) => changed(setUser)(e.target.value)} /></label>}
-        <label className="form-row"><span>{kind === 'elegoolink' ? 'Access code / API key' : digest || kind === 'duet' ? 'Password' : 'API key'}{keyOptional ? ' (optional)' : ''}</span>
+        <label className="form-row"><span>{kind === 'elegoolink' ? 'Access code' : digest || kind === 'duet' ? 'Password' : 'API key'}{keyOptional ? ' (optional)' : ''}</span>
           <input className="text" type="password" autoComplete="new-password" value={secret} placeholder={hasSecret ? 'Stored' : ''} onChange={(e) => changed(setSecret)(e.target.value)} />
         </label>
-        {kind === 'elegoolink' && <div className="hint-text connection-hint">Centauri Carbon uses only the IP address. Centauri 2 uses its LAN access code (default 123456).</div>}
+        {kind === 'elegoolink' && <div className="hint-text connection-hint">Only Centauri 2 uses an access code (default 123456).</div>}
       </>}
       {working === 'test' && <div role="status" className="hint-text">Testing…</div>}
       {test && (test.ok ? <div role="status" className="send-ok">{sentence(test.message)}</div>
@@ -124,7 +124,7 @@ export function ConnectionEditor({ printer, name, onSaved }: { printer: string; 
           const result = await testConnection(printer, edit());
           if (mine !== fields.current) return;
           setTest(result);
-          if (result.ok && result.model && (bambu || kind === 'elegoolink')) setModel(result.model);
+          if (result.ok && result.model && bambu) setModel(result.model);
         })}>Test connection</button>
         <button type="button" className="btn-primary" disabled={!ready || !!working} onClick={() => void run('save', async () => {
           await saveConnection(printer, edit()); setSecret(''); toast(`Saved connection for ${name}!`); onSaved?.();
