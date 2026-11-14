@@ -9,11 +9,15 @@ buildNpmPackage {
   npmRoot = "web";
   npmDepsHash = "sha256-FuxSU9tv/hcRBMrtHjck+f0476xmz21W6RUFfMSZhKY=";
 
-  npmBuildScript = "build";
+  dontNpmBuild = true;
+  buildPhase = ''
+    cd web
+    npm run build
+  '';
 
   installPhase = ''
     mkdir -p $out/share/pancakeslicer/web
-    cp -R dist/. $out/share/pancakeslicer/web/
+    cp -R web/dist/. $out/share/pancakeslicer/web/
   '';
 
   meta = {
