@@ -37,6 +37,7 @@ jobs:
       server: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.server == 'true' }}
       desktop: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.desktop == 'true' }}
       engine: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.engine == 'true' || steps.filter.outputs.pipeline == 'true' }}
+      nix: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.nix == 'true' }}
     steps:
       - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v3
@@ -58,6 +59,22 @@ jobs:
               - '!**/*.md'
             pipeline:
               - '{.github/workflows/release.yml,.github/scripts/build/**,desktop/scripts/stage-ci.py,deploy/Dockerfile,deploy/test.sh,server/Dockerfile}'
+            nix:
+              - 'flake.nix'
+              - 'flake.lock'
+              - 'pkgs/**'
+
+  nix:
+    name: Nix flake (evaluation and packages)
+    needs: changes
+    if: needs.changes.outputs.nix == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - run: nix flake check --no-build --all-systems
+      - run: nix build .#server .#web --no-link
 
   web:
     name: Web (tsc + build)
