@@ -23,7 +23,7 @@ import { flushReady } from './flush-state';
 import { calibOverrides, firstLayer, jobFields, outputKind, overrides, plateSignature } from './slice-input';
 import { arrange, bakeStl, bedBounds, loadMesh, loadProject, nextFreeSpot, parsePoints, plateJson, outsideBed } from './plater/geometry';
 import { projectEdits } from './plater/projectTransforms';
-import { confirmDialog, messageDialog, numberDialog, promptDialog } from './components/Ask';
+import { confirmDialog, numberDialog, promptDialog } from './components/Ask';
 import {
   PRESET_META, effectiveConfig, getState, markStale, newId, presetEdits, printerPreset, resolvePreset, selectPrinter, setState, toast, type JobView, type PlateObject, type State,
 } from './state/store';
@@ -540,7 +540,7 @@ export async function slice(calib?: { kind: string; params: string; head?: strin
     done: (job) => { if (!current()) return; bindSlicePreview(navigation, job.id); setState({job: {...job, stale: plateSignature(getState()) !== signature}}); },
     failed: (error) => { if (current()) setState(st => ({job: {...st.job, state: 'failed', error}})); },
     timeoutWarning: () => {
-      if (current()) void messageDialog('Slicing is taking longer than expected', 'The slice is still running. It will continue automatically.', 'Continue');
+      if (current()) void confirmDialog('Slicing is taking longer than expected', 'The slice is still running. It will continue automatically unless you stop it.', ['Continue', 'Stop']).then((ok) => { if (!ok) cancelSlice(); });
     },
   }, calib?.kind);
 }
