@@ -65,8 +65,49 @@ type PresetIndex struct {
 	vendorNames    []string
 	printerVendors map[string]string
 	known          map[string]map[string]map[string]bool
+	libraryNames   map[string]bool
 	tool           *Config
 	cache          sync.Map
+	libraryOnce    sync.Once
+	library        []Preset
+	libraryError   error
+}
+
+const filamentLibrary = "OrcaFilamentLibrary"
+
+func (p *PresetIndex) libraryFilaments() ([]Preset, error) {
+	p.libraryOnce.Do(func() {
+		var v *VendorPresets
+		if p.tool != nil {
+			v, p.libraryError = p.dumpVendor(filamentLibrary)
+		} else {
+			v, p.libraryError = p.loadVendor(filamentLibrary)
+		}
+		if p.libraryError == nil {
+			p.library = v.Filaments
+		}
+	})
+	return p.library, p.libraryError
+}
+
+func addLibraryFilaments(v *VendorPresets, library []Preset) {
+	own, machines := map[string]bool{}, map[string]bool{}
+	for _, f := range v.Filaments {
+		own[filamentFamilyOf(f.Name)] = true
+	}
+	for _, m := range v.Machines {
+		machines[m.Name] = true
+	}
+	for _, f := range library {
+		fits := len(f.CompatiblePrinters) == 0
+		for _, printer := range f.CompatiblePrinters {
+			fits = fits || machines[printer]
+		}
+		if fits && !own[filamentFamilyOf(f.Name)] {
+			f.Vendor, f.Evaluated = v.Vendor, false
+			v.Filaments = append(v.Filaments, f)
+		}
+	}
 }
 
 func NewPresetIndex(root string) *PresetIndex { return &PresetIndex{root: root} }
@@ -117,12 +158,23 @@ func (p *PresetIndex) names() ([]string, error) {
 			}
 			p.known[vendor] = kinds
 		}
+		raw, err := readKind(filepath.Join(p.root, filamentLibrary, "filament"))
+		if err != nil {
+			p.indexError = err
+			return
+		}
+		p.libraryNames = map[string]bool{}
+		for name, preset := range raw {
+			if stringValue(preset["instantiation"]) == "true" {
+				p.libraryNames[name] = true
+			}
+		}
 	})
 	return p.vendorNames, p.indexError
 }
 func (p *PresetIndex) knownPreset(vendor, kind, name string) bool {
 	_, err := p.names()
-	return err == nil && p.known[vendor][kind][name]
+	return err == nil && p.known[vendor] != nil && (p.known[vendor][kind][name] || kind == "filament" && p.libraryNames[name])
 }
 func (p *PresetIndex) vendor(name string) (*VendorPresets, error) {
 	if _, err := p.names(); err != nil {
@@ -139,7 +191,12 @@ func (p *PresetIndex) vendor(name string) (*VendorPresets, error) {
 		} else {
 			v.presets, v.err = p.loadVendor(name)
 		}
+		var library []Preset
 		if v.err == nil {
+			library, v.err = p.libraryFilaments()
+		}
+		if v.err == nil {
+			addLibraryFilaments(v.presets, library)
 			v.presets.machines = presetMap(v.presets.Machines)
 			v.presets.processes = presetMap(v.presets.Processes)
 			v.presets.filaments = presetMap(v.presets.Filaments)
