@@ -41,7 +41,7 @@ func flashforgeDial(ctx context.Context, p *PrinterConfig) (*flashforgeConsole, 
 	}
 	conn, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "tcp", target)
 	if err != nil {
-		return nil, fmt.Errorf("Couldn't reach the Flashforge printer at %s: %w", p.Host, err)
+		return nil, netError(err, "the printer")
 	}
 	limitSendBuffer(conn)
 	c := &flashforgeConsole{conn: conn, r: bufio.NewReader(conn), stop: context.AfterFunc(ctx, func() { conn.Close() })}
@@ -55,13 +55,13 @@ func flashforgeDial(ctx context.Context, p *PrinterConfig) (*flashforgeConsole, 
 func (c *flashforgeConsole) command(cmd string, timeout time.Duration) (string, error) {
 	c.conn.SetDeadline(time.Now().Add(timeout))
 	if _, err := io.WriteString(c.conn, "~"+cmd+"\r\n"); err != nil {
-		return "", err
+		return "", netError(err, "the printer")
 	}
 	var lines []string
 	for {
 		line, err := c.r.ReadString('\n')
 		if err != nil {
-			return "", fmt.Errorf("The Flashforge printer didn't finish answering %s: %w", strings.Fields(cmd)[0], err)
+			return "", netError(err, "the printer")
 		}
 		line = strings.TrimSpace(line)
 		if strings.EqualFold(line, "ok") {
@@ -106,7 +106,7 @@ func sendFlashforge(ctx context.Context, u *upload) (string, error) {
 	}
 	c.conn.SetDeadline(time.Time{})
 	if _, err := io.Copy(c.conn, progressReader{io.LimitReader(u.file, u.size), u.progress}); err != nil {
-		return "", err
+		return "", netError(err, "the printer")
 	}
 	if _, err := c.command("M29", 2*time.Minute); err != nil {
 		return "", fmt.Errorf("The Flashforge printer didn't confirm it saved %s: %w", name, err)
@@ -171,7 +171,7 @@ func sendFlashforgeAPI(ctx context.Context, u *upload, name string) (string, err
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return "", netError(err, "the printer")
 	}
 	err = flashforgeReply(resp)
 	resp.Body.Close()
@@ -190,7 +190,7 @@ func sendFlashforgeAPI(ctx context.Context, u *upload, name string) (string, err
 		u.starting()
 	}
 	if resp, err = client.Do(req); err != nil {
-		return "", err
+		return "", netError(err, "the printer")
 	}
 	defer resp.Body.Close()
 	if err := flashforgeReply(resp); err != nil {
@@ -311,7 +311,7 @@ func testFlashforge(ctx context.Context, p *PrinterConfig, secret string) Printe
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := client.Do(req)
 		if err != nil {
-			return hostFailure(err)
+			return hostFailure(netError(err, "the printer"))
 		}
 		err = flashforgeReply(resp)
 		resp.Body.Close()
