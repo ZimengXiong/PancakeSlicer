@@ -1,0 +1,19 @@
+{
+	"type": "process",
+	"name": "0.20 Smoothest tops @Snapmaker U1 (0.4 nozzle)",
+	"inherits": "0.20 Standard @Snapmaker U1 (0.4 nozzle)",
+	"from": "system",
+	"setting_id": "VqP9buPTqsjDApOZ",
+	"instantiation": "true",
+	"top_layer_direction": "45",
+	"nonplanar_ironing": "1",
+	"nonplanar_flow_mod": "1",
+	"nonplanar_surface_spacing": "1",
+	"nonplanar_full_conformal_max_thickness": "3",
+	"nonplanar_mode": "auto",
+	"ironing_type": "top",
+	"compatible_printers": [
+		"Snapmaker U1 (0.4 nozzle)"
+	],
+	"description": "0.20 Standard with curved top surfaces, overhangs and bridges. Auto chooses the shells and pattern for each curved area and checks every move against the printer's head."
+}
