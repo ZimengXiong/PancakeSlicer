@@ -98,6 +98,9 @@ func (p *PrinterConfig) validate(resources string) error {
 		if p.Host != "" || p.Serial != "" {
 			return errors.New("Host IP and serial number fields only apply to Bambu Lab printers.")
 		}
+		if p.Kind == "elegoolink" && !strings.HasPrefix(p.model, "Elegoo Centauri") {
+			return errors.New("Elegoo Link works with Elegoo Centauri printers—connect other Elegoo printers with OctoPrint or Klipper (Moonraker).")
+		}
 	case "bambu-lan":
 		if p.Host == "" || strings.ContainsAny(p.Host, "/:@ ") && net.ParseIP(p.Host) == nil {
 			return errors.New("Host must be your printer's IP address or hostname.")
@@ -474,7 +477,7 @@ func (s *Server) sendJob(w http.ResponseWriter, r *http.Request) {
 		Start         *bool  `json:"start"`
 		Filename      string `json:"filename"`
 		BedLeveling   *bool  `json:"bed_leveling"`
-		BedType       *int   `json:"bed_type"`
+		BedType       int    `json:"bed_type"`
 		FlowCali      bool   `json:"flow_cali"`
 		Timelapse     bool   `json:"timelapse"`
 		VibrationCali *bool  `json:"vibration_cali"`
@@ -535,6 +538,10 @@ func (s *Server) sendJob(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "ams_mapping_2 requires ams_mapping")
 		return
 	}
+	if body.BedType != 0 && (body.BedType != 1 || p.Kind != "elegoolink") {
+		fail(w, 400, "bed_type selects the Elegoo Centauri build plate side: 0 (textured) or 1 (smooth).")
+		return
+	}
 	client := s.clientIP(r)
 	if ok, retry := s.sends.allow(client); !ok {
 		w.Header().Set("Retry-After", fmt.Sprint(min(retry, 86400)))
@@ -585,10 +592,7 @@ func (s *Server) sendJob(w http.ResponseWriter, r *http.Request) {
 	m.history.record(view)
 	m.hub.changed()
 	audit(map[string]any{"event": "send_accepted", "job_id": j.ID, "printer": p.Printer, "kind": p.Kind, "client": client, "start_print": start, "bytes": st.Size()})
-	options := bambuOptions{bedLeveling: (body.BedLeveling != nil && *body.BedLeveling) || (body.BedLeveling == nil && p.Kind != "elegoolink"), flowCali: body.FlowCali, timelapse: body.Timelapse, vibrationCali: body.VibrationCali == nil || *body.VibrationCali, useAMS: body.UseAMS, amsMapping: body.AMSMapping, amsMapping2: body.AMSMapping2}
-	if body.BedType != nil && (*body.BedType == 0 || *body.BedType == 1) {
-		options.bedType = *body.BedType
-	}
+	options := bambuOptions{bedLeveling: body.BedLeveling == nil && p.Kind != "elegoolink" || body.BedLeveling != nil && *body.BedLeveling, flowCali: body.FlowCali, timelapse: body.Timelapse, vibrationCali: body.VibrationCali == nil || *body.VibrationCali, useAMS: body.UseAMS, amsMapping: body.AMSMapping, amsMapping2: body.AMSMapping2, bedType: body.BedType}
 	if body.AMSMapping != nil {
 		options.useAMS = false
 		for _, t := range body.AMSMapping {
