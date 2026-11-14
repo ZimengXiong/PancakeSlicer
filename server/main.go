@@ -31,6 +31,7 @@ type Config struct {
 	JobRoot               string
 	StaticDir             string
 	MaxJobs               int
+	JobWarningTimeout     time.Duration
 	JobTimeout            time.Duration
 	JobTTL                time.Duration
 	MaxUploadSize         int64
