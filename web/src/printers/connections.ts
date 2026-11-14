@@ -84,7 +84,7 @@ export const controlPrinter = (printer: string, action: 'stop' | 'pause' | 'resu
 export const controlDevice = (printer: string, command: { control: 'fan' | 'chamber' | 'nozzle' | 'bed' | 'speed' | 'light'; fan?: string; extruder?: number; value: number }) => call<void>(path(printer, '/device'), json('POST', command));
 export const readTrays = (printer: string) => call<{ trays: Tray[] }>(path(printer, '/ams'), json('POST'), true).then((r) => r.trays ?? []);
 
-export const LEGACY_HOST_KEYS = ['host_type', 'print_host', 'printhost_apikey', 'printhost_port', 'printhost_user', 'printhost_password', 'printhost_authorization_type'];
+export const LEGACY_HOST_KEYS = ['host_type', 'print_host', 'printhost_apikey', 'printhost_port', 'printhost_user', 'printhost_password', 'printhost_authorization_type', 'flashforge_serial_number'];
 export async function migrateLegacyHost(printer: string, name: string, config: Record<string, unknown>): Promise<string | null> {
   const legacy = Object.fromEntries(LEGACY_HOST_KEYS.flatMap((k) => (config[k] == null || config[k] === '' ? [] : [[k, String([config[k]].flat()[0])]])));
   if (!legacy.print_host) return null;
