@@ -49,7 +49,7 @@ type PrinterConfig struct {
 
 var connectionKinds = map[string]string{
 	"bambu-lan": "Bambu Lab (LAN)", "bambu-connect": "Bambu Connect", "moonraker": "Klipper (Moonraker)",
-	"octoprint": "OctoPrint", "prusalink": "PrusaLink", "duet": "Duet (RepRapFirmware)",
+	"octoprint": "OctoPrint", "prusalink": "PrusaLink", "duet": "Duet (RepRapFirmware)", "flashforge": "Flashforge (LAN)",
 }
 
 type ConnectionView struct {
@@ -123,13 +123,23 @@ func (p *PrinterConfig) validate(resources string) error {
 				return errors.New("resources/cert/printer.cer holds no certificates")
 			}
 		}
+	case "flashforge":
+		if p.Host == "" || strings.ContainsAny(p.Host, "/:@ ") && net.ParseIP(p.Host) == nil {
+			return errors.New("Host must be your printer's IP address or hostname.")
+		}
+		if p.Serial != "" && !bambuSerial.MatchString(p.Serial) {
+			return errors.New("Serial must be your printer's serial number.")
+		}
+		if p.URL != "" || p.TLS != "" {
+			return errors.New("Flashforge printers use the Host IP field rather than a URL.")
+		}
 	case "bambu-connect":
 		if p.URL != "" || p.Host != "" || p.TLS != "" {
 			return errors.New("Bambu Connect doesn't need an IP address or URL.")
 		}
 		return nil
 	default:
-		return errors.New("kind must be bambu-lan, bambu-connect, moonraker, octoprint, prusalink or duet")
+		return errors.New("kind must be bambu-lan, bambu-connect, moonraker, octoprint, prusalink, duet or flashforge")
 	}
 	switch p.TLS {
 	case "", "system", "bambu-ca", "tofu":
@@ -660,6 +670,8 @@ func (s *Server) runSend(ctx context.Context, stopTimeout context.CancelFunc, j 
 			message, err = sendBambu(ctx, u)
 		case "duet":
 			message, err = sendDuet(ctx, u)
+		case "flashforge":
+			message, err = sendFlashforge(ctx, u)
 		default:
 			message, err = sendHTTP(ctx, u)
 		}

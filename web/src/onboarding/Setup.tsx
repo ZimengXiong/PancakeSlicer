@@ -144,7 +144,7 @@ function Printer() {
   </Frame>;
 }
 
-const KINDS: [ConnectionKind, string][] = [['bambu-lan', 'Bambu LAN'], ['moonraker', 'Moonraker'], ['octoprint', 'OctoPrint']];
+const KINDS: [ConnectionKind, string][] = [['bambu-lan', 'Bambu LAN'], ['moonraker', 'Moonraker'], ['octoprint', 'OctoPrint'], ['flashforge', 'Flashforge']];
 function Connect() {
   const [edit, setEdit] = useState<ConnectionEdit>(choices.connection ?? { kind: 'bambu-lan', name: 'Printer' });
   const [test, setTest] = useState<ConnectionTest | 'testing' | null>(null);
@@ -159,7 +159,7 @@ function Connect() {
   const field = (key: keyof ConnectionEdit, label: string, type = 'text') => <label className="setup-field"><span className="setup-k">{label}</span>
     <input className="text" type={type} value={String(edit[key] ?? '')} onChange={(e) => set({ [key]: e.target.value })} /></label>;
   const runTest = async () => { setTest('testing'); try { setTest(await testConnection('', edit)); } catch (e) { setTest({ ok: false, stage: 'error', message: e instanceof Error ? e.message : String(e) }); } };
-  const filled = edit.kind === 'bambu-lan' ? !!(edit.host && edit.serial && edit.access_code) : !!edit.url;
+  const filled = edit.kind === 'bambu-lan' ? !!(edit.host && edit.serial && edit.access_code) : edit.kind === 'flashforge' ? !!edit.host : !!edit.url;
   const next = () => { choices = { ...choices, connection: filled ? edit : null }; send({ type: 'NEXT' }); };
   return <Frame step="connect" foot={<><Back /><span className="setup-grow" /><Next label={filled ? 'Next' : 'Skip'} onClick={next} /></>}>
     <h2>Connect your printer</h2>
@@ -174,6 +174,7 @@ function Connect() {
       <button key={k} type="button" role="radio" aria-checked={edit.kind === k} className="setup-chip" onClick={() => set({ kind: k })}>{l}</button>)}</div>
     <div className="setup-form">
       {edit.kind === 'bambu-lan' ? <>{field('host', 'IP address')}{field('serial', 'Serial number')}{field('access_code', 'Access code', 'password')}</>
+        : edit.kind === 'flashforge' ? <>{field('host', 'IP address')}{field('serial', 'Serial number (optional)')}{field('access_code', 'Check code (optional)', 'password')}</>
         : <>{field('url', 'Address')}{edit.kind === 'octoprint' && field('key', 'API key', 'password')}</>}
     </div>
     <div className="setup-row">

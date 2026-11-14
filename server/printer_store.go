@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -101,7 +102,7 @@ func (st *printerStore) config(sp storedPrinter) (*PrinterConfig, error) {
 	}
 	p := &PrinterConfig{Printer: sp.Printer, Name: sp.Name, Kind: sp.Kind, Host: sp.Host, Serial: sp.Serial, TLS: sp.TLS, Fingerprint: sp.Fingerprint,
 		URL: sp.URL, Auth: sp.Auth, Username: sp.Username, CredentialFile: filepath.Join(st.dir, sp.ID+".code"), id: sp.ID, hosts: st.hosts, model: sp.Model}
-	if p.Kind != "bambu-lan" && p.Kind != "bambu-connect" {
+	if p.Kind != "bambu-lan" && p.Kind != "bambu-connect" && p.Kind != "flashforge" {
 		u, err := hostURL(sp.URL)
 		if err != nil {
 			return nil, err
@@ -200,7 +201,7 @@ type connectionEdit struct {
 }
 
 func (b *connectionEdit) secret() string {
-	if b.Kind == "bambu-lan" {
+	if b.Kind == "bambu-lan" || b.Kind == "flashforge" {
 		return b.AccessCode
 	}
 	return b.Key
@@ -218,7 +219,7 @@ func (s *Server) connectionBody(w http.ResponseWriter, r *http.Request) (*connec
 		return nil, false
 	}
 	if connectionKinds[body.Kind] == "" {
-		fail(w, 400, "kind must be bambu-lan, bambu-connect, moonraker, octoprint, prusalink or duet")
+		fail(w, 400, "kind must be bambu-lan, bambu-connect, moonraker, octoprint, prusalink, duet or flashforge")
 		return nil, false
 	}
 	body.Name, body.Host, body.Serial, body.AccessCode = strings.TrimSpace(body.Name), strings.TrimSpace(body.Host), strings.ToUpper(strings.TrimSpace(body.Serial)), strings.TrimSpace(body.AccessCode)
@@ -252,6 +253,9 @@ func (s *Server) editConfig(ctx context.Context, body *connectionEdit, sp stored
 	case "bambu-lan":
 		sp.Host, sp.Serial = body.Host, body.Serial
 		u = &url.URL{Scheme: "tcp", Host: body.Host + ":8883"}
+	case "flashforge":
+		sp.Host, sp.Serial = body.Host, body.Serial
+		u = &url.URL{Scheme: "tcp", Host: net.JoinHostPort(body.Host, "8899")}
 	case "bambu-connect":
 	default:
 		var err error
@@ -447,7 +451,7 @@ func (s *Server) adoptConnection(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, next.view())
 }
 
-var legacyHostTypes = map[string]string{"prusalink": "prusalink", "octoprint": "octoprint", "moonraker": "moonraker", "duet": "duet"}
+var legacyHostTypes = map[string]string{"prusalink": "prusalink", "octoprint": "octoprint", "moonraker": "moonraker", "duet": "duet", "flashforge": "flashforge"}
 
 func (s *Server) importLegacyConnection(w http.ResponseWriter, r *http.Request) {
 	m := s.sends
@@ -476,7 +480,14 @@ func (s *Server) importLegacyConnection(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	edit := &connectionEdit{Kind: kind, Name: strings.TrimSpace(body.Name), URL: strings.TrimSpace(c["print_host"]), Key: c["printhost_apikey"]}
-	if port := strings.TrimSpace(c["printhost_port"]); port != "" && !strings.Contains(strings.TrimPrefix(strings.TrimPrefix(edit.URL, "http://"), "https://"), ":") {
+	if kind == "flashforge" {
+		host := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(edit.URL, "http://"), "https://"), "/")
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		edit.URL, edit.Key, edit.Host = "", "", host
+		edit.Serial, edit.AccessCode = strings.ToUpper(strings.TrimSpace(c["flashforge_serial_number"])), strings.TrimSpace(c["printhost_apikey"])
+	} else if port := strings.TrimSpace(c["printhost_port"]); port != "" && !strings.Contains(strings.TrimPrefix(strings.TrimPrefix(edit.URL, "http://"), "https://"), ":") {
 		edit.URL += ":" + port
 	}
 	if c["printhost_authorization_type"] == "user" {
@@ -565,6 +576,8 @@ func (s *Server) testConnection(w http.ResponseWriter, r *http.Request) {
 		if result.OK && p == saved && result.Model != "" {
 			s.sends.setModel(p, result.Model)
 		}
+	} else if p.Kind == "flashforge" {
+		result = testFlashforge(ctx, p, secret)
 	} else {
 		result = testHost(ctx, p, secret)
 	}
@@ -646,6 +659,8 @@ func (s *Server) controlConnection(w http.ResponseWriter, r *http.Request) {
 		err = controlBambu(ctx, p, secret, body.Action)
 	case "duet":
 		err = controlDuet(ctx, p, secret, body.Action)
+	case "flashforge":
+		err = controlFlashforge(ctx, p, body.Action)
 	default:
 		err = controlHTTP(ctx, p, secret, body.Action)
 	}

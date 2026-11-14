@@ -4,7 +4,7 @@ import { printerCapabilities } from './capabilities';
 import type { Transfer } from '../flow/transfer';
 import { joinParts, SEP } from '../separator';
 
-export type ConnectionKind = 'bambu-lan' | 'bambu-connect' | 'moonraker' | 'octoprint' | 'prusalink' | 'duet';
+export type ConnectionKind = 'bambu-lan' | 'bambu-connect' | 'moonraker' | 'octoprint' | 'prusalink' | 'duet' | 'flashforge';
 export interface PrinterConnection {
   printer: string; id: string; name: string; kind: ConnectionKind;
   host?: string; serial?: string; model?: string; url?: string; auth?: string; username?: string;
@@ -31,7 +31,7 @@ export interface PrinterConnections {
 
 export const KIND_LABEL: Record<ConnectionKind, string> = {
   'bambu-lan': 'Bambu Lab (LAN)', 'bambu-connect': 'Bambu Connect', moonraker: 'Klipper (Moonraker)',
-  octoprint: 'OctoPrint', prusalink: 'PrusaLink', duet: 'Duet (RepRapFirmware)',
+  octoprint: 'OctoPrint', prusalink: 'PrusaLink', duet: 'Duet (RepRapFirmware)', flashforge: 'Flashforge (LAN)',
 };
 export const connectionOutput = (kind: ConnectionKind) => (kind === 'bambu-lan' || kind === 'bambu-connect' ? 'gcode.3mf' : 'gcode');
 
@@ -84,7 +84,7 @@ export const controlPrinter = (printer: string, action: 'stop' | 'pause' | 'resu
 export const controlDevice = (printer: string, command: { control: 'fan' | 'chamber' | 'nozzle' | 'bed' | 'speed' | 'light'; fan?: string; extruder?: number; value: number }) => call<void>(path(printer, '/device'), json('POST', command));
 export const readTrays = (printer: string) => call<{ trays: Tray[] }>(path(printer, '/ams'), json('POST'), true).then((r) => r.trays ?? []);
 
-export const LEGACY_HOST_KEYS = ['host_type', 'print_host', 'printhost_apikey', 'printhost_port', 'printhost_user', 'printhost_password', 'printhost_authorization_type'];
+export const LEGACY_HOST_KEYS = ['host_type', 'print_host', 'printhost_apikey', 'printhost_port', 'printhost_user', 'printhost_password', 'printhost_authorization_type', 'flashforge_serial_number'];
 export async function migrateLegacyHost(printer: string, name: string, config: Record<string, unknown>): Promise<string | null> {
   const legacy = Object.fromEntries(LEGACY_HOST_KEYS.flatMap((k) => (config[k] == null || config[k] === '' ? [] : [[k, String([config[k]].flat()[0])]])));
   if (!legacy.print_host) return null;
