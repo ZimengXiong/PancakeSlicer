@@ -38,10 +38,12 @@ SlantField::SlantField(const SlantShape &shape) : m_s(shape)
 
 double SlantField::s_of(const Vec2d &xy) const { return std::clamp(m_s.u_max - m_s.u.dot(xy), 0., m_s.width); }
 
+double SlantField::plane(double s) const { return std::max(m_s.first, m_s.start + m_s.tilt * s); }
+
 double SlantField::z_of(double k, double s) const
 {
     if (this->cut()) {
-        const double plane = m_s.start + m_s.tilt * s;
+        const double plane = this->plane(s);
         const double fr    = std::floor((plane - m_s.first) / m_s.h + 1e-9);
         const double flat  = m_s.first + fr * m_s.h;
         if (k <= fr)
@@ -64,7 +66,7 @@ double SlantField::phi(const Vec3d &p) const
     const double s = s_of(p.head<2>()), z = p.z();
     double       k;
     if (this->cut()) {
-        const double plane = m_s.start + m_s.tilt * s;
+        const double plane = this->plane(s);
         const double fr    = std::floor((plane - m_s.first) / m_s.h + 1e-9);
         const double flat  = m_s.first + fr * m_s.h, band = CutBand * (m_kmax - fr - 1.);
         if (z <= flat)
@@ -215,7 +217,9 @@ std::shared_ptr<const LayerField> slant_field(const PrintObject &object, SlantCh
         choice.planar_steps    = planar.steps;
         choice.planar_overhang = planar.overhang;
     }
-    const double start = std::max(first, config.nonplanar_slant_start_height.value);
+    const double asked = config.nonplanar_slant_start_height.value;
+    const bool   cut   = config.nonplanar_slant_morph_layers.value <= 0;
+    const double start = cut && asked < 0. ? first + asked : std::max(first, asked);
     const int    step  = slant_step(*object.model_object());
     const double scale = std::pow(0.75, step);
     if (step >= SlantSteps) {
@@ -258,7 +262,7 @@ std::shared_ptr<const LayerField> slant_field(const PrintObject &object, SlantCh
             continue;
         sh.tilt  = std::tan(alpha);
         sh.first = first;
-        sh.start = start;
+        sh.start = cut ? std::max(start, first + h - sh.tilt * sh.width) : start;
         sh.h     = h;
         sh.morph  = config.nonplanar_slant_morph_layers.value <= 0
                         ? 0

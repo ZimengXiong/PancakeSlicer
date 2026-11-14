@@ -41,6 +41,7 @@ public:
 
 private:
     double s_of(const Vec2d &xy) const;
+    double plane(double s) const;
     double z_of(double k, double s) const;
 
     SlantShape m_s;

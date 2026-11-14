@@ -5780,9 +5780,11 @@ void PrintConfigDef::init_fff_params()
     def->label    = L("Slant start height");
     def->category = L("Quality");
     def->tooltip  = L("Height of the last flat layer before Slant's layers start to tilt. 0: right after the first layer, as low "
-                      "as the print head allows (an upright head stays above everything it prints). Default: 0. Unit: mm.");
+                      "as the print head allows (an upright head stays above everything it prints). Without morphing, a negative "
+                      "height lowers the tilted start plane by that much, below the bed, so tilted layers reach further down "
+                      "the part. Default: 0. Unit: mm.");
     def->sidetext = L("mm");
-    def->min      = 0;
+    def->min      = -1000;
     def->max      = 1000;
     def->mode     = comExpert;
     def->set_default_value(new ConfigOptionFloat(0));

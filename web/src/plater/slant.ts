@@ -30,22 +30,31 @@ export function slantAngles(n: THREE.Vector3): { tilt: number; dir: number } {
   return { tilt, dir };
 }
 
+function span(b: THREE.Box3, dirDeg: number): number {
+  const d = dirDeg * DEG, u = [Math.cos(d), Math.sin(d)];
+  let lo = Infinity, hi = -Infinity;
+  for (const x of [b.min.x, b.max.x]) for (const y of [b.min.y, b.max.y]) {
+    const p = x * u[0] + y * u[1];
+    lo = Math.min(lo, p);
+    hi = Math.max(hi, p);
+  }
+  return hi - lo;
+}
+
+const morphing = (s: State, o: PlateObject) => num(objectValue(s, o, 'nonplanar_slant_morph_layers'), 0) > 0;
+
 export function slantPoint(s: State, e: SlantEdit): THREE.Vector3 | null {
   const t = slantTarget(s);
   if (!t) return null;
   const b = instanceBox(t.o, t.inst);
-  let rise = 0;
-  if (num(objectValue(s, t.o, 'nonplanar_slant_morph_layers'), 0) <= 0) {
-    const d = e.dir * DEG, u = [Math.cos(d), Math.sin(d)];
-    let lo = Infinity, hi = -Infinity;
-    for (const x of [b.min.x, b.max.x]) for (const y of [b.min.y, b.max.y]) {
-      const p = x * u[0] + y * u[1];
-      lo = Math.min(lo, p);
-      hi = Math.max(hi, p);
-    }
-    rise = Math.tan(e.tilt * DEG) * (hi - lo) / 2;
-  }
+  const rise = morphing(s, t.o) ? 0 : Math.tan(e.tilt * DEG) * span(b, e.dir) / 2;
   return new T3.Vector3((b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, b.min.z + e.z + rise);
+}
+
+function lowestStart(s: State, e: SlantEdit): number {
+  const t = slantTarget(s);
+  if (!t || morphing(s, t.o)) return 0;
+  return -Math.floor(Math.tan(e.tilt * DEG) * span(instanceBox(t.o, t.inst), e.dir) * 100) / 100;
 }
 
 const num = (v: unknown, fallback: number) => (v === undefined || v === '' || !Number.isFinite(Number(v)) ? fallback : Number(v));
@@ -75,9 +84,12 @@ export function setSlant(patch: Partial<SlantEdit>) {
   const p: Partial<SlantEdit> = { ...patch };
   for (const k of ['z', 'tilt', 'dir'] as const) if (p[k] !== undefined && !Number.isFinite(p[k])) delete p[k];
   if (p.tilt !== undefined) p.tilt = Math.max(0, Math.min(MAX_TILT, p.tilt));
-  if (p.z !== undefined) p.z = Math.max(0, p.z);
   if (p.dir !== undefined) { p.dir = ((p.dir % 360) + 360) % 360; p.dirAuto ??= false; }
-  setState((s) => (s.slant ? { slant: { ...s.slant, ...p, auto: false } } : {}));
+  setState((s) => {
+    if (!s.slant) return {};
+    const e = { ...s.slant, ...p, auto: false };
+    return { slant: { ...e, z: Math.max(lowestStart(s, e), e.z) } };
+  });
   void refreshSlantLimit();
 }
 
@@ -89,7 +101,7 @@ export function commitSlant() {
   else {
     settings.nonplanar_slant_angle = String(Math.round(e.tilt * 100) / 100);
     settings.nonplanar_slant_direction = e.dirAuto ? '-1' : String(Math.round((((e.dir % 360) + 360) % 360) * 100) / 100);
-    settings.nonplanar_slant_start_height = String(Math.max(0, Math.round(e.z * 100) / 100));
+    settings.nonplanar_slant_start_height = String(Math.round(e.z * 100) / 100);
   }
   settings.nonplanar_mode = 'slant';
   updateObject(t.o.id, { settings }, 'Slant plane');
@@ -141,15 +153,9 @@ export async function refreshSlantLimit() {
   const now = getState().slant;
   if (!now) return;
   if (!head) return setState({ slant: { ...now, limit: undefined } });
-  const b = instanceBox(t.o, t.inst), d = now.dir * DEG, u = [Math.cos(d), Math.sin(d)];
-  let lo = Infinity, hi = -Infinity;
-  for (const x of [b.min.x, b.max.x]) for (const y of [b.min.y, b.max.y]) {
-    const p = x * u[0] + y * u[1];
-    lo = Math.min(lo, p);
-    hi = Math.max(hi, p);
-  }
+  const width = span(instanceBox(t.o, t.inst), now.dir);
   const duct = ['1', 'true'].includes(String(process.nonplanar_ignore_duct ?? '0'));
   const tolerance = num(process.nonplanar_collision_tolerance ?? OPTIONS.nonplanar_collision_tolerance?.default, 0);
-  const limit = slantLimit(head, now.dir, Math.max(hi - lo, 1e-3), num(objectValue(s, t.o, 'layer_height'), 0.2), duct, tolerance);
+  const limit = slantLimit(head, now.dir, Math.max(width, 1e-3), num(objectValue(s, t.o, 'layer_height'), 0.2), duct, tolerance);
   setState({ slant: { ...now, limit } });
 }
