@@ -118,6 +118,7 @@ export function followJob(api: Api, tracked: TrackedJob, options: {
   machine?: ReturnType<typeof createJob>; seq?: number;
   progress?: (p: ProgressEvent) => void; done?: (status: CanonicalJobStatus) => void;
   failed?: (message: string) => void; checkpoint?: (seq: number, stage: string) => void;
+  timeoutWarning?: () => void;
 } = {}) {
   const m = options.machine ?? createJob();
   let streamTimer: ReturnType<typeof setTimeout> | undefined;
@@ -166,6 +167,7 @@ export function followJob(api: Api, tracked: TrackedJob, options: {
           m.send(event);
           if (accepted) options.progress?.({ pct: data.pct, stage });
         }
+        if (data.timeout_warning === true) options.timeoutWarning?.();
         options.checkpoint?.(last, m.get().value);
         if (typeof data.state === 'string') {
           if (data.state === 'done') void status().catch(() => {});
