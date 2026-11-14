@@ -1,4 +1,4 @@
-{ lib, buildNpmPackage, nodejs_26, source ? ../web }:
+{ lib, buildNpmPackage, nodejs_26, source ? ../. }:
 
 buildNpmPackage {
   pname = "pancakeslicer-web";
@@ -6,6 +6,7 @@ buildNpmPackage {
   src = source;
 
   nodejs = nodejs_26;
+  npmRoot = "web";
   npmDepsHash = "sha256-FuxSU9tv/hcRBMrtHjck+f0476xmz21W6RUFfMSZhKY=";
 
   npmBuildScript = "build";
