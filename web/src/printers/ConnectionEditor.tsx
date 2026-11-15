@@ -39,6 +39,7 @@ export function ConnectionEditor({ printer, name, onSaved }: { printer: string; 
   const [user, setUser] = useState(saved?.username ?? '');
   const [secret, setSecret] = useState('');
   const [model, setModel] = useState(saved?.model ?? '');
+  const [webUi, setWebUi] = useState(saved?.web_ui?.replace(/^http:\/\//, '') ?? '');
   const [test, setTest] = useState<ConnectionTest | null>(null);
   const [found, setFound] = useState<{ printers: Discovered[]; notes: string[] } | null>(null);
   const [working, setWorking] = useState('');
@@ -47,7 +48,7 @@ export function ConnectionEditor({ printer, name, onSaved }: { printer: string; 
   const bambu = kind === 'bambu-lan', flashforge = kind === 'flashforge', http = !bambu && !flashforge && kind !== 'bambu-connect';
   const digest = kind === 'prusalink' && auth === 'digest';
   const keyOptional = kind === 'moonraker' || kind === 'duet';
-  const edit = (): ConnectionEdit => ({ kind, name, model: model || undefined,
+  const edit = (): ConnectionEdit => ({ kind, name, model: model || undefined, web_ui: !bambu && kind !== 'bambu-connect' ? webUi.trim() || undefined : undefined,
     ...(bambu || flashforge ? { host: host.trim(), serial: serial.trim(), access_code: secret } : {}),
     ...(http ? { url: url.trim(), key: secret, auth: kind === 'prusalink' ? auth : undefined, username: digest ? user.trim() : undefined } : {}) });
   const hasSecret = !!saved?.has_secret && sameKind;
@@ -119,6 +120,7 @@ export function ConnectionEditor({ printer, name, onSaved }: { printer: string; 
           <input className="text" type="password" autoComplete="new-password" value={secret} placeholder={hasSecret ? 'Stored' : ''} onChange={(e) => changed(setSecret)(e.target.value)} />
         </label>
       </>}
+      {!bambu && kind !== 'bambu-connect' && <label className="form-row"><span>Device UI (optional)</span><input className="text" value={webUi} placeholder={kind === 'moonraker' ? 'Fluidd or Mainsail address, e.g. 192.168.1.70' : 'Defaults to the printer address'} spellCheck={false} onChange={(e) => changed(setWebUi)(e.target.value)} /></label>}
       {working === 'test' && <div role="status" className="hint-text">Testing…</div>}
       {test && (test.ok ? <div role="status" className="send-ok">{sentence(test.message)}</div>
         : <div role="alert" className="warning-text">{STAGE[test.stage] ? `${STAGE[test.stage]}: ` : ''}{test.message}</div>)}

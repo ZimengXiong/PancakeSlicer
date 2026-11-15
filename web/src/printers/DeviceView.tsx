@@ -8,7 +8,7 @@ import { Check } from '../components/Check';
 import { NumberBox } from '../components/Field';
 import { Range } from '../components/Range';
 import { responseError } from '../api/access';
-import { controlDevice, controlPrinter, presenceStatus, statusLine, type PrinterConnection, type PrinterStatus, type StatusTone, type Tray } from './connections';
+import { controlDevice, controlPrinter, deviceWebUi, presenceStatus, statusLine, type PrinterConnection, type PrinterStatus, type StatusTone, type Tray } from './connections';
 import { printerCapabilities, printerModel } from './capabilities';
 import { DeviceCamera } from './DeviceCamera';
 import { chooseSlot, ruleText, slotOf, usePrinterSlots, type SlotMatch } from './slots';
@@ -123,6 +123,17 @@ function AllJobs({ runningId, version, collapse }: { runningId?: string; version
       <button type="button" className="link" onClick={collapse}>Show less</button><span>{pages.sends.length} of {pages.total}</span></div></>;
 }
 
+const deviceModes = new Map<string, string>();
+
+function DeviceWebUi({ url, name }: { url: string; name: string }) {
+  const blocked = typeof location !== 'undefined' && location.protocol === 'https:' && /^http:/i.test(url);
+  return <div className="device-webui">
+    <div className="device-webui-bar"><span className="device-webui-url" title={url}>{url}</span><a className="btn slant device-action" href={url} target="_blank" rel="noreferrer noopener">Open in browser</a></div>
+    {blocked ? <div className="device-webui-blocked"><p>Your browser won't show an http:// page inside this https:// page.</p><a className="btn slant" href={url} target="_blank" rel="noreferrer noopener">Open {name}'s web UI</a></div>
+      : <iframe className="device-webui-frame" src={url} title={`${name} web UI`} referrerPolicy="no-referrer" />}
+  </div>;
+}
+
 function DevicePanel({ connection, model, cover, status, live }: { connection: PrinterConnection; model: string; cover?: string; status?: PrinterStatus; live: boolean }) {
   const [thumbnailFailed, failThumbnail] = useState(false);
   const [error, setError] = useState(''), [pending, setPending] = useState(false), [history, setHistory] = useState<History[]>([]), [historyError, setHistoryError] = useState('');
@@ -180,7 +191,13 @@ function DevicePanel({ connection, model, cover, status, live }: { connection: P
           {trays.filter((t) => t.kind === 'external').map((tray) => <div className="device-external" key={tray.id}><Spool tray={tray} trays={trays} dual={dual} external match={matchOf(tray)} choices={choices} busy={busy || choosing} choose={choose(tray)} /></div>)}
         </Card>;
   const temperatures = !!(status?.nozzle || status?.nozzle_temps?.length || status?.bed || (capabilities.chamber && status?.chamber));
+  const webUi = deviceWebUi(connection), [mode, setMode] = useState(() => deviceModes.get(connection.printer) ?? 'overview');
+  const web = !!webUi && mode === 'web';
+  const switcher = webUi && <div className="device-mode"><Segmented label="Device view" value={web ? 'web' : 'overview'} options={[{ id: 'overview', label: 'Overview' }, { id: 'web', label: 'Web UI' }]}
+    onChange={(next) => { deviceModes.set(connection.printer, next); setMode(next); }} /></div>;
+  if (web) return <article className="device-panel" data-mode="web" aria-label={connection.name}>{switcher}<DeviceWebUi url={webUi} name={connection.name} /></article>;
   return <article className="device-panel" aria-label={connection.name}>
+    {switcher}
     {error && <p role="alert" className="device-command-error">{error}</p>}
     <div className="device-layout">
       <div className="device-left"><DeviceCamera printer={connection.printer} cover={cover} light={light} lightLabel={lightLabel} cameraLabel={capabilities.cameraLabel} busy={busy} onLight={() => void set('light', light ? 0 : 1)} />

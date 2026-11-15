@@ -38,6 +38,7 @@ type PrinterConfig struct {
 	CredentialFile string
 	TLS            string
 	Fingerprint    string
+	WebUI          string
 
 	id          string
 	fingerprint []byte
@@ -65,12 +66,13 @@ type ConnectionView struct {
 	Username  string `json:"username,omitempty"`
 	HasSecret bool   `json:"has_secret"`
 	Trust     string `json:"trust,omitempty"`
+	WebUI     string `json:"web_ui,omitempty"`
 }
 
 func (p *PrinterConfig) view() ConnectionView {
 	_, err := os.Stat(p.CredentialFile)
 	return ConnectionView{Printer: p.Printer, ID: p.id, Name: p.Name, Kind: p.Kind, Host: p.Host, Serial: p.Serial, Model: p.model,
-		URL: p.URL, Auth: p.Auth, Username: p.Username, HasSecret: p.CredentialFile != "" && err == nil, Trust: p.TLS}
+		URL: p.URL, Auth: p.Auth, Username: p.Username, HasSecret: p.CredentialFile != "" && err == nil, Trust: p.TLS, WebUI: p.WebUI}
 }
 
 var bambuSerial = regexp.MustCompile(`^[A-Za-z0-9]{6,32}$`)
@@ -78,6 +80,14 @@ var bambuSerial = regexp.MustCompile(`^[A-Za-z0-9]{6,32}$`)
 func (p *PrinterConfig) validate(resources string) error {
 	if len(p.Name) > 200 || strings.IndexFunc(p.Name, unicode.IsControl) >= 0 {
 		return errors.New("Printer name must be 200 characters or fewer (with no control characters).")
+	}
+	if p.WebUI != "" {
+		if p.Kind == "bambu-lan" || p.Kind == "bambu-connect" {
+			return errors.New("Bambu Lab printers don't have a device web interface.")
+		}
+		if _, err := webUIURL(p.WebUI); err != nil {
+			return err
+		}
 	}
 	switch p.Kind {
 	case "prusalink", "octoprint", "moonraker", "duet":
@@ -172,6 +182,18 @@ func (p *PrinterConfig) validate(resources string) error {
 		return errors.New("Auth mode, username, and storage settings only apply to PrusaLink printers.")
 	}
 	return nil
+}
+
+func webUIURL(typed string) (*url.URL, error) {
+	typed = strings.TrimSpace(typed)
+	if !strings.Contains(typed, "://") {
+		typed = "http://" + typed
+	}
+	u, err := url.Parse(typed)
+	if err != nil || len(typed) > 2048 || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || strings.IndexFunc(typed, unicode.IsControl) >= 0 {
+		return nil, errors.New("Device UI must be an http:// or https:// address without login credentials.")
+	}
+	return u, nil
 }
 
 func secretRequired(kind string) bool {

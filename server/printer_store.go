@@ -40,6 +40,7 @@ type storedPrinter struct {
 	URL         string `json:"url,omitempty"`
 	Auth        string `json:"auth,omitempty"`
 	Username    string `json:"username,omitempty"`
+	WebUI       string `json:"web_ui,omitempty"`
 }
 
 func loadPrinterStore(dir, resources string, hosts *hostPolicy) (*printerStore, error) {
@@ -101,7 +102,7 @@ func (st *printerStore) config(sp storedPrinter) (*PrinterConfig, error) {
 		return nil, errors.New("bad id")
 	}
 	p := &PrinterConfig{Printer: sp.Printer, Name: sp.Name, Kind: sp.Kind, Host: sp.Host, Serial: sp.Serial, TLS: sp.TLS, Fingerprint: sp.Fingerprint,
-		URL: sp.URL, Auth: sp.Auth, Username: sp.Username, CredentialFile: filepath.Join(st.dir, sp.ID+".code"), id: sp.ID, hosts: st.hosts, model: sp.Model}
+		URL: sp.URL, Auth: sp.Auth, Username: sp.Username, WebUI: sp.WebUI, CredentialFile: filepath.Join(st.dir, sp.ID+".code"), id: sp.ID, hosts: st.hosts, model: sp.Model}
 	if p.Kind != "bambu-lan" && p.Kind != "bambu-connect" && p.Kind != "flashforge" {
 		u, err := hostURL(sp.URL)
 		if err != nil {
@@ -114,7 +115,7 @@ func (st *printerStore) config(sp storedPrinter) (*PrinterConfig, error) {
 
 func (st *printerStore) stored(p *PrinterConfig) storedPrinter {
 	return storedPrinter{ID: p.id, Printer: p.Printer, Name: p.Name, Kind: p.Kind, Host: p.Host, Serial: p.Serial, Model: p.model, TLS: p.TLS,
-		Fingerprint: p.Fingerprint, URL: p.URL, Auth: p.Auth, Username: p.Username}
+		Fingerprint: p.Fingerprint, URL: p.URL, Auth: p.Auth, Username: p.Username, WebUI: p.WebUI}
 }
 
 func (st *printerStore) save() error {
@@ -198,6 +199,7 @@ type connectionEdit struct {
 	Username   string `json:"username"`
 	Key        string `json:"key"`
 	ClearKey   bool   `json:"clear_key"`
+	WebUI      string `json:"web_ui"`
 }
 
 func (b *connectionEdit) secret() string {
@@ -223,7 +225,7 @@ func (s *Server) connectionBody(w http.ResponseWriter, r *http.Request) (*connec
 		return nil, false
 	}
 	body.Name, body.Host, body.Serial, body.AccessCode = strings.TrimSpace(body.Name), strings.TrimSpace(body.Host), strings.ToUpper(strings.TrimSpace(body.Serial)), strings.TrimSpace(body.AccessCode)
-	body.URL, body.Username = strings.TrimSpace(body.URL), strings.TrimSpace(body.Username)
+	body.URL, body.Username, body.WebUI = strings.TrimSpace(body.URL), strings.TrimSpace(body.Username), strings.TrimSpace(body.WebUI)
 	if body.AccessCode != "" && (len(body.AccessCode) > 64 || strings.IndexFunc(body.AccessCode, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0) {
 		fail(w, 400, "Enter the 8-character access code shown under Settings › Network on your printer.")
 		return nil, false
@@ -247,7 +249,14 @@ func (s *Server) connectionBody(w http.ResponseWriter, r *http.Request) (*connec
 
 func (s *Server) editConfig(ctx context.Context, body *connectionEdit, sp storedPrinter) (*PrinterConfig, error) {
 	st := s.sends.store
-	sp.Kind, sp.Name = body.Kind, body.Name
+	sp.Kind, sp.Name, sp.WebUI = body.Kind, body.Name, ""
+	if body.WebUI != "" && body.Kind != "bambu-lan" && body.Kind != "bambu-connect" {
+		w, err := webUIURL(body.WebUI)
+		if err != nil {
+			return nil, err
+		}
+		sp.WebUI = w.String()
+	}
 	var u *url.URL
 	switch body.Kind {
 	case "bambu-lan":
@@ -480,6 +489,9 @@ func (s *Server) importLegacyConnection(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	edit := &connectionEdit{Kind: kind, Name: strings.TrimSpace(body.Name), URL: strings.TrimSpace(c["print_host"]), Key: c["printhost_apikey"]}
+	if _, err := webUIURL(c["print_host_webui"]); err == nil && strings.TrimSpace(c["print_host_webui"]) != "" {
+		edit.WebUI = strings.TrimSpace(c["print_host_webui"])
+	}
 	if kind == "flashforge" {
 		host := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(edit.URL, "http://"), "https://"), "/")
 		if h, _, err := net.SplitHostPort(host); err == nil {

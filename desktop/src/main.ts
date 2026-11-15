@@ -342,7 +342,10 @@ function restrictNetwork(target: Electron.Session) {
     const update = url.protocol === 'https:' && url.hostname === 'api.github.com'
       && url.pathname === '/repos/ZimengXiong/PancakeSlicer/releases' && url.search === '?per_page=30';
     const embedded = ['blob:', 'data:', 'devtools:'].includes(url.protocol);
-    const allow = local || update || embedded;
+    let child = false;
+    try { child = details.resourceType === 'subFrame' || !!details.frame?.parent; } catch { child = false; }
+    const deviceUi = child && ['http:', 'https:', 'ws:', 'wss:'].includes(url.protocol);
+    const allow = local || update || embedded || deviceUi;
     if (!allow) console.error(`Blocked outbound request: ${url.origin}${url.pathname}`);
     callback({ cancel: !allow });
   });
@@ -395,7 +398,7 @@ async function start() {
       if (!url.pathname.startsWith('/help/')) guide.on('page-title-updated', (event) => event.preventDefault());
       guide.webContents.on('will-navigate', (event, next) => { if (new URL(next).origin !== origin) event.preventDefault(); });
       void guide.loadURL(target).catch(console.error);
-    } else if (url.protocol === 'https:' && url.origin !== origin) void shell.openExternal(target);
+    } else if ((url.protocol === 'https:' || url.protocol === 'http:') && url.origin !== origin) void shell.openExternal(target);
     return { action: 'deny' };
   });
   await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(STARTING_PAGE)}`);

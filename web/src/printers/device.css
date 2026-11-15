@@ -19,6 +19,16 @@
 .device-list-actions { display: flex; flex-direction: column; align-items: stretch; gap: var(--s-3); padding: 0 var(--s-3); }
 .device-action { min-height: var(--h-compact); font: var(--t-small); }
 .device-panel { min-width: 0; min-height: 0; overflow: auto; padding: var(--s-5) var(--s-6) var(--s-6); background: var(--panel); }
+.device-mode { display: flex; justify-content: flex-end; max-width: 1040px; margin: 0 auto var(--s-4); }
+.device-panel[data-mode=web] { display: flex; flex-direction: column; overflow: hidden; }
+.device-panel[data-mode=web] > .device-mode { width: 100%; max-width: none; }
+.device-webui { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: var(--s-3); }
+.device-webui-bar { display: flex; align-items: center; gap: var(--s-3); }
+.device-webui-url { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); font: var(--t-small); }
+.device-webui-bar .device-action { display: inline-flex; align-items: center; text-decoration: none; }
+.device-webui-frame { flex: 1; min-height: 320px; width: 100%; border: 0; border-radius: var(--r-3); background: var(--sunken); }
+.device-webui-blocked { flex: 1; display: grid; place-content: center; justify-items: center; gap: var(--s-4); padding: var(--s-6); border-radius: var(--r-3); background: var(--sunken); color: var(--ink-3); text-align: center; }
+.device-webui-blocked .btn { text-decoration: none; }
 .device-layout { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-areas: 'left status' 'jobs jobs'; gap: var(--s-5) var(--s-6); align-items: stretch; max-width: 1040px; margin-inline: auto; }
 .device-left { grid-area: left; display: flex; flex-direction: column; gap: var(--s-4); min-width: 0; }
 .device-left > .device-camera { flex: 1 1 0; min-height: 220px; display: grid; }
