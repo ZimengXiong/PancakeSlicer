@@ -14,7 +14,7 @@ on:
         type: boolean
         default: false
       targets:
-        description: Space-separated targets (mac-arm64 mac-x64 win-x64 linux-x64); empty builds all
+        description: Space-separated targets (mac-arm64 mac-x64 win-x64 linux-x64 linux-arm64); empty builds all
         type: string
         default: ''
       deps_from_run:
@@ -62,11 +62,12 @@ jobs:
           all='[{"target":"mac-arm64","os":"mac","arch":"arm64","runner":"macos-15"},
                 {"target":"mac-x64","os":"mac","arch":"x64","runner":"macos-15"},
                 {"target":"win-x64","os":"win","arch":"x64","runner":"windows-2025"},
-                {"target":"linux-x64","os":"linux","arch":"x64","runner":"ubuntu-24.04"}]'
+                {"target":"linux-x64","os":"linux","arch":"x64","runner":"ubuntu-24.04"},
+                {"target":"linux-arm64","os":"linux","arch":"arm64","runner":"ubuntu-24.04-arm"}]'
           chosen=$(jq -c --arg t "$TARGETS" '($t | split(" ") | map(select(. != ""))) as $w | map(select(($w | length) == 0 or (.target | IN($w[]))))' <<<"$all")
           echo "all=$chosen" >> "$GITHUB_OUTPUT"
           echo "desktop=$(jq -c 'map(select(.os != "linux"))' <<<"$chosen")" >> "$GITHUB_OUTPUT"
-          echo "linux=$(jq -r 'any(.os == "linux")' <<<"$chosen")" >> "$GITHUB_OUTPUT"
+          echo "linux=$(jq -c 'map(select(.os == "linux"))' <<<"$chosen")" >> "$GITHUB_OUTPUT"
       - name: Create the draft release
         if: env.PUBLISH == 'true'
         env:
@@ -208,10 +209,14 @@ jobs:
         run: .github/scripts/build/prebuilt.sh publish "${{ steps.keys.outputs.engine }}" build-native/tool .
 
   linux:
-    name: linux-x64 (reference, installers, Docker)
+    name: ${{ matrix.target }} (qualification, installers, Docker)
     needs: [prepare, engine]
-    if: needs.prepare.outputs.linux == 'true'
-    runs-on: ubuntu-24.04
+    if: needs.prepare.outputs.linux != '[]'
+    strategy:
+      max-parallel: 1
+      matrix:
+        include: ${{ fromJSON(needs.prepare.outputs.linux) }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:
       contents: write
@@ -242,7 +247,7 @@ jobs:
             libwayland-dev libegl-dev
       - name: Name the prebuilt assets
         id: keys
-        run: .github/scripts/build/keys.sh linux-x64 linux
+        run: .github/scripts/build/keys.sh ${{ matrix.target }} linux
       - name: Fetch the engine, its dependencies and the reference
         id: fetch
         env:
@@ -271,7 +276,7 @@ jobs:
           patchelf --set-rpath '$ORIGIN/lib' build-native/tool/nonplanar_slice_tool
       - name: Qualify and stage the payload
         run: |
-          python desktop/scripts/stage-ci.py --os linux --arch x64 --tool build-native/tool/nonplanar_slice_tool \
+          python desktop/scripts/stage-ci.py --os linux --arch ${{ matrix.arch }} --tool build-native/tool/nonplanar_slice_tool \
             --reference desktop/build/reference --engine-source "${{ steps.keys.outputs.source }}" --image "pancakeslicer-check:${GITHUB_SHA::10}"
       - name: Publish the engine reference
         if: steps.fetch.outputs.reference == 'false'
@@ -279,7 +284,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: .github/scripts/build/prebuilt.sh publish "${{ steps.keys.outputs.reference }}" desktop/build/reference .
       - name: Compare the engine reference with the base
-        if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        if: matrix.arch == 'x64' && (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
         env:
           GH_TOKEN: ${{ github.token }}
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -287,13 +292,13 @@ jobs:
       - name: Package installers
         run: |
           cp desktop/icon-1024.png desktop/build/icon.png
-          cp -a build-native/tool/lib desktop/build/engine-linux-x64/lib
-          chmod -R a+rX desktop/build/engine-linux-x64/lib
-          npm run dist:linux --prefix desktop
+          cp -a build-native/tool/lib desktop/build/engine-${{ matrix.target }}/lib
+          chmod -R a+rX desktop/build/engine-${{ matrix.target }}/lib
+          npm run dist:${{ matrix.target }} --prefix desktop
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: PancakeSlicer-linux-x64
+          name: PancakeSlicer-${{ matrix.target }}
           compression-level: 0
           if-no-files-found: error
           retention-days: 14
@@ -309,11 +314,12 @@ jobs:
         run: .github/scripts/build/attach.sh desktop/dist/*.AppImage desktop/dist/*.deb desktop/dist/*.tar.gz desktop/build/PancakeSlicer-*-qualification.zip
       - name: Build and test the Docker image
         run: |
-          git archive --format=tar.gz -o desktop/build/engine-linux-x64/source.tar.gz HEAD
-          chmod 0644 desktop/build/engine-linux-x64/source.tar.gz
-          printf '**\n!engine-linux-x64/\n!engine-linux-x64/**\n!web/\n!web/**\n' > desktop/build/.dockerignore
-          docker build --file deploy/Dockerfile --build-arg VERSION="${TAG#v}" --build-arg REVISION="$GITHUB_SHA" \
-            --build-arg SOURCE_SHA256="$(sha256sum desktop/build/engine-linux-x64/source.tar.gz | cut -d' ' -f1)" \
+          engine=engine-${{ matrix.target }}
+          git archive --format=tar.gz -o desktop/build/$engine/source.tar.gz HEAD
+          chmod 0644 desktop/build/$engine/source.tar.gz
+          printf '**\n!%s/\n!%s/**\n!web/\n!web/**\n' $engine $engine > desktop/build/.dockerignore
+          docker build --file deploy/Dockerfile --build-arg ENGINE=$engine --build-arg VERSION="${TAG#v}" --build-arg REVISION="$GITHUB_SHA" \
+            --build-arg SOURCE_SHA256="$(sha256sum desktop/build/$engine/source.tar.gz | cut -d' ' -f1)" \
             --tag pancakeslicer:ci desktop/build
           docker run -d --name test -p 6868:6868 pancakeslicer:ci
           for i in $(seq 30); do curl -fsS http://127.0.0.1:6868/api/healthz && break; sleep 2; done
@@ -325,13 +331,40 @@ jobs:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
+          tag="${TAG#v}-${{ matrix.arch == 'x64' && 'amd64' || matrix.arch }}"
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+          for repo in ghcr.io/zimengxiong/pancakeslicer docker.io/zimengxiong/pancakeslicer; do
+            docker tag pancakeslicer:ci "$repo:$tag"; docker push "$repo:$tag"
+          done
+
+  docker:
+    name: Docker manifest
+    needs: [prepare, linux]
+    if: >-
+      needs.linux.result == 'success' &&
+      ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.publish == true)
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - name: Point the version and latest at every architecture published for this version
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
           version="${TAG#v}"
           echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
           for repo in ghcr.io/zimengxiong/pancakeslicer docker.io/zimengxiong/pancakeslicer; do
-            for t in "$version" latest; do docker tag pancakeslicer:ci "$repo:$t"; docker push "$repo:$t"; done
+            images=()
+            for arch in amd64 arm64; do
+              if docker buildx imagetools inspect "$repo:$version-$arch" >/dev/null 2>&1; then images+=("$repo:$version-$arch"); fi
+            done
+            echo "$repo:$version = ${images[*]}"
+            docker buildx imagetools create --tag "$repo:$version" --tag "$repo:latest" "${images[@]}"
           done
-          docker inspect --format '{{index .RepoDigests 0}}' ghcr.io/zimengxiong/pancakeslicer:$version
+          docker buildx imagetools inspect ghcr.io/zimengxiong/pancakeslicer:$version
 
   desktop:
     name: ${{ matrix.target }}
@@ -431,7 +464,7 @@ jobs:
 
   publish:
     name: Publish the release
-    needs: [prepare, engine, linux, desktop]
+    needs: [prepare, engine, linux, docker, desktop]
     if: >-
       always() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') &&
       ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || inputs.publish == true)

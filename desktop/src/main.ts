@@ -201,6 +201,7 @@ async function startServer(): Promise<string> {
     '--resources', path.join(engine, 'resources'),
     '--data-dir', path.join(data, 'data'),
     '--job-root', path.join(data, 'jobs'),
+    '--job-timeout', '0',
 
     '--printer-network', 'lan',
   ], { env, stdio: ['ignore', log, log], windowsHide: true });

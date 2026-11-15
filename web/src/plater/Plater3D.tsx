@@ -834,7 +834,7 @@ void main() {
       }
       if (s.gizmo === 'slant' && s.slant) {
         const base = slantPoint(s, { ...s.slant, z: 0 });
-        if (base) setSlant({ z: Math.max(0, slantProxy.position.z - base.z) });
+        if (base) setSlant({ z: slantProxy.position.z - base.z });
         return;
       }
       if (!dragStart || !s.selected) return;

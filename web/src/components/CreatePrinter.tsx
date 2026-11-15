@@ -10,7 +10,7 @@ import { switchPreset } from '../actions';
 import { Modal, ModalBody, ModalFooter, ModalTitle } from './Modal';
 import { More } from './kit';
 
-const NOZZLES = ['0.2', '0.4', '0.6', '0.8'];
+const NOZZLES = ['0.2', '0.25', '0.4', '0.5', '0.6', '0.8', '1.0'];
 const first = (v: unknown) => String([v].flat()[0] ?? '');
 function rect(area: string) {
   const pts = area.split(',').map((p) => p.split('x').map(Number));

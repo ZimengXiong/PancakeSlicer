@@ -13,7 +13,8 @@
     "dist:mac": "tsc -p . && electron-builder --mac --arm64 --publish never",
     "dist:win": "tsc -p . && electron-builder --win --x64 --publish never",
     "dist:mac-x64": "tsc -p . && electron-builder --mac --x64 --publish never",
-    "dist:linux": "tsc -p . && electron-builder --linux --x64 --publish never"
+    "dist:linux-x64": "tsc -p . && electron-builder --linux --x64 --publish never",
+    "dist:linux-arm64": "tsc -p . && electron-builder --linux --arm64 --publish never"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",

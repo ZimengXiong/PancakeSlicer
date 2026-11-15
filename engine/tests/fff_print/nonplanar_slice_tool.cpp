@@ -925,6 +925,12 @@ void write_gcode_3mf(const Args &args, Model &model, Print &print, DynamicPrintC
         plate->config.option<ConfigOptionInts>("filament_map", true)->values        = print.get_filament_maps();
         plate->config.option<ConfigOptionInts>("filament_volume_map", true)->values = print.get_filament_volume_maps();
     }
+    if (const auto *map = plate->config.option<ConfigOptionInts>("filament_map")) {
+        plate->filament_maps = map->values;
+        config.option<ConfigOptionInts>("filament_map", true)->values = map->values;
+    }
+    if (const auto *volumes = plate->config.option<ConfigOptionInts>("filament_volume_map"))
+        config.option<ConfigOptionInts>("filament_volume_map", true)->values = volumes->values;
     plate->plate_index             = 0;
     for (size_t i = 0; i < model.objects.size(); ++i)
         for (size_t j = 0; j < model.objects[i]->instances.size(); ++j)
@@ -1009,6 +1015,9 @@ void write_gcode_3mf(const Args &args, Model &model, Print &print, DynamicPrintC
         bboxes.filament_ids.push_back(info.id);
         bboxes.filament_colors.push_back(info.color);
     }
+
+    if (auto *printers = config.option<ConfigOptionStrings>("print_compatible_printers", true); printers->values.empty())
+        printers->values = { config.opt_string("printer_settings_id") };
 
     model.get_backup_path();
     StoreParams params;

@@ -37,12 +37,12 @@ def main():
     proof = relative_to_stage(json.loads((args.qualification/'qualification.json').read_text()), stage_root)
     if not proof.get('ready'):
         raise RuntimeError('Qualification did not pass; no ready manifest is written')
-    cross_os = proof['platform']['os'] != 'linux'
-    if cross_os and not all(proof['identity'][name].get('geometry',{}).get('passed') is True for name in ['benchy_flat','benchy']):
-        raise RuntimeError('Cross-OS flat and curved Benchy geometric equivalence did not pass')
-    if not cross_os and proof['identity']['benchy_flat']['gcode']['identity'] not in {'byte','normalized'}:
-        raise RuntimeError('Same-OS flat Benchy identity did not pass')
-    equivalence = {name:geometry.summary(proof['identity'][name]) for name in ['benchy_flat','benchy']} if cross_os else None
+    cross_platform = proof['platform'] != {'os':'linux','arch':'x86_64'}
+    if cross_platform and not all(proof['identity'][name].get('geometry',{}).get('passed') is True for name in ['benchy_flat','benchy']):
+        raise RuntimeError('Cross-platform flat and curved Benchy geometric equivalence did not pass')
+    if not cross_platform and proof['identity']['benchy_flat']['gcode']['identity'] not in {'byte','normalized'}:
+        raise RuntimeError('Same-platform flat Benchy identity did not pass')
+    equivalence = {name:geometry.summary(proof['identity'][name]) for name in ['benchy_flat','benchy']} if cross_platform else None
     entries = {}
     for name, manifest_name in [('benchy','benchy'),('dome_lid','dome'),('coaster','wave')]:
         item = proof['audits'][name]
@@ -59,7 +59,7 @@ def main():
                 identity['normalized_sha256'] = comparison['gcode']['normalized_sha256']
         if identity['mode'] == 'differs':
             identity['diff'] = comparison['gcode']
-        if cross_os and name == 'benchy':
+        if cross_platform and name == 'benchy':
             identity = {**identity,**equivalence[name], 'byte_identity':comparison['gcode']['identity']}
         entries[manifest_name] = {'native_qualified':True,'full_audit_qualified':True,
             'audit_checks_passed':item['passed'],'audit_checks_total':item['total'],
@@ -71,8 +71,8 @@ def main():
     manifest = {**binding,'schema':3,'backend':'native','available':True,'preview_ready':True,'print_qualified':True,
                 'resource_file_count':proof['resource_file_count'],'validated_curved_benchy_clearance':True,
                 'validated_wave_export':True,'features':{'curved_tops':True,'nonplanar_wave':True},**entries}
-    if cross_os:
-        manifest['cross_os_equivalence'] = equivalence
+    if cross_platform:
+        manifest['cross_platform_equivalence'] = equivalence
     manifest_path = args.engine/'surface-manifest.json'
     write(manifest_path,manifest)
     args.evidence_archive.parent.mkdir(parents=True,exist_ok=True)
@@ -87,8 +87,8 @@ def main():
     ready = {**binding,'schema':'orca.ns7.qualification.v2','ready':True,'manifest_sha256':digest(manifest_path),
              'outputs':{name:entries[alias] for name,alias in [('benchy','benchy'),('dome_lid','dome'),('coaster','wave')]},
              'evidence':{'archive_sha256':digest(args.evidence_archive)}}
-    if cross_os:
-        ready['cross_os_equivalence'] = equivalence
+    if cross_platform:
+        ready['cross_platform_equivalence'] = equivalence
     write(args.engine/'artifact-qualification.ready',ready)
     print(json.dumps({'source_sha':binding['source_sha'],'publication_main_sha':binding['publication_main_sha'],
                       'platform':binding['platform'],'ready':True,'evidence_sha256':digest(args.evidence_archive)},indent=2))

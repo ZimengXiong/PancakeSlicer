@@ -164,6 +164,8 @@ func (h *statusHub) run(ctx context.Context, mon *monitor) {
 			switch p.Kind {
 			case "bambu-lan":
 				err = monitorBambu(ctx, p, secret, publish)
+			case "flashforge":
+				err = pollFlashforge(ctx, p, publish, mon.poke)
 			default:
 				err = pollHost(ctx, p, secret, publish, mon.poke)
 			}
