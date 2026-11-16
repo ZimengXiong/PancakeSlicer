@@ -521,7 +521,7 @@ func rtspCamera(ctx context.Context, p *PrinterConfig, secret string, emit func(
 		io.Copy(local, conn)
 	}()
 	target := url.URL{Scheme: "rtsps", Host: listener.Addr().String(), User: url.UserPassword("bblp", secret), Path: "/streaming/live/1"}
-	cmd := exec.CommandContext(ctx, executable, "-hide_banner", "-loglevel", "error", "-rtsp_transport", "tcp", "-analyzeduration", "500000", "-probesize", "32768", "-timeout", "15000000", "-i", target.String(), "-map", "0:v:0", "-an", "-c:v", "copy", "-movflags", "frag_keyframe+empty_moov+default_base_moof", "-flush_packets", "1", "-f", "mp4", "pipe:1")
+	cmd := exec.CommandContext(ctx, executable, "-hide_banner", "-loglevel", "error", "-rtsp_transport", "tcp", "-tls_verify", "0", "-analyzeduration", "500000", "-probesize", "32768", "-timeout", "15000000", "-i", target.String(), "-map", "0:v:0", "-an", "-c:v", "copy", "-movflags", "frag_keyframe+empty_moov+default_base_moof", "-flush_packets", "1", "-f", "mp4", "pipe:1")
 	pipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
