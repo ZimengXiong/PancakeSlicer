@@ -332,6 +332,7 @@ func dialSDCP(ctx context.Context, p *PrinterConfig) (*sdcpConn, error) {
 	if err != nil {
 		return nil, netError(err, "the printer")
 	}
+	conn.SetDeadline(time.Now().Add(10 * time.Second))
 	if base.Scheme == "https" {
 		tc := tls.Client(conn, p.tlsConfig(base.Hostname()))
 		if err := tc.HandshakeContext(ctx); err != nil {
@@ -341,7 +342,6 @@ func dialSDCP(ctx context.Context, p *PrinterConfig) (*sdcpConn, error) {
 		conn = tc
 	}
 	c := &sdcpConn{conn: conn, br: bufio.NewReader(conn), stop: context.AfterFunc(ctx, func() { conn.Close() })}
-	conn.SetDeadline(time.Now().Add(10 * time.Second))
 	var nonce [16]byte
 	rand.Read(nonce[:])
 	key := base64.StdEncoding.EncodeToString(nonce[:])

@@ -224,7 +224,7 @@ function DevicePanel({ connection, model, cover, status, live }: { connection: P
             </div>}
             {canStop && <div className="device-job-meta">{status?.layer != null && status.layer > 0 && <span>Layer {status.layer}{status.layers != null && ` / ${status.layers}`}</span>}{status?.remaining_s != null && <span>{jobDuration(status.remaining_s)} left</span>}{eta && <span>ETA {eta}</span>}</div>}
           </div>
-          {canStop && <div className="device-job-actions">{active && <button className="btn" type="button" disabled={busy} onClick={() => run(status?.state === 'paused' ? 'resume' : 'pause')}>{status?.state === 'paused' ? 'Resume' : 'Pause'}</button>}<button className="btn btn-danger" type="button" disabled={busy} onClick={() => run('stop')}>Stop</button></div>}
+          {canStop && <div className="device-job-actions">{active && !(status?.state === 'paused' && connection.limited_controls) && <button className="btn" type="button" disabled={busy} onClick={() => run(status?.state === 'paused' ? 'resume' : 'pause')}>{status?.state === 'paused' ? 'Resume' : 'Pause'}</button>}<button className="btn btn-danger" type="button" disabled={busy} onClick={() => run('stop')}>Stop</button></div>}
         </section>
         {temperatures ? <Card title="Temperatures" className="device-temperatures">{temperatureRows}</Card>
           : waiting && <Card title="Temperatures" className="device-temperatures"><div role="status" aria-busy="true" aria-label="Checking temperatures…">{skelRows(['Nozzle', 'Bed'])}</div></Card>}
