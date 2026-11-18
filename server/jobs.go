@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -407,6 +408,18 @@ type JobManager struct {
 	downloadBytes uint64
 }
 
+// longPathPrefix adds the Windows long path prefix (\\?\) to a path if on Windows.
+// This allows paths longer than MAX_PATH (260 characters) to work correctly.
+func longPathPrefix(path string) string {
+	if runtime.GOOS == "windows" {
+		abs, err := filepath.Abs(path)
+		if err == nil && !strings.HasPrefix(abs, `\\?\`) {
+			return `\\?\` + abs
+		}
+	}
+	return path
+}
+
 var jobIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 func NewJobManager(cfg Config) (*JobManager, error) {
@@ -713,8 +726,17 @@ func (m *JobManager) toolArgs(j *Job) []string {
 	for _, f := range r.Filaments {
 		args = append(args, "--filament", f)
 	}
+	// Write overrides to a JSON file to avoid command line length limits on Windows.
+	// Uses upstream's --set-file which expects JSON array of [key, value] pairs.
 	if len(r.Overrides) > 0 {
-		args = append(args, "--set-file", j.SettingsPath())
+		settingsPath := j.SettingsPath()
+		pairs := make([][2]string, len(r.Overrides))
+		for i, kv := range r.Overrides {
+			pairs[i] = [2]string{kv[0], kv[1]}
+		}
+		data, _ := json.Marshal(pairs)
+		os.WriteFile(settingsPath, data, 0o600)
+		args = append(args, "--set-file", settingsPath)
 	}
 	for _, e := range r.Events {
 		args = append(args, "--event", e)
@@ -844,8 +866,9 @@ func (m *JobManager) run(ctx context.Context, j *Job) {
 		j.failWith("slice_setup_failed", sanitizeToolError(commandErr))
 		return
 	}
-	cmd.Dir = j.Dir
-	cmd.Env = engineEnv(filepath.Join(j.Dir, "tmp"))
+	cmd.Dir = longPathPrefix(j.Dir)
+	tmpDir := longPathPrefix(filepath.Join(j.Dir, "tmp"))
+	cmd.Env = engineEnv(tmpDir)
 	if err := limitJobMemory(cmd); err != nil {
 		j.failWith("slice_setup_failed", err.Error())
 		return
