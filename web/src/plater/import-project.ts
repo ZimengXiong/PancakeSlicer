@@ -19,11 +19,11 @@ import { OPTIONS } from '../options';
 type ImportedPlate = { index: number; objects: PlateObject[] };
 
 function placeObjects(existing: PlateObject[], incoming: PlateObject[], area: THREE.Vector2[]): PlateObject[] {
-  const placed = [...existing];
+  const placed = [...existing], taken = [...existing];
   for (const object of incoming) {
     let next = object;
     const box = instanceBox(object, object.instances[0]);
-    const overlaps = placed.some((o) => o.instances.some((i) => {
+    const overlaps = taken.some((o) => o.instances.some((i) => {
       const other = instanceBox(o, i);
       return box.min.x < other.max.x - 0.001 && box.max.x > other.min.x + 0.001 &&
         box.min.y < other.max.y - 0.001 && box.max.y > other.min.y + 0.001 &&
@@ -32,6 +32,7 @@ function placeObjects(existing: PlateObject[], incoming: PlateObject[], area: TH
     if (overlaps || outsideBed([object], area, Infinity).size) {
       const spot = nextFreeSpot(placed, object, area) ?? bedBounds(area).center;
       next = { ...object, instances: object.instances.map((i) => ({ ...i, x: spot.x, y: spot.y })) };
+      taken.push(next);
     }
     placed.push(next);
   }
