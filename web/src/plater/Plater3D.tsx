@@ -1504,6 +1504,7 @@ void main() {
     };
 
     let rightAt: { x: number; y: number; moved: boolean } | null = null, rightTime = -Infinity;
+    let rightMenuAt: { x: number; y: number; time: number } | null = null;
     const openMenu = (ev: MouseEvent) => {
       const hit = pick(ev);
       if (!hit) {
@@ -1525,7 +1526,15 @@ void main() {
       rightAt = null;
       rightTime = performance.now();
       if (press.moved || Math.hypot(ev.clientX - press.x, ev.clientY - press.y) > 4 || ev.target !== renderer.domElement) return;
+      rightMenuAt = { x: ev.clientX, y: ev.clientY, time: rightTime };
       openMenu(ev);
+    };
+    const onRootContextMenu = (ev: MouseEvent) => {
+      if (ev.target !== document.documentElement || ev.button !== 2 || !rightMenuAt ||
+        performance.now() - rightMenuAt.time >= 400 ||
+        Math.abs(ev.clientX - rightMenuAt.x) > 1 || Math.abs(ev.clientY - rightMenuAt.y) > 1) return;
+      rightMenuAt = null;
+      ev.preventDefault();
     };
     const onContextMenu = (ev: MouseEvent) => {
       ev.preventDefault();
@@ -1536,6 +1545,7 @@ void main() {
     };
     window.addEventListener('pointermove', onRightMove);
     window.addEventListener('pointerup', onRightUp);
+    window.addEventListener('contextmenu', onRootContextMenu, { capture: true });
     renderer.domElement.dataset.customContext = 'orca';
     renderer.domElement.addEventListener('contextmenu', onContextMenu);
     controls.addEventListener('start', () => {
@@ -1754,6 +1764,7 @@ void main() {
       window.removeEventListener('pointerup', onTouchUp);
       window.removeEventListener('pointermove', onRightMove);
       window.removeEventListener('pointerup', onRightUp);
+      window.removeEventListener('contextmenu', onRootContextMenu, { capture: true });
       window.removeEventListener('pointercancel', onTouchUp);
       cancelAnimationFrame(hoverFrame);
       ro.disconnect();
