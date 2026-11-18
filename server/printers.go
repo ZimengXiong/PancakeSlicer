@@ -66,13 +66,13 @@ type ConnectionView struct {
 	Username   string `json:"username,omitempty"`
 	HasSecret  bool   `json:"has_secret"`
 	Trust      string `json:"trust,omitempty"`
-	UploadOnly bool   `json:"upload_only,omitempty"`
+	Limited    bool   `json:"limited_controls,omitempty"`
 }
 
 func (p *PrinterConfig) view() ConnectionView {
 	_, err := os.Stat(p.CredentialFile)
 	return ConnectionView{Printer: p.Printer, ID: p.id, Name: p.Name, Kind: p.Kind, Host: p.Host, Serial: p.Serial, Model: p.model,
-		URL: p.URL, Auth: p.Auth, Username: p.Username, HasSecret: p.CredentialFile != "" && err == nil, Trust: p.TLS, UploadOnly: p.uploadOnly()}
+		URL: p.URL, Auth: p.Auth, Username: p.Username, HasSecret: p.CredentialFile != "" && err == nil, Trust: p.TLS, Limited: p.limitedControls()}
 }
 
 var bambuSerial = regexp.MustCompile(`^[A-Za-z0-9]{6,32}$`)
@@ -624,10 +624,6 @@ func (s *Server) sendJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		amsMapping, amsMapping2 = v0, v1
-	}
-	if start && p.uploadOnly() {
-		fail(w, 400, "upload_only", p.Name)
-		return
 	}
 	client := s.clientIP(r)
 	if ok, retry := s.sends.allow(client); !ok {

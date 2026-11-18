@@ -680,7 +680,7 @@ func (s *Server) controlConnection(w http.ResponseWriter, r *http.Request) {
 	case "duet":
 		err = controlDuet(ctx, p, secret, body.Action)
 	case "elegoolink":
-		err = controlElegoo(ctx, p, body.Action)
+		err = controlElegoo(ctx, p, secret, body.Action)
 	case "flashforge":
 		err = controlFlashforge(ctx, p, body.Action)
 	default:

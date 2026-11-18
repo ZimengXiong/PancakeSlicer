@@ -93,7 +93,7 @@ function SendView({ close, printer, head, edit }: { close: () => void; printer: 
   const machineConfig = useStore((s) => effectiveConfig(s, 'machine'));
   const record = useStore((s) => setupOf(s, printer));
   const capabilities = printerCapabilities(useStore((s) => printerModel(s, printer)) || connection.model || '');
-  const elegoo = kind === 'elegoolink' && !connection.upload_only;
+  const elegoo = kind === 'elegoolink';
   const [leveling, setLeveling] = useState(kind !== 'elegoolink');
   const [flowCali, setFlowCali] = useState(false);
   const [vibration, setVibration] = useState(true);
@@ -251,7 +251,7 @@ function SendView({ close, printer, head, edit }: { close: () => void; printer: 
         ? <button type="button" className="btn-primary" disabled={!!blocked || !!working} onClick={() => void handOff()}>Open in Bambu Connect</button>
         : <button type="button" className="btn-primary" disabled={!!blocked} onClick={() => void download()}>Download .gcode.3mf</button>) : <>
         <button type="button" className="btn" disabled={busy || !!blocked} onClick={() => void send(false)}>Upload only</button>
-        {!connection.upload_only && <button type="button" className="btn-primary" disabled={busy || !!blocked || needsMap || running || !!materialBlocks.length} onClick={() => void send(true)}>Print</button>}
+        <button type="button" className="btn-primary" disabled={busy || !!blocked || needsMap || running || !!materialBlocks.length} onClick={() => void send(true)}>Print</button>
       </>}
     </ModalFooter>
   </>;

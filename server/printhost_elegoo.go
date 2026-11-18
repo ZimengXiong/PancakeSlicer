@@ -34,7 +34,7 @@ const elegooChunk = 1 << 20
 
 func elegooCC2(p *PrinterConfig) bool { return strings.HasSuffix(strings.TrimSpace(p.model), "2") }
 
-func (p *PrinterConfig) uploadOnly() bool { return p.Kind == "elegoolink" && elegooCC2(p) }
+func (p *PrinterConfig) limitedControls() bool { return p.Kind == "elegoolink" && elegooCC2(p) }
 
 // elegooPlate reads the plate the file was sliced for from the config block G-code ends with: the smooth
 // side for a Cool Plate, the textured side otherwise, like upstream.
@@ -61,7 +61,7 @@ func testElegoo(ctx context.Context, p *PrinterConfig, secret string) PrinterTes
 	h, base, err := httpSession(ctx, p, "")
 	if err == nil {
 		if elegooCC2(p) {
-			err = elegooCC2Info(ctx, h, base, secret)
+			_, err = elegooCC2Info(ctx, h, base, secret)
 		} else {
 			err = elegooProbe(ctx, h, base)
 		}
@@ -97,17 +97,17 @@ func elegooProbe(ctx context.Context, h *hostSession, base *url.URL) error {
 
 func elegooToken(secret string) string { return cmpOr(secret, "123456") }
 
-func elegooCC2Info(ctx context.Context, h *hostSession, base *url.URL, secret string) error {
+func elegooCC2Info(ctx context.Context, h *hostSession, base *url.URL, secret string) (string, error) {
 	u := base.JoinPath("system/info")
 	u.RawQuery = url.Values{"X-Token": {elegooToken(secret)}}.Encode()
 	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
 	if err != nil {
-		return err
+		return "", err
 	}
 	req.Header.Set("X-Token", elegooToken(secret))
 	resp, err := h.do(req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 	var info struct {
@@ -117,15 +117,15 @@ func elegooCC2Info(ctx context.Context, h *hostSession, base *url.URL, secret st
 		} `json:"system_info"`
 	}
 	if err := elegooReply(resp, &info); err != nil {
-		return err
+		return "", err
 	}
 	if info.ErrorCode != 0 {
-		return &connError{"access_code", fmt.Sprintf("The printer rejected the access code (error %d)—check it in Connection settings.", info.ErrorCode)}
+		return "", &connError{"access_code", fmt.Sprintf("The printer rejected the access code (error %d)—check it in Connection settings.", info.ErrorCode)}
 	}
 	if info.SystemInfo.SN == "" {
-		return errors.New("That address answered, but it isn't an Elegoo Centauri 2 printer.")
+		return "", errors.New("That address answered, but it isn't an Elegoo Centauri 2 printer.")
 	}
-	return nil
+	return info.SystemInfo.SN, nil
 }
 
 func elegooReply(resp *http.Response, out any) error {
@@ -149,7 +149,7 @@ func sendElegoo(ctx context.Context, u *upload) (string, error) {
 	}
 	cc2 := elegooCC2(p)
 	if cc2 {
-		err = elegooCC2Info(ctx, h, base, u.secret)
+		_, err = elegooCC2Info(ctx, h, base, u.secret)
 	} else {
 		err = elegooProbe(ctx, h, base)
 	}
@@ -216,7 +216,11 @@ func sendElegoo(ctx context.Context, u *upload) (string, error) {
 		return "Uploaded " + u.filename + " to " + p.Name + ".", nil
 	}
 	u.starting()
-	if err := startElegoo(ctx, u); err != nil {
+	start := startElegoo
+	if cc2 {
+		start = startCC2
+	}
+	if err := start(ctx, u); err != nil {
 		return "", err
 	}
 	return "Uploaded " + u.filename + " to " + p.Name + " and started printing.", nil
@@ -485,16 +489,12 @@ func (c *sdcpConn) request(cmd int, data any) (int, error) {
 func pollElegoo(ctx context.Context, p *PrinterConfig, secret string, publish func(PrinterStatus), poke chan struct{}) error {
 	var next func() (PrinterStatus, error)
 	if elegooCC2(p) {
-		// Centauri 2 exposes no print status over HTTP; report it as connected (idle) while it answers.
-		h, base, err := httpSession(ctx, p, "")
+		poll, done, err := pollCC2(ctx, p, secret)
 		if err != nil {
 			return err
 		}
-		next = func() (PrinterStatus, error) {
-			rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			defer cancel()
-			return PrinterStatus{Online: true, State: "idle"}, elegooCC2Info(rctx, h, base, secret)
-		}
+		defer done()
+		next = poll
 	} else {
 		ws, err := dialSDCP(ctx, p)
 		if err != nil {
@@ -572,7 +572,7 @@ func elegooStatus(s *sdcpStatus) PrinterStatus {
 
 func elegooCommand(ctx context.Context, p *PrinterConfig, cmd int, data any) error {
 	if elegooCC2(p) {
-		return errors.New("Centauri 2 can't be controlled over the network—use the printer's screen.")
+		return errors.New("Centauri 2 printers can't change temperatures or the light over the network—use the printer's screen.")
 	}
 	ws, err := dialSDCP(ctx, p)
 	if err != nil {
@@ -586,7 +586,10 @@ func elegooCommand(ctx context.Context, p *PrinterConfig, cmd int, data any) err
 	return err
 }
 
-func controlElegoo(ctx context.Context, p *PrinterConfig, action string) error {
+func controlElegoo(ctx context.Context, p *PrinterConfig, secret, action string) error {
+	if elegooCC2(p) {
+		return controlCC2(ctx, p, secret, action)
+	}
 	cmd := map[string]int{"pause": 129, "stop": 130, "resume": 131}[action]
 	if cmd == 0 {
 		return errors.New("This printer connection only supports pause, resume and stop.")
