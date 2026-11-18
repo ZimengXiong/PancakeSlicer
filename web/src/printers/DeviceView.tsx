@@ -154,7 +154,7 @@ function DevicePanel({ connection, model, cover, status, live }: { connection: P
     try { await work(); return true; } catch (e) { setError(e instanceof Error ? e.message : 'Oops! The printer didn\'t accept that command'); return false; } finally { setPending(false); }
   };
   const offline = !live || !status?.online, busy = offline || pending;
-  const bambu = connection.kind === 'bambu-lan', elegoo = connection.kind === 'elegoolink' && !/2$/.test(model || connection.model || '');
+  const bambu = connection.kind === 'bambu-lan', elegoo = connection.kind === 'elegoolink' && !connection.upload_only;
   const temperaturesEditable = bambu || elegoo || ['moonraker', 'octoprint', 'duet'].includes(connection.kind);
   const capabilities = printerCapabilities(model);
   const { lightLabel } = capabilities;

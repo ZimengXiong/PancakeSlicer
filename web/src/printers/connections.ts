@@ -8,7 +8,7 @@ import { joinParts, SEP } from '../separator';
 export type ConnectionKind = 'bambu-lan' | 'bambu-connect' | 'moonraker' | 'octoprint' | 'prusalink' | 'duet' | 'flashforge' | 'elegoolink';
 export interface PrinterConnection {
   printer: string; id: string; name: string; kind: ConnectionKind;
-  host?: string; serial?: string; model?: string; url?: string; auth?: string; username?: string;
+  host?: string; serial?: string; model?: string; url?: string; auth?: string; username?: string; upload_only?: boolean;
   has_secret: boolean; trust?: string;
 }
 export interface Temp { actual: number; target: number }

@@ -66,12 +66,13 @@ type ConnectionView struct {
 	Username   string `json:"username,omitempty"`
 	HasSecret  bool   `json:"has_secret"`
 	Trust      string `json:"trust,omitempty"`
+	UploadOnly bool   `json:"upload_only,omitempty"`
 }
 
 func (p *PrinterConfig) view() ConnectionView {
 	_, err := os.Stat(p.CredentialFile)
 	return ConnectionView{Printer: p.Printer, ID: p.id, Name: p.Name, Kind: p.Kind, Host: p.Host, Serial: p.Serial, Model: p.model,
-		URL: p.URL, Auth: p.Auth, Username: p.Username, HasSecret: p.CredentialFile != "" && err == nil, Trust: p.TLS}
+		URL: p.URL, Auth: p.Auth, Username: p.Username, HasSecret: p.CredentialFile != "" && err == nil, Trust: p.TLS, UploadOnly: p.uploadOnly()}
 }
 
 var bambuSerial = regexp.MustCompile(`^[A-Za-z0-9]{6,32}$`)
@@ -539,7 +540,6 @@ func (s *Server) sendJob(w http.ResponseWriter, r *http.Request) {
 		Start         *bool    `json:"start"`
 		Filename      string   `json:"filename"`
 		BedLeveling   *bool    `json:"bed_leveling"`
-		BedType       int      `json:"bed_type"`
 		FlowCali      bool     `json:"flow_cali"`
 		Timelapse     bool     `json:"timelapse"`
 		VibrationCali *bool    `json:"vibration_cali"`
@@ -625,8 +625,8 @@ func (s *Server) sendJob(w http.ResponseWriter, r *http.Request) {
 		}
 		amsMapping, amsMapping2 = v0, v1
 	}
-	if body.BedType != 0 && (body.BedType != 1 || p.Kind != "elegoolink") {
-		fail(w, 400, "bed_type_elegoo", body.BedType)
+	if start && p.uploadOnly() {
+		fail(w, 400, "upload_only", p.Name)
 		return
 	}
 	client := s.clientIP(r)
@@ -679,7 +679,7 @@ func (s *Server) sendJob(w http.ResponseWriter, r *http.Request) {
 	m.history.record(view)
 	m.hub.changed()
 	audit(map[string]any{"event": "send_accepted", "job_id": j.ID, "printer": p.Printer, "kind": p.Kind, "client": client, "start_print": start, "bytes": st.Size()})
-	options := bambuOptions{bedLeveling: body.BedLeveling == nil && p.Kind != "elegoolink" || body.BedLeveling != nil && *body.BedLeveling, flowCali: body.FlowCali, timelapse: body.Timelapse, vibrationCali: body.VibrationCali == nil || *body.VibrationCali, amsMapping: amsMapping, amsMapping2: amsMapping2, bedType: body.BedType}
+	options := bambuOptions{bedLeveling: body.BedLeveling == nil && p.Kind != "elegoolink" || body.BedLeveling != nil && *body.BedLeveling, flowCali: body.FlowCali, timelapse: body.Timelapse, vibrationCali: body.VibrationCali == nil || *body.VibrationCali, amsMapping: amsMapping, amsMapping2: amsMapping2}
 	for _, t := range amsMapping {
 		options.useAMS = options.useAMS || t >= 0
 	}
@@ -721,7 +721,6 @@ func (u *upload) placed() string {
 
 type bambuOptions struct {
 	bedLeveling, flowCali, timelapse, vibrationCali, useAMS bool
-	bedType                                                 int
 	amsMapping                                              []int
 	amsMapping2                                             []bambuTrayAddress
 }

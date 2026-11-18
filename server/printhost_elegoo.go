@@ -34,6 +34,21 @@ const elegooChunk = 1 << 20
 
 func elegooCC2(p *PrinterConfig) bool { return strings.HasSuffix(strings.TrimSpace(p.model), "2") }
 
+func (p *PrinterConfig) uploadOnly() bool { return p.Kind == "elegoolink" && elegooCC2(p) }
+
+// elegooPlate reads the plate the file was sliced for from the config block G-code ends with: the smooth
+// side for a Cool Plate, the textured side otherwise, like upstream.
+func elegooPlate(file io.ReaderAt, size int64) int {
+	tail := make([]byte, min(size, 256<<10))
+	n, _ := file.ReadAt(tail, size-int64(len(tail)))
+	for _, line := range strings.Split(string(tail[:n]), "\n") {
+		if key, value, ok := strings.Cut(strings.TrimPrefix(line, ";"), "="); ok && strings.TrimSpace(key) == "curr_bed_type" {
+			return boolInt(strings.TrimSpace(value) == "Cool Plate")
+		}
+	}
+	return 0
+}
+
 func elegooUUID() string {
 	var b [16]byte
 	rand.Read(b[:])
@@ -197,12 +212,8 @@ func sendElegoo(ctx context.Context, u *upload) (string, error) {
 		}
 		offset += n
 	}
-	switch {
-	case !u.start:
+	if !u.start {
 		return "Uploaded " + u.filename + " to " + p.Name + ".", nil
-	case cc2:
-		u.outcome = "uploaded"
-		return "Uploaded " + u.filename + " to " + p.Name + ". Centauri 2 can't start prints over the network—start it from the printer's screen.", nil
 	}
 	u.starting()
 	if err := startElegoo(ctx, u); err != nil {
@@ -243,7 +254,7 @@ func startSDCP(ctx context.Context, u *upload) error {
 		}
 	}
 	ack, err := ws.request(128, map[string]any{"Filename": "/local/" + u.filename, "StartLayer": 0,
-		"Calibration_switch": boolInt(u.options.bedLeveling), "PrintPlatformType": u.options.bedType, "Tlp_Switch": boolInt(u.options.timelapse)})
+		"Calibration_switch": boolInt(u.options.bedLeveling), "PrintPlatformType": elegooPlate(u.file, u.size), "Tlp_Switch": boolInt(u.options.timelapse)})
 	if err != nil {
 		return err
 	}

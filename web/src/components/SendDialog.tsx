@@ -92,14 +92,12 @@ function SendView({ close, printer, head, edit }: { close: () => void; printer: 
   const fits = connectionOutput(kind) === output;
   const machineConfig = useStore((s) => effectiveConfig(s, 'machine'));
   const record = useStore((s) => setupOf(s, printer));
-  const resolvedModel = useStore((s) => printerModel(s, printer)) || connection.model || '';
-  const elegoo = kind === 'elegoolink' && !/2$/.test(resolvedModel);
-  const capabilities = printerCapabilities(resolvedModel);
+  const capabilities = printerCapabilities(useStore((s) => printerModel(s, printer)) || connection.model || '');
+  const elegoo = kind === 'elegoolink' && !connection.upload_only;
   const [leveling, setLeveling] = useState(kind !== 'elegoolink');
   const [flowCali, setFlowCali] = useState(false);
   const [vibration, setVibration] = useState(true);
   const [timelapse, setTimelapse] = useState(false);
-  const [bedType, setBedType] = useState(0);
   const products = useStore((s) => slotFilaments(s).map((id) => profileInfo(s, 'filament', id).product ?? '').join('\n')).split('\n');
   const lines = useFilamentLines(products), variant = useStore((s) => variantOf(s, printer).id);
   const filamentKey = useStore((s) => JSON.stringify(slotFilaments(s).map((key, i) => {
@@ -163,7 +161,7 @@ function SendView({ close, printer, head, edit }: { close: () => void; printer: 
     if (start && warnings.length && !await confirmDialog('Check printer setup', warnings.join('\n'), ['Print anyway', 'Cancel'])) return;
     if (start && mismatched.length && !await confirmDialog('Print from these trays?', mismatched.map((row) =>
       `Filament ${row.filament} (${where(row)}): the printer reports ${row.reported!.type} there; this print expects ${row.expected.type || 'another material'}.`).join('\n'), ['Print anyway', 'Cancel'])) return;
-    const options = elegoo ? { bed_leveling: leveling, timelapse, bed_type: bedType } : !bambu ? {} : { bed_leveling: leveling, flow_cali: flowCali, vibration_cali: vibration, timelapse: capabilities.timelapse && timelapse,
+    const options = elegoo ? { bed_leveling: leveling, timelapse } : !bambu ? {} : { bed_leveling: leveling, flow_cali: flowCali, vibration_cali: vibration, timelapse: capabilities.timelapse && timelapse,
       ...(start && mismatched.length ? { override: mismatched.map((row) => row.slot) } : {}) };
     await printerSend.submit(printer, jobId, { start, filename: exportFilename(), ...options });
   };
@@ -230,11 +228,6 @@ function SendView({ close, printer, head, edit }: { close: () => void; printer: 
       {elegoo && fits && <div className="send-options" role="group" aria-label="Print options">
         <label className="modal-check"><Check checked={leveling} disabled={busy} onCheckedChange={setLeveling} />Bed leveling</label>
         <label className="modal-check"><Check checked={timelapse} disabled={busy} onCheckedChange={setTimelapse} />Timelapse</label>
-        <label className="form-row"><span>Build plate</span>
-          <Dropdown className="combo" value={bedType} disabled={busy} aria-label="Build plate"
-            onValueChange={(next) => setBedType(Number(next))}
-            options={[{ value: 0, label: 'Side A (Textured)' }, { value: 1, label: 'Side B (Smooth)' }]} />
-        </label>
       </div>}
       {bambu && fits && (
         <section className="send-section" aria-label="Filaments"><div className="send-section-head"><h3>Filaments</h3></div>
@@ -258,7 +251,7 @@ function SendView({ close, printer, head, edit }: { close: () => void; printer: 
         ? <button type="button" className="btn-primary" disabled={!!blocked || !!working} onClick={() => void handOff()}>Open in Bambu Connect</button>
         : <button type="button" className="btn-primary" disabled={!!blocked} onClick={() => void download()}>Download .gcode.3mf</button>) : <>
         <button type="button" className="btn" disabled={busy || !!blocked} onClick={() => void send(false)}>Upload only</button>
-        <button type="button" className="btn-primary" disabled={busy || !!blocked || needsMap || running || !!materialBlocks.length} onClick={() => void send(true)}>Print</button>
+        {!connection.upload_only && <button type="button" className="btn-primary" disabled={busy || !!blocked || needsMap || running || !!materialBlocks.length} onClick={() => void send(true)}>Print</button>}
       </>}
     </ModalFooter>
   </>;
