@@ -1,4 +1,5 @@
 #include "ClearanceTerms.hpp"
+#include "libslic3r/Nonplanar/Research.hpp"
 #include "FieldObjective.hpp"
 
 #include <Eigen/Core>
@@ -133,7 +134,7 @@ public:
             if (g.occ[id])
                 m_nodes.push_back(id);
         size_t count = 3000;
-        if (const char *env = std::getenv("NS4_HEAD_P")) {
+        if (const char *env = research_switch("NS4_HEAD_P")) {
             const long value = std::strtol(env, nullptr, 10);
             if (value > 0)
                 count = size_t(value);

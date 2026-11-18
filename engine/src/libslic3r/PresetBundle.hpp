@@ -368,6 +368,7 @@ public:
 
     std::map<std::string, DynamicPrintConfig> m_config_maps;
     std::map<std::string, std::string> m_filament_id_maps;
+    std::map<std::pair<Preset::Type, std::string>, DynamicPrintConfig> base_configs;
 
     boost::filesystem::path dir_user_presets_local;
     boost::filesystem::path dir_user_presets_subscribed;
@@ -412,6 +413,7 @@ public:
         LoadSystem,
         LoadVendorOnly,
         LoadFilamentOnly,
+        KeepBases,
     };
     using LoadConfigBundleAttributes = enum_bitmask<LoadConfigBundleAttribute>;
     std::pair<PresetsConfigSubstitutions, size_t> load_vendor_configs_from_json(

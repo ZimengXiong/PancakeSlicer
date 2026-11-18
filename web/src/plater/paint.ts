@@ -376,10 +376,10 @@ export function setPaintTool(patch: Partial<PaintTool>) {
 }
 export const subscribePaintTool = (l: () => void) => (listeners.add(l), () => void listeners.delete(l));
 
-export const canPaint = (s: State) => !!s.features.paint && !!s.selected && !s.selected.all &&
-  !!s.objects.find((o) => o.id === s.selected!.object && (!o.project ? !s.project : canPaintProject(s, o)));
+export const canPaint = (s: State) => !!s.selected && !s.selected.all &&
+  !!s.objects.find((o) => o.id === s.selected!.object && (!o.project ? !s.project : canPaintProject(o)));
 
-const canPaintProject = (s: State, o: State['objects'][number]) => !!s.features.project_paint && !!o.project?.paintable &&
+const canPaintProject = (o: State['objects'][number]) => !!o.project?.paintable &&
   !o.project.placeholder && !o.volumes?.some((v) => v.type === 'part');
 
 export const togglePaint = (kind: PaintKind) => setState((s) => ({ gizmo: s.gizmo === kind || !canPaint(s) ? 'none' : kind }));

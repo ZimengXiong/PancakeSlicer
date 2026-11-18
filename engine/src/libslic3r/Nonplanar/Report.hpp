@@ -2,6 +2,7 @@
 #include "libslic3r/BoundingBox.hpp"
 #include "libslic3r/ExPolygon.hpp"
 #include "libslic3r/Point.hpp"
+#include "libslic3r/WarningCode.hpp"
 #include "CurvedTopsSurface.hpp"
 #include "SlantChoice.hpp"
 
@@ -74,7 +75,7 @@ struct ReportObject
     int         oneshot_polish_k = 0;
     double      oneshot_max_time_ratio_override = -1.;
     std::vector<std::string> regions;
-    std::vector<std::string> warnings;
+    std::vector<CodedWarning> warnings;
     std::optional<SlantChoice> slant;
     int         conformal_rung = -1;
     std::string conformal_variant;

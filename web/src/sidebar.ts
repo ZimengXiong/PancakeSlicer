@@ -1,5 +1,7 @@
-import { observePreference, preferenceText, savePreferences } from './saved-preferences';
+import { observePreference, preferenceText, savedPreferencesSnapshot, savePreferences, subscribeSavedPreferences } from './saved-preferences';
 import { useSyncExternalStore } from 'react';
+import { lastRailWidth } from './components/rail-layout';
+import { bootShape } from './boot-shape';
 
 const KEY = 'orca.web.sidebar';
 const listeners = new Set<() => void>();
@@ -17,16 +19,18 @@ export function toggleSidebar(next = !hidden) {
 const subscribe = (l: () => void) => { listeners.add(l); return () => void listeners.delete(l); };
 export const useSidebarHidden = () => useSyncExternalStore(subscribe, sidebarHidden);
 
-export const RAIL_MIN = 280, RAIL_MAX = 520, RAIL_DEFAULT = 360;
+export const RAIL_MIN = 320, railMax = () => Math.round(window.innerWidth * 0.45);
 const WIDTH_KEY = 'orca.web.railWidth';
-let width = RAIL_DEFAULT;
+const clampRail = (w: number) => Math.round(Math.min(Math.max(RAIL_MIN, railMax()), Math.max(RAIL_MIN, w)));
+let width: number | null = ((w) => w === null ? null : clampRail(w))(((last) => last === undefined ? bootShape()?.railWidth ?? null : last)(lastRailWidth()));
 
-export function setRailWidth(next: number, persist = true) {
-  width = Math.round(Math.min(RAIL_MAX, Math.max(RAIL_MIN, next)));
+export function setRailWidth(next: number | null, persist = true) {
+  width = next === null ? null : clampRail(next);
   if (persist) savePreferences({[WIDTH_KEY]: width});
   listeners.forEach((l) => l());
 }
 export const useRailWidth = () => useSyncExternalStore(subscribe, () => width);
+export const railWidthNow = () => width;
 
 export type RailProfile = 'machine' | 'filament' | 'process';
 let profile: RailProfile = 'process';
@@ -45,5 +49,11 @@ export function setObjectsHeight(next: number, persist = true) {
 export const useObjectsHeight = () => useSyncExternalStore(subscribe, () => objectsHeight);
 
 observePreference(KEY, () => { hidden = preferenceText(KEY) === 'hidden'; listeners.forEach(l => l()); });
-observePreference(WIDTH_KEY, () => setRailWidth(Number(preferenceText(WIDTH_KEY)) || RAIL_DEFAULT, false));
+const followWidth = () => {
+  if (!savedPreferencesSnapshot().hydrated) return;
+  const saved = Number(preferenceText(WIDTH_KEY)) || null;
+  if ((saved === null ? null : clampRail(saved)) !== width) setRailWidth(saved, false);
+};
+observePreference(WIDTH_KEY, followWidth);
+subscribeSavedPreferences(followWidth);
 observePreference(OBJECTS_KEY, () => setObjectsHeight(Number(preferenceText(OBJECTS_KEY)) || OBJECTS_DEFAULT, false));

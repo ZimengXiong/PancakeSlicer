@@ -211,8 +211,6 @@ export async function readProject(file: File, objectsOnly = false): Promise<{ it
   const skipped = new Set<string>();
   if (configBytes || entry('Metadata/Slic3r_PE.config') || settingsBytes) skipped.add('settings');
   if (Object.keys(zip).some((p) => /\.(png|jpg|jpeg)$/i.test(p))) skipped.add('thumbnails');
-  for (const [path, bytes] of Object.entries(zip)) if (/\.model$/i.test(path) && /(?:paint_|slic3rpe:mmu_segmentation|slic3rpe:custom_supports)/.test(strFromU8(bytes))) skipped.add('painting');
-  if (Object.keys(zip).some((p) => /^Metadata\//i.test(p))) skipped.add('metadata');
   const metadata = entry('Metadata/model_settings.config');
   const plateText = metadata ? strFromU8(metadata) : '';
   const membership = new Map<string, number>();
@@ -264,9 +262,19 @@ export async function readProject(file: File, objectsOnly = false): Promise<{ it
       origin: [b.transform[9] - (plate?.origin[0] ?? 0), b.transform[10] - (plate?.origin[1] ?? 0), b.transform[11]] as [number, number, number],
       rotZ: Math.atan2(b.transform[1], b.transform[0]) * 180 / Math.PI,
       transform: loadedItem(b),
-      ...(objectsOnly ? { parts: 1 } : volumesOf(b.objectid)),
+      ...(objectsOnly ? mergedPaint(b.objectid) : volumesOf(b.objectid)),
     };
   });
+  function mergedPaint(id: string): { parts: 1; paint?: ArchivePaint } {
+    const paint: ArchivePaint = {};
+    let offset = 0;
+    for (const leaf of leaves(rootPath, id)) {
+      for (const [kind, map] of Object.entries(leaf.paint ?? {}) as [keyof ArchivePaint, Record<string, string>][])
+        for (const [k, v] of Object.entries(map)) (paint[kind] ??= {})[String(Number(k) + offset)] = v;
+      offset += leaf.triangles!.length / 3;
+    }
+    return { parts: 1, ...(Object.keys(paint).length ? { paint } : {}) };
+  }
   function volumesOf(id: string): { parts: number; paint?: ArchivePaint; partTris?: number[] } {
     const list = leaves(rootPath, id);
     if (list.length === 1) return { parts: 1, ...(list[0].paint ? { paint: list[0].paint } : {}) };

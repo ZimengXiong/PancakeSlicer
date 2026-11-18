@@ -1,6 +1,7 @@
 #ifndef slic3r_PrintBase_hpp_
 #define slic3r_PrintBase_hpp_
 
+#include "WarningCode.hpp"
 #include "Config.hpp"
 #include "Polygon.hpp"
 #include "libslic3r.h"
@@ -41,6 +42,7 @@ struct StringObjectException
     StringExceptionType         type = STRING_EXCEPT_NOT_DEFINED;
     bool is_warning = false;
     std::vector<std::string>    params;
+    WarningCode code;
 };
 
 class CanceledException : public std::exception
@@ -87,6 +89,7 @@ public:
         bool 			current;
         std::string     message;
         int 			message_id;
+        WarningCode     code;
     };
 
     struct StateWithWarnings : public StateWithTimeStamp
@@ -236,7 +239,7 @@ public:
         return invalidated;
     }
 
-    std::pair<StepType, bool> active_step_add_warning(PrintStateBase::WarningLevel warning_level, const std::string &message, int message_id, std::mutex &mtx)
+    std::pair<StepType, bool> active_step_add_warning(PrintStateBase::WarningLevel warning_level, const WarningCode &code, const std::string &message, int message_id, std::mutex &mtx)
     {
         std::scoped_lock<std::mutex> lock(mtx);
         assert(m_step_active != -1);
@@ -247,9 +250,10 @@ public:
             std::find_if(state.warnings.begin(), state.warnings.end(), [&message](const auto &w) { return w.message_id == 0 && w.message == message; }) :
             std::find_if(state.warnings.begin(), state.warnings.end(), [message_id](const auto& w) { return w.message_id == message_id; });
         if (it == state.warnings.end())
-            state.warnings.emplace_back(PrintStateBase::Warning{ warning_level, true, message, message_id });
+            state.warnings.emplace_back(PrintStateBase::Warning{ warning_level, true, message, message_id, code });
         else if (it->message != message || it->level != warning_level) {
             it->message = message;
+            it->code    = code;
             it->level 	= warning_level;
             it->current = true;
         } else if (it->current)
@@ -443,10 +447,10 @@ public:
     bool            is_step_done(PrintStepEnum step) const { return m_state.is_done(step, this->state_mutex()); }
 	PrintStateBase::StateWithTimeStamp step_state_with_timestamp(PrintStepEnum step) const { return m_state.state_with_timestamp(step, this->state_mutex()); }
     PrintStateBase::StateWithWarnings  step_state_with_warnings(PrintStepEnum step) const { return m_state.state_with_warnings(step, this->state_mutex()); }
-    void            active_step_add_warning(PrintStateBase::WarningLevel warning_level, const std::string &message,
+    void            active_step_add_warning(PrintStateBase::WarningLevel warning_level, const WarningCode &code, const std::string &message,
                             PrintStateBase::SlicingNotificationType message_id = PrintStateBase::SlicingDefaultNotification)
     {
-        std::pair<PrintStepEnum, bool> active_step = m_state.active_step_add_warning(warning_level, message, (int)message_id, this->state_mutex());
+        std::pair<PrintStepEnum, bool> active_step = m_state.active_step_add_warning(warning_level, code, message, (int)message_id, this->state_mutex());
         if (active_step.second)
             this->status_update_warnings(static_cast<int>(active_step.first), warning_level, message, nullptr, message_id);
     }
@@ -515,9 +519,9 @@ protected:
     bool            is_step_started_unguarded(PrintObjectStepEnum step) const { return m_state.is_started_unguarded(step); }
     bool            is_step_done_unguarded(PrintObjectStepEnum step) const { return m_state.is_done_unguarded(step); }
 
-    void            active_step_add_warning(PrintStateBase::WarningLevel warning_level, const std::string &message,
+    void            active_step_add_warning(PrintStateBase::WarningLevel warning_level, const WarningCode &code, const std::string &message,
                         PrintStateBase::SlicingNotificationType message_id = PrintStateBase::SlicingDefaultNotification) {
-    	std::pair<PrintObjectStepEnum, bool> active_step = m_state.active_step_add_warning(warning_level, message,(int) message_id, PrintObjectBase::state_mutex(m_print));
+    	std::pair<PrintObjectStepEnum, bool> active_step = m_state.active_step_add_warning(warning_level, code, message,(int) message_id, PrintObjectBase::state_mutex(m_print));
     	if (active_step.second)
     		this->status_update_warnings(m_print, static_cast<int>(active_step.first), warning_level, message, message_id);
     }

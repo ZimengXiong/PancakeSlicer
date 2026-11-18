@@ -1898,13 +1898,13 @@ bool field_motion_supported(const PrintConfig &config, std::string *why)
     if (kinematics == nullptr || kinematics->rotary_count() < 2)
         return fail(_u8L("Rotary curved layers need a printer with two rotary axes."));
     if (!kinematics->inverse_time_feed() && !kinematics->firmware_rtcp())
-        return fail(_u8L("Rotary curved layers need continuous rotary motion. Enable inverse-time feed (G93) or firmware RTCP in your printer settings."));
+        return fail(_u8L("Rotary curved layers need continuous rotary motion — turn on inverse-time feed (G93) or firmware RTCP in your printer settings."));
     const double budget = field_tilt_budget(*kinematics);
     if (budget < Geometry::deg2rad(10.)) {
         double best = 0.;
         for (int s = 0; s < 72; ++s)
             best = std::max(best, kinematics->max_tilt(2. * M_PI * s / 72.));
-        return fail(format(_u8L("Rotary curved layers need at least 10° of tilt in every direction, but your rotary axis limits only allow %1%° in the tightest direction (%2%° in the widest)."),
+        return fail(format(_u8L("Rotary curved layers need at least 10° of tilt all around, but your rotary limits only give %1%° in the tightest spot (%2%° in the widest)."),
                            int(std::lround(Geometry::rad2deg(budget))), int(std::lround(Geometry::rad2deg(best)))));
     }
     return true;

@@ -1,4 +1,3 @@
-import { sha256 } from '../sha256';
 import { bakeStl, centre, creaseSplit, hullPoints, parseObj, parseStl, vertexNormals, weld } from './meshcore';
 import { buildBvh, type Bvh } from './bvh';
 import { split } from './split';
@@ -7,6 +6,7 @@ import { readProject } from './threemf';
 import { displayLod, type DisplayMesh } from './display-lod';
 import { simplifyMesh, type SimplificationInfo } from './simplify-core';
 import type { ShellsOut, ShellsIn } from './shells.worker';
+import { sha256 } from '../sha256';
 
 export interface MeshData {
   display?: DisplayMesh;
@@ -72,6 +72,7 @@ function checkShells(id: number, positions: Float32Array, index: Uint32Array, it
   shellsWorker.postMessage({ id: request, positions, index } satisfies ShellsIn);
 }
 
+const contentHash = (array: Float32Array | Uint32Array) => sha256(array);
 
 function crisp(positions: Float32Array, index: Uint32Array, edges: boolean): DisplayMesh {
   const split = creaseSplit(positions, index);
@@ -94,7 +95,7 @@ async function finish(id: number, soup: Float32Array, item?: number, progress?: 
   const cx = (box.min[0] + box.max[0]) / 2, cy = (box.min[1] + box.max[1]) / 2, cz = (box.min[2] + box.max[2]) / 2;
   for (let i = 0; i < positions.length; i += 3)
     r2 = Math.max(r2, (positions[i] - cx) ** 2 + (positions[i + 1] - cy) ** 2 + (positions[i + 2] - cz) ** 2);
-  const contentSignature = (await Promise.all([sha256(positions), sha256(index)])).join(':');
+  const contentSignature = (await Promise.all([contentHash(positions), contentHash(index)])).join(':');
   const displayResult = await simplifyMesh(positions, index, { minTriangles: 100_000, target: 50_000 }).catch(() => null);
   const display = displayResult ? { positions: displayResult.positions, index: displayResult.index }
     : displayLod(positions, index, normals, box.min, box.max);

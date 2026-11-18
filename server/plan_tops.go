@@ -15,7 +15,7 @@ import (
 func runToolIn(ctx context.Context, tool, dir string, args ...string) error {
 	cmd := exec.CommandContext(ctx, tool, args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "TMPDIR="+dir, "TMP="+dir, "TEMP="+dir)
+	cmd.Env = engineEnv(dir)
 	if err := limitJobMemory(cmd); err != nil {
 		return err
 	}

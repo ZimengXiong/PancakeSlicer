@@ -1,7 +1,7 @@
 import { filamentIds, hardness, modelIds, rules, type MaterialRule } from 'virtual:bambu-checks';
-import type { Config } from '../api/types';
 import type { PrinterStatus, Tray } from '../printers/connections';
-import { extruderCount, extruderLabel, valueAt } from './config';
+import { extruderLabel } from './config';
+import type { PrinterRecord } from '../profiles/records';
 import { isExternalTray, type SendFilament } from './ams';
 
 export const bambuFilamentId = (id: string) => filamentIds[id] ?? id;
@@ -43,14 +43,14 @@ export function materialChecks(context: MaterialContext): { message: string; blo
 
 export const nozzleHardness = (type: string) => hardness[type];
 
-export function preprintMaterialChecks(machine: Config, status: PrinterStatus | undefined, filaments: SendFilament[], mapping: number[], trays: Tray[]) {
-  const count = extruderCount(machine);
+export function preprintMaterialChecks(printer: PrinterRecord, status: PrinterStatus | undefined, filaments: SendFilament[], mapping: number[], trays: Tray[]) {
+  const count = printer.nozzles.length;
   return filaments.flatMap((f, i) => {
     const tray = trays.find((t) => t.id === mapping[i]);
     const extruder = count === 1 ? 0 : f.extruder ?? tray?.extruder;
-    const flow = f.flow ?? (extruder === undefined ? undefined : valueAt(machine.nozzle_volume_type ?? machine.default_nozzle_volume_type, extruder, 'Standard'));
-    const diameter = f.diameter ?? (extruder === undefined ? undefined : Number(valueAt(machine.nozzle_diameter, extruder)));
-    const rows = materialChecks({ model: valueAt(machine.printer_model, 0), name: tray?.name || f.name?.replace(/^Bambu (?:Lab )?/, '') || f.type, type: f.type, vendor: f.vendor ?? '', id: f.id,
+    const nozzle = extruder === undefined ? undefined : printer.nozzles[extruder];
+    const flow = f.flow ?? (nozzle && (nozzle.volume ?? 'Standard')), diameter = f.diameter ?? nozzle?.diameter;
+    const rows = materialChecks({ model: printer.model, name: tray?.name || f.name?.replace(/^Bambu (?:Lab )?/, '') || f.type, type: f.type, vendor: f.vendor ?? '', id: f.id,
       slot: tray && !isExternalTray(tray.id) ? 'ams' : 'ext', extruder, flow, diameter, hasFilamentSwitch: f.hasFilamentSwitch, object: f.object, support: f.support });
     if (extruder !== undefined) {
       const label = extruderLabel(extruder, count, true), level = ((f.compatibility ?? 0) >>> (extruder * 3)) & 7;

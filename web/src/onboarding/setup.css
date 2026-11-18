@@ -106,3 +106,5 @@
 @media (max-width: 599px) {
   :where(.orca-parity) .setup-tour-art { flex-direction: column; }
 }
+:where(.orca-parity) .setup-kind .combo { width: 200px; height: 36px; }
+:where(.orca-parity) .setup-chips:has(> .modal-check) { column-gap: var(--s-5); }

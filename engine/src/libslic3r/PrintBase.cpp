@@ -24,6 +24,13 @@
 namespace Slic3r
 {
 
+std::string warning_object(const std::string &name)
+{
+    const size_t dot = name.find_last_of('.');
+    return dot == std::string::npos || dot == 0 || name.find_first_of("/\\", dot) != std::string::npos ? name : name.substr(0, dot);
+}
+
+
 void PrintTryCancel::operator()()
 {
     m_print->throw_if_canceled();

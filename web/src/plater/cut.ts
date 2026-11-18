@@ -5,20 +5,18 @@ import { instanceBox } from './geometry';
 
 const DEG = Math.PI / 180;
 
-const cuttable = (s: State, o: PlateObject) => !o.volumes?.length && (!o.project || (!!s.features.edit && !o.project.placeholder));
+const cuttable = (o: PlateObject) => !o.volumes?.length && !o.project?.placeholder;
 
 export function cutTarget(s: State = getState()): { o: PlateObject; inst: Instance } | null {
   const sel = s.selected;
   const o = sel && !sel.all ? s.objects.find((ob) => ob.id === sel.object) : undefined;
   const inst = o?.instances.find((i) => i.id === sel!.instance);
-  return o && inst && cuttable(s, o) ? { o, inst } : null;
+  return o && inst && cuttable(o) ? { o, inst } : null;
 }
 
 export function cutBlocked(s: State = getState()): string | null {
-  if (!s.features.cut) return 'Cutting models requires an updated slicing service with cut support.';
   const o = s.objects.find((ob) => ob.id === s.selected?.object);
   if (!o || s.selected?.all) return 'Select one object to cut';
-  if (o.project && !s.features.edit) return 'Cutting objects inside an imported 3MF project requires an updated slicing service.';
   if (o.project?.placeholder) return 'Oops! We couldn\'t find the 3D mesh for this object.';
   if (o.volumes?.length) return 'Objects with multiple parts or modifiers can\'t be cut with the plane tool yet.';
   return null;

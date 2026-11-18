@@ -1,4 +1,6 @@
 import { OrderBar } from './OrderBar';
+import { phoneSheetQuery } from '../workspace-sheet';
+import { Skeleton } from './Skeleton';
 import { loadSource, noteViewerProgress, viewerFirstMoves, viewerReady, viewerError, scrubViewer } from '../flow/viewer';
 import { Suspense, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { getState, printerPreset, setState, subscribeStore, useStore } from '../state/store';
@@ -22,6 +24,7 @@ import { filamentColor } from '../plater/filamentColor';
 import { setVisibleToolpaths } from '../preview/visible';
 import { preloadable } from '../preloadable';
 import './preview.css';
+import { slotFilaments } from '../profiles/slots';
 
 const SHOW_STATS = new URLSearchParams(location.search).has('stats');
 const ExplainLegend = preloadable(() => import('./PreviewExplain').then((m) => ({ default: m.ExplainLegend })));
@@ -36,7 +39,7 @@ const setStandardCompare = (on: boolean) => setCompareWanted(on ? 'standard' : n
 const GcodeWindow = preloadable(() => import('./GcodeWindow'));
 const ToolPosition = preloadable(() => import('./ToolPosition'));
 
-export const jobColours = () => getState().filamentSlots.map((_, i) => filamentColor(getState(), i + 1));
+export const jobColours = () => slotFilaments(getState()).map((_, i) => filamentColor(getState(), i + 1));
 
 export function colorContext(d: PreviewData, ui: Pick<PreviewUi, 'view' | 'nonplanar'>, ranges: Ranges): ColorContext {
   const extruderColors = (d.meta.extruder_colors?.length ? d.meta.extruder_colors : jobColours()).map(hexToRgb);
@@ -48,7 +51,7 @@ let live: { header(d: PreviewData): void; chunk(d: PreviewData): void; done(d: P
 
 const extendedJobs = new Set<string>();
 let extendedView = false;
-export const canExtend = (d: PreviewData) => !!getState().features.moves_extended && !!d.sourceUrl && d.sourceUrl === getState().api?.movesUrl(getState().job.id ?? '');
+export const canExtend = (d: PreviewData) => !!d.sourceUrl && d.sourceUrl === getState().api?.movesUrl(getState().job.id ?? '');
 
 function startLoad(src: { key: string; url?: string; file?: File; shellLayers?: boolean }) {
   current?.cancel();
@@ -77,7 +80,7 @@ function source(): { key: string; url?: string; file?: File; shellLayers?: boole
   if (q) return { key: `url:${q}`, url: q };
   const s = getState();
   if (s.job.state !== 'done' || !s.job.id || !s.api) return null;
-  const ext = extendedJobs.has(s.job.id) || (extendedView && !!s.features.moves_extended);
+  const ext = extendedJobs.has(s.job.id) || (extendedView);
   return { key: `job:${s.job.id}${ext ? ':extended' : ''}`, url: s.api.movesUrl(s.job.id) + (ext ? '?extended=1' : ''), shellLayers: wholePartLayers(s.job.status?.record) };
 }
 
@@ -108,8 +111,6 @@ export interface PreviewUi {
 export function PreviewView() {
   const job = useStore((s) => s.job);
   const objects = useStore((s) => s.objects);
-  const printer = useStore((s) => s.printer);
-  const machines = useStore((s) => s.machines);
   const host = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<PreviewScene | null>(null);
   const [, bump] = useReducer((x: number) => x + 1, 0);
@@ -198,8 +199,7 @@ export function PreviewView() {
     };
   }, [epoch]);
 
-  const machineEdits = useStore((s) => s.dirty.machine);
-  const machine = useMemo(() => printerPreset(getState()), [printer, machines, machineEdits]);
+  const machine = useStore(printerPreset);
   useEffect(() => sceneRef.current?.setBed(machine), [machine, epoch]);
   useEffect(() => sceneRef.current?.setShells(objects, ui.shells), [objects, ui.shells, epoch]);
 
@@ -490,6 +490,17 @@ export function PreviewView() {
           headAction={methods ? <Suspense fallback={null}><DoneMethods /></Suspense> : before && <Suspense fallback={null}><DoneComparing /></Suspense>}
           explain={explainKey}
         />
+      )}
+      {job.state === 'done' && !methods && !data?.header && !data?.error && (
+        <div className={phoneSheetQuery.matches ? 'legend closed' : 'legend'} role="status" aria-busy="true" aria-label="Loading toolpaths">
+          <div className="lg-head"><Skeleton width={88} height={14} style={{ margin: '7px 0' }} /></div>
+          {!phoneSheetQuery.matches && <><div className="lg-summary">
+            {[0, 1].map((i) => <div key={i} className="lg-stat"><Skeleton width={84} height={22} style={{ margin: '2px 0' }} /><Skeleton width={56} height={10} style={{ margin: '3px 0' }} /></div>)}
+          </div>
+          <div className="lg-scroll"><div className="lg-roles">
+            {[70, 60, 75, 55, 80, 65, 50, 60].map((w, i) => <div key={i} className="lg-role-row"><Skeleton block width={14} height={6} /><Skeleton width={`${w}%`} height={10} /><Skeleton width={36} height={10} /></div>)}
+          </div></div></>}
+        </div>
       )}
       {methods && !data?.header && (
         <div className="legend" aria-label="Legend">

@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from 'react';
+import { openSlideOutEditor } from '../navigation';
 import { probeEngine, useEngineHealth } from '../flow/engine-health';
 import type { Config, ConfigValue } from '../api/types';
 import { OPTIONS, modeVisible, type OptionDef, type OptionMode } from '../options';
@@ -8,7 +9,7 @@ import { openSlantPlane, slantTarget } from '../plater/slant';
 import { toolArtifactManifest } from '../api/client';
 import type { ProfileFields } from './SettingsTab';
 import { Field } from './Field';
-import { GroupHead, isGroupOpen, setGroupOpen, useSettingsGroups } from './SettingsGroup';
+import { GroupHead, isGroupOpen, markOf, setGroupOpen, useSettingsGroups } from './SettingsGroup';
 import './process-settings.css';
 
 const shortReason = (m: MethodAvailability) => m.recovery === 'update_engine' ? (toolArtifactManifest ? 'Not in this engine build' : 'Engine still starting')
@@ -74,24 +75,24 @@ const EXPERIMENTAL = new Set(['slant', 'conformal_layers']);
 const groupId = (title: string) => `process/Quality/${title}`;
 const CLEARANCE_GROUP = 'Head clearance', TUNING_GROUP = 'Advanced non-planar';
 
-export function SurfaceSettings({config,system,availability,editor,dirty,uiMode,legacyKeys = [],readOnly = false}: {config:Config;system:Config;availability:MethodAvailabilityResult;editor?:ProfileFields;dirty:Config;uiMode:OptionMode;legacyKeys?:string[];readOnly?:boolean}) {
+export function SurfaceSettings({config,system,availability,editor,unsaved,uiMode,legacyKeys = [],readOnly = false}: {config:Config;system:Config;availability:MethodAvailabilityResult;editor?:ProfileFields;unsaved:(key:string)=>boolean;uiMode:OptionMode;legacyKeys?:string[];readOnly?:boolean}) {
   const engine = useEngineHealth();
   useEffect(() => {void probeEngine();}, []);
-  const mode = String(config.nonplanar_mode ?? OPTIONS.nonplanar_mode?.default ?? 'off');
+  const mode = String(config.nonplanar_mode ?? '');
   const slantObject = useStore((s) => !!slantTarget(s));
   const lone = useStore((s) => s.objects.length === 1 ? s.objects[0] : null);
   const focusKey = useStore((s) => s.settingsFocus?.type === 'process' ? s.settingsFocus.key : null);
-  const wave = String(config[WAVE] ?? OPTIONS[WAVE]?.default ?? 'off');
+  const wave = String(config[WAVE] ?? '');
   const problem = methodSelectionProblem(availability,config);
-  const value = (key: string) => config[key] ?? OPTIONS[key]?.default;
+  const value = (key: string) => config[key];
   const on = (key: string) => ['1', 'true'].includes(String(value(key)));
   const write = (key: string, next: string) => editor ? editor.set(key, next) : next === String(system[key] ?? '') ? resetOption('process', key) : setOption('process', key, next);
   const row = (key: string, extra: {label?: string; value?: string; definition?: Partial<OptionDef>; onSet?: (key: string, value: ConfigValue) => void; rowKey?: string} = {}) =>
     OPTIONS[key] ? <Field key={extra.rowKey ?? key} type="process" optKey={key} label={extra.label} value={extra.value ?? (key === 'nonplanar_mode' ? mode : config[key])} systemValue={system[key]}
-      dirty={key in dirty} onSet={extra.onSet ?? editor?.set} onReset={editor?.reset} disabled={readOnly} mode={mode} definition={extra.definition}/> : null;
+      dirty={unsaved(key)} onSet={extra.onSet ?? editor?.set} onReset={editor?.reset} disabled={readOnly} mode={mode} definition={extra.definition}/> : null;
   const selector = (key: string, target: 'mode' | 'wave') => {
     const def = OPTIONS[key]; if (!def) return null;
-    const current = key === 'nonplanar_mode' ? mode : String(config[key] ?? def.default ?? 'off');
+    const current = key === 'nonplanar_mode' ? mode : String(config[key] ?? '');
     const methods = availability.methods.filter(m => m.target === target);
     const modes = target === 'mode' ? methodModes(current, availability) : undefined;
     const values = modes?.enum_values ?? [...new Set(['off', ...methods.map(m => m.id), current])];
@@ -134,7 +135,7 @@ export function SurfaceSettings({config,system,availability,editor,dirty,uiMode,
     const key = target === 'mode' ? 'nonplanar_mode' : WAVE;
     return <div key={`${key}-why`} className="surface-why" role="alert"><span>{method ? shortReason(method) : 'Not available'}</span>
       {problem.recovery === 'repair_printer'
-        ? <button type="button" className="link" onClick={() => setState({presetUx:{kind:'presets',type:'machine',name:getState().printer,edit:true}})}>Edit printer axes</button>
+        ? <button type="button" className="link" onClick={() => openSlideOutEditor('machine', getState().printer)}>Edit printer axes</button>
         : <button type="button" className="link" onClick={() => openMethodChoice(key)}>Choose another method</button>}
     </div>;
   };
@@ -159,7 +160,7 @@ export function SurfaceSettings({config,system,availability,editor,dirty,uiMode,
     if (!keys.length) return null;
     const open = isGroupOpen(groupId(name), byDefault);
     return <section className="optgroup" data-collapsed={open ? undefined : ''}>
-      <GroupHead id={groupId(name)} title={name} tag={tag} open={open} modified={keys.some(key => key in dirty || SUB_ROWS[key]?.some(sub => sub in dirty))}/>
+      <GroupHead id={groupId(name)} title={name} tag={tag} open={open} modified={markOf(keys.flatMap((key) => [key, ...SUB_ROWS[key] ?? []]), unsaved)}/>
       {open && keys.flatMap(render)}
     </section>;
   };

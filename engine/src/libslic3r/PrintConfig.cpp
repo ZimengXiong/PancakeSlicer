@@ -5248,9 +5248,9 @@ void PrintConfigDef::init_fff_params()
     def = this->add("nonplanar_top_direction", coFloat);
     def->label    = L("Curved top direction");
     def->category = L("Quality");
-    def->tooltip  = L("Angle of the lines on curved tops. Auto (-2): along each top's longest extent, the fewest lines and "
-                      "turns. -1: along the surface's level lines. A Custom angle is used exactly as set, in every method. "
-                      "Default: Auto. Unit: degrees.");
+    def->tooltip  = L("Direction of the lines on curved tops. Auto (-2) follows each top's longest stretch for fewer "
+                      "lines and turns; -1 follows the surface's contour lines; a custom angle is used exactly as "
+                      "set in every method. Default: Auto. Unit: degrees.");
     def->sidetext = u8"°";
     def->min      = -2;
     def->max      = 180;
@@ -5554,26 +5554,29 @@ void PrintConfigDef::init_fff_params()
     def = this->add("nonplanar_mode", coEnum);
     def->label    = L("Non-planar mode");
     def->category = L("Quality");
-    def->tooltip  = L("Flat layers: every layer flat, as in standard OrcaSlicer; fastest.\n"
-                      "Auto: on a fixed print head, Smooth morph for a single gentle curved top (a low dome, wave, ramp or lid) and "
-                      "Curved tops otherwise; on a printer with rotary axes, curved layers wherever the head clears them.\n"
-                      "Manual: the curved settings below, as set.\n"
-                      "Multiplanar: the part in chunks of flat layers, each chunk tilted so its overhangs need less support.\n"
-                      "Rotary curved layers: the whole part in curved layers, the table tilting so each line is laid level under the "
-                      "nozzle. Needs two rotary axes.\n"
-                      "One-shot field (advanced): rotary curved layers whose layer field is solved for the part from its surface "
-                      "error, support, print time and head clearance, within a minute."
-                      "\nCurved tops: bends the top layers (Curved top layers, 3 by default) over every gentle top the print head "
-                      "clears; flat tops get mid-layer Z smoothing.\n"
-                      "Smooth morph: bends every layer from the flat base up to the top; lowest error on domes and lids, up to "
-                      "about 1.4x flat time.\n"
-                      "Slant: the whole part in layers tilted from the bed, as on a belt printer, on a fixed 3-axis head: a flat first "
-                      "layer, then each layer tilts a little more up to the slant angle; smoother faces that slope the same way as the "
-                      "layers, flat tops step.\n"
-                      "Conformal layers (experimental): the top shells follow every top up to 20 degrees at a constant thickness, "
-                      "each top one whole layer, sliced on the model itself; flat layers elsewhere, printed in bands the head clears.\n"
-                      " Default: Flat layers. Unit: unitless choice. Auto is selected explicitly by a process or object; it does not "
-                      "replace the stored mode.");
+    def->tooltip  = L("Flat layers: every layer flat, just like standard OrcaSlicer — fastest.\n"
+                      "Auto: on a fixed print head, picks Smooth morph for a single gentle curved top (like a low "
+                      "dome, wave, ramp, or lid) and Curved tops otherwise; on a printer with rotary axes, uses "
+                      "curved layers wherever the head clears them.\n"
+                      "Manual: uses the curved settings below, exactly as you set them.\n"
+                      "Multiplanar: splits the part into chunks of flat layers, tilting each chunk so overhangs need "
+                      "less support.\n"
+                      "Rotary curved layers: prints the whole part in curved layers, tilting the table so each line "
+                      "lays level under the nozzle (needs two rotary axes).\n"
+                      "One-shot field (advanced): rotary curved layers solved automatically for your part — "
+                      "balancing surface smoothness, support, print time, and head clearance in under a minute.\n"
+                      "Curved tops: bends the top layers (3 by default) over every gentle top the print head clears, "
+                      "while flat tops get mid-layer Z smoothing.\n"
+                      "Smooth morph: gently bends every layer from the flat base up to the top — lowest error on "
+                      "domes and lids, taking up to ~1.4× flat time.\n"
+                      "Slant: tilts layers from the bed like a belt printer on a fixed 3-axis head (flat first "
+                      "layer, then each layer tilts a little more up to the slant angle); makes faces sloping the "
+                      "same way smoother, while flat tops step.\n"
+                      "Conformal layers (experimental): top shells follow every top up to 20° at a steady thickness, "
+                      "each top one whole layer sliced right on the model; flat layers elsewhere, printed in bands "
+                      "the head clears.\n"
+                      "Default: Flat layers. Unit: unitless choice. Auto is picked explicitly by a process or object "
+                      "and won't overwrite your stored mode.");
     def->enum_keys_map = &ConfigOptionEnum<NonplanarMode>::get_enum_values();
     def->enum_values.push_back("off");
     def->enum_values.push_back("auto");
@@ -5608,9 +5611,9 @@ void PrintConfigDef::init_fff_params()
     def = this->add("nonplanar_curved_max_angle", coFloat);
     def->label = L("Maximum curved top angle");
     def->category = L("Quality");
-    def->tooltip = L("Steepest surface every curved slicing method tries to follow. Where the head would collide deeper than the collision "
-                     "tolerance, the angle steps down (40, 35, 30, 25, 20, 16, 12) and the slice reports the angle it used. "
-                     "Supported range: 0–45 degrees. Default: 30. Unit: degrees.");
+    def->tooltip = L("The steepest surface any curved slicing method will try to follow. If the print head would collide "
+                     "deeper than your collision tolerance, the angle steps down (40, 35, 30, 25, 20, 16, 12) and "
+                     "the slice tells you which angle it used. Supported range: 0–45°. Default: 30°. Unit: degrees.");
     def->sidetext = L("°");
     def->min = 0;
     def->max = 45;
@@ -5768,8 +5771,9 @@ void PrintConfigDef::init_fff_params()
     def = this->add("nonplanar_slant_direction", coFloat);
     def->label    = L("Slant direction");
     def->category = L("Quality");
-    def->tooltip  = L("Direction about Z, counterclockwise from +X, toward which Slant's layers face and descend. -1: the "
-                      "direction of 8 that leaves the least stair-step and overhang on this part. Default: -1. Unit: degrees.");
+    def->tooltip  = L("Which way Slant's layers face and slope down (around Z, counterclockwise from +X). -1 picks "
+                      "the best of 8 directions for the least stair-stepping and overhang on your part. Default: -1. "
+                      "Unit: degrees.");
     def->sidetext = u8"°";
     def->min      = -1;
     def->max      = 360;
@@ -5779,10 +5783,10 @@ void PrintConfigDef::init_fff_params()
     def = this->add("nonplanar_slant_start_height", coFloat);
     def->label    = L("Slant start height");
     def->category = L("Quality");
-    def->tooltip  = L("Height of the last flat layer before Slant's layers start to tilt. 0: right after the first layer, as low "
-                      "as the print head allows (an upright head stays above everything it prints). Without morphing, a negative "
-                      "height lowers the tilted start plane by that much, below the bed, so tilted layers reach further down "
-                      "the part. Default: 0. Unit: mm.");
+    def->tooltip  = L("Height of the last flat layer before Slant starts tilting. 0 starts tilting right after the "
+                      "first layer, as low as the print head can clear. Without morphing, a negative height drops "
+                      "the tilted start plane below the bed so tilted layers reach further down the part. Default: "
+                      "0. Unit: mm.");
     def->sidetext = L("mm");
     def->min      = -1000;
     def->max      = 1000;
@@ -5792,10 +5796,10 @@ void PrintConfigDef::init_fff_params()
     def = this->add("nonplanar_slant_morph_layers", coInt);
     def->label    = L("Slant morph layers");
     def->category = L("Quality");
-    def->tooltip  = L("Slant morphing: layers over which Slant bends from flat to the full angle, each a little more than the "
-                      "one below. A wide part or a steep angle takes more, so that every layer stays between 0.2 and 0.8 of "
-                      "the nozzle diameter thick. 0 turns morphing off: the part is cut by the tilted start plane, flat layers "
-                      "below it with their top finished to the plane, tilted layers above it. Default: 0.");
+    def->tooltip  = L("How many layers Slant takes to bend from flat to the full slant angle, tilting a bit more on "
+                      "each layer. Wider parts or steeper angles need more layers so every layer stays between 0.2× "
+                      "and 0.8× your nozzle diameter thick. Set to 0 to turn morphing off (cuts straight with the "
+                      "tilted start plane — flat layers below, tilted above). Default: 0.");
     def->min      = 0;
     def->max      = 1000;
     def->mode     = comExpert;
@@ -10539,6 +10543,8 @@ void PrintConfigDef::handle_legacy(t_config_option_key &opt_key, std::string &va
         value   = float_to_string_decimal_point(std::max(1., old));
         return;
     }
+    if (opt_key == "nonplanar_head" && (value == "bambu-h2d-left" || value == "bambu-h2d-right"))
+        value = "bambu-h2d";
     if (opt_key == "nonplanar_slant_angle" && std::atof(value.c_str()) <= 0.)
         value = "15";
     if (opt_key == "nonplanar_curved_shells")

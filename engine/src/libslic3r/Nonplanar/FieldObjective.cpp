@@ -1,4 +1,5 @@
 #include "FieldObjective.hpp"
+#include "libslic3r/Nonplanar/Research.hpp"
 #include "FieldTerm.hpp"
 #include "Point.hpp"
 #include "libslic3r.h"
@@ -34,7 +35,7 @@ constexpr double SmoothTimeMax = 1.03;
 
 bool smooth_layers()
 {
-    static const bool on = [] { const char *v = std::getenv("NP_SMOOTH_LAYERS"); return v == nullptr || *v != '0'; }();
+    static const bool on = [] { const char *v = research_switch("NP_SMOOTH_LAYERS"); return v == nullptr || *v != '0'; }();
     return on;
 }
 

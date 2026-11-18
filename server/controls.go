@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,9 +32,9 @@ func admissionFailure(w http.ResponseWriter, err error) {
 		if e.retry > 0 {
 			w.Header().Set("Retry-After", strconv.Itoa(e.retry))
 		}
-		fail(w, e.status, e.message)
+		fail(w, e.status, "admission_refused", e.message)
 	} else {
-		fail(w, 500, err.Error())
+		fail(w, 500, "controls_internal", err.Error())
 	}
 }
 
@@ -225,7 +224,7 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "# HELP orca_download_bytes_total Response body bytes written for successful job downloads.\n# TYPE orca_download_bytes_total counter")
 	fmt.Fprintf(w, "orca_download_bytes_total %d\n", m.downloadBytes)
 	fmt.Fprintln(w, "# HELP orca_jobs Retained jobs by state.\n# TYPE orca_jobs gauge")
-	for _, state := range []JobState{StateIdle, StateQueued, StatePreparing, StateSlicing, StateStoring, StateCanceling, StateDone, StateFailed, StateCancelled, StateInterrupted, StateStale} {
+	for _, state := range []JobState{StateQueued, StateRunning, StateDone, StateFailed, StateCancelled} {
 		fmt.Fprintf(w, "orca_jobs{state=%q} %d\n", state, counts[state])
 	}
 	fmt.Fprintln(w, "# HELP orca_slice_duration_seconds Running job duration, including failed and canceled slices.\n# TYPE orca_slice_duration_seconds histogram")
@@ -233,17 +232,6 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "orca_slice_duration_seconds_bucket{le=%q} %d\n", strconv.FormatFloat(bound, 'f', -1, 64), m.durations[i])
 	}
 	fmt.Fprintf(w, "orca_slice_duration_seconds_bucket{le=\"+Inf\"} %d\norca_slice_duration_seconds_sum %g\norca_slice_duration_seconds_count %d\n", m.durationCount, m.durationSum, m.durationCount)
-	fmt.Fprintln(w, "# HELP orca_tool_feature Enabled native tool hooks.\n# TYPE orca_tool_feature gauge")
-	b, _ := json.Marshal(s.cfg.Features)
-	var features map[string]bool
-	json.Unmarshal(b, &features)
-	for _, name := range []string{"dump_options", "dump_presets", "progress", "moves_out", "object_settings"} {
-		value := 0
-		if features[name] {
-			value = 1
-		}
-		fmt.Fprintf(w, "orca_tool_feature{feature=%q} %d\n", name, value)
-	}
 }
 
 func (s *Server) trusted(ip netip.Addr) bool {
@@ -386,12 +374,11 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 				log.Writer().Write(append(b, '\n'))
 			}()
 		}
-		protected := r.Method == "DELETE" || (r.Method == "POST" && (r.URL.Path == "/api/jobs" || strings.HasPrefix(r.URL.Path, "/api/jobs/"))) || ((r.Method == "POST" || r.Method == "PUT" || r.Method == "PATCH") && (r.URL.Path == "/api/library" || r.URL.Path == "/api/dev/reset" || r.URL.Path == "/api/session" || r.URL.Path == "/api/preferences" || strings.HasPrefix(r.URL.Path, "/api/projects/") || strings.HasPrefix(r.URL.Path, "/api/folders") || strings.HasPrefix(r.URL.Path, "/api/drafts/") || strings.HasPrefix(r.URL.Path, "/api/assets/") || strings.HasPrefix(r.URL.Path, "/api/blobs/") || r.URL.Path == "/api/user-heads" || strings.HasPrefix(r.URL.Path, "/api/printer-connections")))
+		protected := r.URL.Path != "/api/access" && r.Method == "DELETE" || (r.Method == "POST" && (r.URL.Path == "/api/jobs" || strings.HasPrefix(r.URL.Path, "/api/jobs/"))) || ((r.Method == "POST" || r.Method == "PUT" || r.Method == "PATCH") && (r.URL.Path == "/api/library" || r.URL.Path == "/api/dev/reset" || r.URL.Path == "/api/session" || r.URL.Path == "/api/preferences" || strings.HasPrefix(r.URL.Path, "/api/projects/") || strings.HasPrefix(r.URL.Path, "/api/folders") || strings.HasPrefix(r.URL.Path, "/api/drafts/") || strings.HasPrefix(r.URL.Path, "/api/assets/") || strings.HasPrefix(r.URL.Path, "/api/blobs/") || r.URL.Path == "/api/user-heads" || strings.HasPrefix(r.URL.Path, "/api/printer-connections")))
 		if s.cfg.BearerToken != "" && protected {
-			token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-			if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") || subtle.ConstantTimeCompare([]byte(token), []byte(s.cfg.BearerToken)) != 1 {
+			if !s.authorized(r) {
 				w.Header().Set("WWW-Authenticate", "Bearer")
-				fail(w, 401, "Access token required.")
+				fail(w, 401, "access_token_required")
 				return
 			}
 		}
@@ -402,7 +389,7 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			}
 		}
 		if headerBytes > 1<<20 {
-			fail(w, http.StatusRequestHeaderFieldsTooLarge, "Request headers exceed the 1 MiB limit.")
+			fail(w, http.StatusRequestHeaderFieldsTooLarge, "request_headers_exceed_mib")
 			return
 		}
 		if (r.Method == "PUT" || r.Method == "POST" || r.Method == "PATCH") && r.URL.Path != "/api/jobs" && r.URL.Path != "/api/patch-preview" && r.URL.Path != "/api/top-surfaces/plan" {

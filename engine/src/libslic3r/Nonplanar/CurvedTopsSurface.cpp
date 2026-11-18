@@ -1,5 +1,6 @@
 // Curved tops port of fich-l / OrcaSlicer-Nonplanar v0.1 (AGPL-3.0).
 #include "CurvedTopsSurface.hpp"
+#include "libslic3r/Nonplanar/Research.hpp"
 #include "Repair.hpp"
 #include "Validate.hpp"
 #include "libslic3r/GCode/ClearanceRepair.hpp"
@@ -321,18 +322,9 @@ double curved_cone_tolerance(NonplanarMode mode)
     if (!curved_cone_allowance(mode))
         return 0.05;
     double tolerance = 0.13;
-    if (const char *value = std::getenv("NP_CONTACT_CONE_TOL"); value != nullptr)
+    if (const char *value = research_switch("NP_CONTACT_CONE_TOL"); value != nullptr)
         tolerance = std::atof(value);
     return std::clamp(tolerance, 0., 0.13);
-}
-
-double curved_tops_cone_tolerance(const Print &print)
-{
-    double tolerance = std::numeric_limits<double>::infinity();
-    for (const PrintObject *object : print.objects())
-        if (curved_cone_allowance(object->config().nonplanar_mode.value))
-            tolerance = std::min(tolerance, curved_cone_tolerance(object->config().nonplanar_mode.value));
-    return std::isfinite(tolerance) ? tolerance : 0.05;
 }
 
 namespace {

@@ -4,12 +4,14 @@ import type { ProjectPlate } from '../plater/threemf';
 import type { Doc } from '../state/history';
 import { reserveIds, type NativeObject, type PlateObject, type State, type Volume } from '../state/store';
 import { newKey, type StoredDocBase } from './backend';
+import { movePlateSetup } from '../state/plate-setup';
+import { documentStrip } from '../profiles/slots';
 
 type StoredVolume = Omit<Volume, 'geometry'> & { geometry: { position: Float32Array; normal?: Float32Array; index: Uint32Array | Uint16Array | null } };
 type StoredObject = Omit<PlateObject, 'geometry' | 'source' | 'volumes' | 'native'> & { source: string; volumes?: StoredVolume[];
   native?: Omit<NativeObject, 'files'> & { files: Record<string, string> };
   simplification?: { trianglesBefore: number; trianglesAfter: number; maxErrorMm: number; kept: 'simplified' | 'original' } };
-export type StoredDoc = Omit<Doc, 'objects' | 'projectPlates' | 'project'> & StoredDocBase & {
+export type StoredDoc = Omit<Doc, 'objects' | 'projectPlates' | 'project' | 'projectSlots'> & StoredDocBase & {
   objects: StoredObject[];
   projectPlates: (ProjectPlate & { objects: StoredObject[] })[];
   project: string | null;
@@ -34,8 +36,10 @@ export function encode(doc: Doc): { stored: StoredDoc; blobs: Map<string, Blob> 
   const object = ({ geometry: _, source, volumes, native, ...rest }: PlateObject): StoredObject =>
     ({ ...rest, source: keep(source), ...(volumes ? { volumes: volumes.map(volume) } : {}),
       ...(native ? { native: { ...native, files: Object.fromEntries(Object.entries(native.files).map(([k, b]) => [k, keep(b)])) } } : {}) });
+  const { projectSlots, ...rest } = doc;
   const stored = {
-    ...doc,
+    ...rest,
+    ...(projectSlots ? { filamentSlots: projectSlots.filaments, slotColours: projectSlots.colours, mixes: projectSlots.mixes } : {}),
     objects: doc.objects.map(object),
     projectPlates: doc.projectPlates.map((p) => ({ ...p, objects: p.objects.map(object) })),
     project: doc.project && keep(doc.project),
@@ -43,7 +47,9 @@ export function encode(doc: Doc): { stored: StoredDoc; blobs: Map<string, Blob> 
   return { stored: { ...stored, files: Object.fromEntries([...blobs].map(([k, b]) => [k, b instanceof File ? b.name : k])) }, blobs };
 }
 
-export { projectThumbnail as thumbnail } from '../projects/thumbnail';
+let drawThumbnail: (() => string | null) | null = null;
+export const registerThumbnail = (draw: () => string | null) => { drawThumbnail = draw; };
+export const thumbnail = (): string | null => drawThumbnail?.() ?? null;
 
 export async function decode(doc: StoredDoc, get: (key: string) => Promise<Blob | null>): Promise<Partial<State>> {
   const blobs = new Map(await Promise.all(Object.entries(doc.files ?? {}).map(async ([k, name]) => {
@@ -102,5 +108,10 @@ export async function decode(doc: StoredDoc, get: (key: string) => Promise<Blob 
   const projectPlates = doc.projectPlates.map((p) => ({ ...p, objects: p.objects.map(revive) }));
   reserveIds(Math.max(0, ...[...objects, ...projectPlates.flatMap((p) => p.objects)].flatMap((o) => [o.id, ...o.instances.map((i) => i.id), ...(o.volumes ?? []).map((v) => v.id)])));
   const { files: _files, ...fields } = doc;
-  return { ...fields, mixes: doc.mixes ?? {}, processVariant: doc.processVariant ?? null, objects, projectPlates, project: doc.project ? (blobs.get(doc.project) as File) : null };
+  const { filamentSlots: _f, slotColours: _c, mixes: _m, projectSlots: _p, ...state } = fields as typeof fields & { filamentSlots?: unknown; slotColours?: unknown; mixes?: unknown; projectSlots?: unknown };
+  const own = documentStrip(doc as Parameters<typeof documentStrip>[0]);
+  const { plateSetup, ...moved } = movePlateSetup(state as typeof state & { bedType?: string; flush?: { matrix?: number[] | null } });
+  void import('../profiles/plate-setup-move').then((m) => m.adoptStoredPlateSetup(plateSetup, String(doc.printer ?? ''), doc.projectName ?? 'This project'));
+  return { ...moved, processVariant: doc.processVariant ?? null, objects, projectPlates, project: doc.project ? (blobs.get(doc.project) as File) : null,
+    projectSlots: own ? { filaments: own.filaments, colours: own.colours, mixes: own.mixes } : null };
 }

@@ -44,7 +44,6 @@
       "id": "nonplanar_top",
       "target": "mode",
       "hardware": "known",
-      "feature": "curved_tops",
       "readiness": "curved_tops",
       "settingPrefixes": [
         "nonplanar_curved_"
@@ -54,7 +53,6 @@
       "id": "smooth_morph",
       "target": "mode",
       "hardware": "known",
-      "feature": "curved_tops",
       "readiness": "curved_tops"
     },
     {
@@ -74,7 +72,6 @@
       "id": "oneshot",
       "target": "mode",
       "hardware": "known",
-      "feature": "oneshot",
       "settingPrefixes": [
         "nonplanar_oneshot_"
       ]
@@ -83,21 +80,18 @@
       "id": "whole",
       "target": "wave",
       "hardware": "known",
-      "feature": "nonplanar_wave",
       "readiness": "nonplanar_wave"
     },
     {
       "id": "top",
       "target": "wave",
       "hardware": "known",
-      "feature": "nonplanar_wave",
       "readiness": "nonplanar_wave"
     },
     {
       "id": "infill",
       "target": "wave",
       "hardware": "known",
-      "feature": "nonplanar_wave",
       "readiness": "nonplanar_wave"
     }
   ],

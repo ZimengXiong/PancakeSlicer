@@ -19,7 +19,7 @@ func (m *JobManager) previewKey(j *Job, args []string) string {
 	if st, err := os.Stat(m.cfg.Tool); err == nil {
 		h.Write([]byte(m.cfg.Tool + "\x00" + st.ModTime().String() + "\x00"))
 	}
-	for _, a := range args {
+	for _, a := range keyArgs(j, args) {
 		h.Write([]byte(strings.ReplaceAll(a, j.Dir, "") + "\x00"))
 	}
 	in := filepath.Join(j.Dir, "input")

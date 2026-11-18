@@ -5,10 +5,14 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { HoverCard } from 'radix-ui';
 import { openFileDialog, openProjectDialog } from '../actions';
 import { importFetched } from '../plater/handy';
-import { getState, resolvePreset, subscribeStore, toast, useStore } from '../state/store';
+import { getState, subscribeStore, toast, useStore } from '../state/store';
+import { project } from '../flow/project';
+import { currentRoute } from '../flow/routes';
+import { recordOf } from '../profiles/view';
 import { openSetup } from '../onboarding/setup-flow';
 import { documentGeneration, onLeaveDocument } from '../state/history';
 import './first-run.css';
+import { slotFilaments } from '../profiles/slots';
 
 const SETUP_KEY = 'orca.setup';
 const assets = import.meta.glob<string>('../samples/*.{drc,webp}', { eager: true, query: '?url', import: 'default' });
@@ -47,12 +51,16 @@ function warmPreview(url: string) {
   const img = new Image(); img.src = url; void img.decode().catch(() => decoded.delete(url));
 }
 let warmed = false;
+const emptyForGood = () => currentRoute().kind === 'blank' && project.get().value === 'blank' && !getState().objects.length && !getState().loading;
 function warmSamples() {
   if (warmed) return;
-  warmed = true;
-  for (const s of SAMPLES) warmPreview(s.variants[0].preview);
   const idle = window.requestIdleCallback ?? ((f: () => void) => setTimeout(f, 200));
-  idle(() => { for (const s of SAMPLES) modelBlobUrl(s.variants[0].model).catch(() => {}); });
+  idle(() => {
+    if (warmed || !emptyForGood()) return;
+    warmed = true;
+    for (const s of SAMPLES) warmPreview(s.variants[0].preview);
+    idle(() => { for (const s of SAMPLES) modelBlobUrl(s.variants[0].model).catch(() => {}); });
+  });
 }
 function warmVariants(variants: Variant[]) {
   for (const v of variants.slice(1)) { warmPreview(v.preview); modelBlobUrl(v.model).catch(() => {}); }
@@ -72,7 +80,7 @@ function Sample({ label, variants }: SampleDef) {
     try {
       await importFetched(label, [[await modelBlobUrl(v.model), v.file]]);
     } catch (e) {
-      toast(`${label}: ${e instanceof Error ? e.message : String(e)}`);
+      toast('couldnt_load_2', { label, detail: e instanceof Error ? e.message : String(e) });
     } finally {
       setBusy(false);
     }
@@ -94,7 +102,7 @@ function Sample({ label, variants }: SampleDef) {
       onBlur={(e) => { const to = e.relatedTarget as Node | null; if (!e.currentTarget.contains(to) && to !== chip.current) setOpen(false); }}>
       <div className="sample-preview" aria-hidden style={{ backgroundImage: `url(${variants[shown].preview})` }} />
       {steps &&
-        <div className="seg slant-seg" role="group" aria-label={`${label} top slope`}
+        <div className="seg" role="group" aria-label={`${label} top slope`}
           onKeyDown={(e) => {
             const all = segments(), i = all.indexOf(document.activeElement as HTMLButtonElement);
             if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); all[(i + (e.key === 'ArrowRight' ? 1 : all.length - 1)) % all.length]?.focus(); }
@@ -151,7 +159,7 @@ function afterFirstVisit() {
   firstVisitObserver=stop;
 }
 
-const hasFilament = (s: ReturnType<typeof getState>) => !!s.filamentSlots[0] && (() => { const r = resolvePreset(s, 'filament', s.filamentSlots[0]); return !!r.name && !r.error; })();
+const hasFilament = (s: ReturnType<typeof getState>) => { const r = slotFilaments(s)[0] ? recordOf(s, 'filament', slotFilaments(s)[0]) : undefined; return !!r && !r.archived; };
 
 let setupOffered = false;
 export default function EmptyPlate() {

@@ -1,4 +1,5 @@
 #include "OneShotField.hpp"
+#include "libslic3r/Nonplanar/Research.hpp"
 #include "Sha256.hpp"
 
 #include "Config.hpp"
@@ -76,7 +77,7 @@ constexpr double ClearanceDilation = 0.3;
 constexpr double BodyPathCap = 0.;
 double body_lean_cap()
 {
-    const char *v = std::getenv("NP_ONESHOT_BODY_LEAN");
+    const char *v = research_switch("NP_ONESHOT_BODY_LEAN");
     return v != nullptr && *v != 0 ? std::max(0., std::atof(v)) * M_PI / 180. : BodyPathCap;
 }
 constexpr double OneShotCpuCap    = 900.;
@@ -224,7 +225,7 @@ std::string file_sha256(const std::string &path)
 std::vector<std::pair<std::string, std::string>> arm_dir_files(const PrintObject &object, const std::string &ext)
 {
     std::vector<std::pair<std::string, std::string>> out;
-    const char *dirs = std::getenv("NP_ONESHOT_ARM_OFFER");
+    const char *dirs = research_switch("NP_ONESHOT_ARM_OFFER");
     if (dirs == nullptr || *dirs == 0)
         return out;
     const std::string stem = boost::filesystem::path(object.model_object()->name).stem().string();
@@ -237,13 +238,13 @@ std::vector<std::pair<std::string, std::string>> arm_dir_files(const PrintObject
 
 bool arm_forced(const std::string &arm)
 {
-    const char *force = std::getenv("NP_ONESHOT_ROUTE_FORCE");
+    const char *force = research_switch("NP_ONESHOT_ROUTE_FORCE");
     return force != nullptr && std::string(force) == "{A:" + arm + "}";
 }
 
 bool pick_meters()
 {
-    static const bool on = [] { const char *v = std::getenv("NP_ONESHOT_PICK_METERS"); return v != nullptr && *v == '1'; }();
+    static const bool on = [] { const char *v = research_switch("NP_ONESHOT_PICK_METERS"); return v != nullptr && *v == '1'; }();
     return on;
 }
 constexpr double PickPartTie   = 0.5;
@@ -288,7 +289,7 @@ std::string external_field(const std::string &object_name, const std::string &co
         };
         put("{name}", fs::path(object_name).stem().string());
         put("{out}", stem + ".npz");
-        const char  *limit   = std::getenv("NP_ONESHOT_FIELD_SOLVER_TIMEOUT");
+        const char  *limit   = research_switch("NP_ONESHOT_FIELD_SOLVER_TIMEOUT");
         const double seconds = limit != nullptr && std::atof(limit) > 0. ? std::atof(limit) : 300.;
         const auto   t0      = std::chrono::steady_clock::now();
         boost::process::child solver(cmd, (boost::process::std_out & boost::process::std_err) > stem + ".log");
@@ -313,7 +314,7 @@ std::string external_field(const std::string &object_name, const std::string &co
 
 std::string student_model()
 {
-    if (const char *env = std::getenv("NP_ONESHOT_MODEL"); env != nullptr && *env != 0)
+    if (const char *env = research_switch("NP_ONESHOT_MODEL"); env != nullptr && *env != 0)
         return std::string(env) == "none" ? std::string() : std::string(env);
     const boost::filesystem::path bundled = boost::filesystem::path(resources_dir()) / "nonplanar" / "student" / "oneshot.nsw";
     return boost::filesystem::exists(bundled) ? bundled.string() : std::string();
@@ -355,7 +356,7 @@ void save_objective_geometry(const std::string &path, const ObjectiveGeometry &g
 
 double max_time_ratio_override()
 {
-    const char *env = std::getenv("NP_ONESHOT_MAX_TIME_RATIO");
+    const char *env = research_switch("NP_ONESHOT_MAX_TIME_RATIO");
     if (env == nullptr || *env == 0)
         return -1.;
     char        *end   = nullptr;
@@ -546,7 +547,7 @@ ObjectiveMachine objective_machine(const PrintObject &object, const ObjectiveGeo
     for (size_t j = 1; j < tops.size(); ++j)
         m.thickness_min = std::min(m.thickness_min, tops[j] - tops[j - 1] - 1e-4);
     m.pinned_v.assign(geom.dims[2], std::numeric_limits<float>::quiet_NaN());
-    const bool no_pins = std::getenv("NP_ONESHOT_NO_PINS") != nullptr && body_lean_cap() > 0.;
+    const bool no_pins = research_switch("NP_ONESHOT_NO_PINS") != nullptr && body_lean_cap() > 0.;
     for (const double z : no_pins ? std::vector<double>() : faces_z) {
         const double lo = (z - band - geom.origin.z()) / geom.spacing.z(), hi = (z + band - geom.origin.z()) / geom.spacing.z();
         for (long k = std::max(0L, long(std::floor(lo))); k <= std::min(long(geom.dims[2]) - 1, long(std::ceil(hi))); ++k)
@@ -642,7 +643,7 @@ double *measure_work(const PrintObject &object, OneShotState &state)
     if (std::isnan(state.measure_work_left)) {
         const double facets = double(std::max<size_t>(object.model_object()->facets_count(), 1));
         double       budget = MeasureWorkBudget * std::clamp(MeasureWorkFacets / facets, 1., MeasureWorkMaxScale);
-        if (const char *env = std::getenv("NP_ONESHOT_MEASURE_WORK"); env != nullptr && *env != 0)
+        if (const char *env = research_switch("NP_ONESHOT_MEASURE_WORK"); env != nullptr && *env != 0)
             budget = std::max(0., std::atof(env));
         state.measure_work_left = budget > 0. ? budget : std::numeric_limits<double>::infinity();
     }
@@ -742,7 +743,7 @@ bool admit_lean_offer(const PrintObject &object, OneShotState &state, std::vecto
                 return v;
         return std::numeric_limits<double>::quiet_NaN();
     };
-    const char *keep_dir = std::getenv("NP_ONESHOT_LEAN_KEEP");
+    const char *keep_dir = research_switch("NP_ONESHOT_LEAN_KEEP");
     auto        keep_as  = [&](const std::string &what) {
         return keep_dir != nullptr && *keep_dir != 0 ? (boost::filesystem::path(keep_dir) / (name + "." + what + ".gcode")).string() : std::string();
     };
@@ -756,7 +757,7 @@ bool admit_lean_offer(const PrintObject &object, OneShotState &state, std::vecto
     Meters best_m = meters_of(mb, t_body);
     const bool     user_support = object.config().enable_support.value && !object.auto_support_applied();
     const Floating control      = planar_control_floating(object, user_support);
-    static const double F = [] { const char *v = std::getenv("NP_ONESHOT_FLOAT_W"); return v != nullptr && *v != 0 ? std::max(0., std::atof(v)) : 0.; }();
+    static const double F = [] { const char *v = research_switch("NP_ONESHOT_FLOAT_W"); return v != nullptr && *v != 0 ? std::max(0., std::atof(v)) : 0.; }();
     const double   J_body = term(*state.solved, "J") + F * std::max(0., mb.floating.part), S_body = term(*state.solved, "J_S"),
                  T_body = term(*state.solved, "J_T");
     std::shared_ptr<const NpField> best;
@@ -900,7 +901,7 @@ constexpr double OneShotBodySlower = 1.02;
 bool planar_keeps_pick(const PrintObject &object, OneShotState &state, const Floating &floating, double net)
 {
     using Offer = OneShotState::Offer;
-    const char *force = std::getenv("NP_ONESHOT_ROUTE_FORCE");
+    const char *force = research_switch("NP_ONESHOT_ROUTE_FORCE");
     if (!pick_meters() || state.injected || state.offer == Offer::Control || state.offer == Offer::Auto || state.offer == Offer::Planar ||
         (force != nullptr && *force != 0))
         return false;
@@ -1009,7 +1010,7 @@ void measured_export_check(PrintObject &object, OneShotState &state, const std::
 {
     const MeasureDeadline deadline(measure_deadline(state));
     const MeasureWork     work(measure_work(object, state));
-    if (!state.z_only || std::getenv("NP_ONESHOT_NO_MEASURED_CHECK") != nullptr || object.print()->objects().size() == 1)
+    if (!state.z_only || research_switch("NP_ONESHOT_NO_MEASURED_CHECK") != nullptr || object.print()->objects().size() == 1)
         return;
     const auto t0 = std::chrono::steady_clock::now();
     const double t_ps = measured_time(object, NonplanarMode::Off,
@@ -1231,9 +1232,9 @@ NpField one_shot_field(const PrintObject &object, const indexed_triangle_set &me
     params.level_rounds = 1;
     params.local_rounds = 0;
     params.budget       = 0.;
-    if (const char *only = std::getenv("NP_ONESHOT_ONLY_OFFER"); only != nullptr)
+    if (const char *only = research_switch("NP_ONESHOT_ONLY_OFFER"); only != nullptr)
         params.only_offer = only;
-    if (const char *search = std::getenv("NP_ONESHOT_SEARCH"); search != nullptr && *search != 0) {
+    if (const char *search = research_switch("NP_ONESHOT_SEARCH"); search != nullptr && *search != 0) {
         int starts = params.max_starts, keep = params.lottery_keep, local = params.local_rounds;
         if (std::sscanf(search, "%d,%d,%d", &starts, &keep, &local) >= 1) {
             params.max_starts   = starts;
@@ -1275,7 +1276,7 @@ NpField one_shot_field(const PrintObject &object, const indexed_triangle_set &me
     }
     const std::string model = level_only ? std::string() : student_model();
     std::vector<TimeCutOffer> cuts;
-    if (time_cut && model.empty() && params.only_offer.empty() && std::getenv("NP_ONESHOT_NO_MEASURED_CHECK") == nullptr)
+    if (time_cut && model.empty() && params.only_offer.empty() && research_switch("NP_ONESHOT_NO_MEASURED_CHECK") == nullptr)
         params.time_cut = &cuts;
     student  = model.empty() ? std::string("none") : file_sha256(model);
     polish_k = model.empty() ? 0 : StudentPolish;
@@ -1303,7 +1304,7 @@ NpField one_shot_field(const PrintObject &object, const indexed_triangle_set &me
     const std::vector<float> anchor_phi  = f.phi;
     const ObjectiveParams    full_params = params;
     std::string              init_path;
-    if (const char *init = std::getenv("NP_ONESHOT_INIT"); init != nullptr && *init != 0 && model.empty()) {
+    if (const char *init = research_switch("NP_ONESHOT_INIT"); init != nullptr && *init != 0 && model.empty()) {
         BoundingBoxf3 box;
         for (const stl_vertex &v : mesh.vertices)
             box.merge(v.cast<double>());
@@ -1318,7 +1319,7 @@ NpField one_shot_field(const PrintObject &object, const indexed_triangle_set &me
             params.warm_adaptive = false;
             params.local_rounds  = 0;
             params.level_rounds  = 0;
-            const char *iters    = std::getenv("NP_ONESHOT_INIT_ITERS");
+            const char *iters    = research_switch("NP_ONESHOT_INIT_ITERS");
             params.iterations    = iters != nullptr && *iters != 0 ? std::max(1, std::atoi(iters)) : 20;
         } catch (const std::exception &ex) {
             BOOST_LOG_TRIVIAL(warning) << "One-shot field " << object.model_object()->name << ": NP_ONESHOT_INIT " << init << " unused: " << ex.what();
@@ -1420,7 +1421,7 @@ NpField one_shot_field(const PrintObject &object, const indexed_triangle_set &me
             cf.solver += " (time-cut native " + c.name + ")";
             time_cut->push_back(std::move(cf));
         }
-    if (const char *local = std::getenv("NP_ONESHOT_LEAN_LOCAL"); time_cut && local != nullptr && *local != 0 && std::string(local) != "0" && model.empty() &&
+    if (const char *local = research_switch("NP_ONESHOT_LEAN_LOCAL"); time_cut && local != nullptr && *local != 0 && std::string(local) != "0" && model.empty() &&
         params.only_offer.empty()) {
         const std::vector<std::vector<float>> leans = overhang_local_leans(g, m, f.phi, 6., { 1., 0.6 });
         for (size_t i = 0; i < leans.size(); ++i) {
@@ -1461,7 +1462,7 @@ NpField one_shot_field(const PrintObject &object, const indexed_triangle_set &me
         original.solver = std::move(lf.solver);
         time_cut->push_back(std::move(original));
     };
-    if (const char *lean = std::getenv("NP_ONESHOT_LEAN_OFFER"); time_cut && lean != nullptr && *lean != 0 && model.empty() && params.only_offer.empty()) {
+    if (const char *lean = research_switch("NP_ONESHOT_LEAN_OFFER"); time_cut && lean != nullptr && *lean != 0 && model.empty() && params.only_offer.empty()) {
         std::stringstream paths(lean);
         for (std::string path; std::getline(paths, path, ',');) {
             try {
@@ -1485,7 +1486,7 @@ NpField one_shot_field(const PrintObject &object, const indexed_triangle_set &me
                 BOOST_LOG_TRIVIAL(warning) << "One-shot field " << object.model_object()->name << ": arm " << arm << " unused: " << ex.what();
             }
         }
-    if (const char *command = std::getenv("NP_ONESHOT_FIELD_SOLVER"); time_cut && command != nullptr && *command != 0 && model.empty() &&
+    if (const char *command = research_switch("NP_ONESHOT_FIELD_SOLVER"); time_cut && command != nullptr && *command != 0 && model.empty() &&
         params.only_offer.empty())
         if (const std::string path = external_field(object.model_object()->name, command); !path.empty()) {
             try {
@@ -1497,13 +1498,13 @@ NpField one_shot_field(const PrintObject &object, const indexed_triangle_set &me
                 BOOST_LOG_TRIVIAL(warning) << "One-shot field " << object.model_object()->name << ": NP_ONESHOT_FIELD_SOLVER field unused: " << ex.what();
             }
         }
-    if (const char *dir = std::getenv("NP_ONESHOT_DUMP"); dir != nullptr && *dir != 0) {
+    if (const char *dir = research_switch("NP_ONESHOT_DUMP"); dir != nullptr && *dir != 0) {
         const OneShotState *st     = object.oneshot_state();
         const bool          anchor = st != nullptr && (st->measured_anchor || st->offer == OneShotState::Offer::Control);
         const std::string   stem   = (boost::filesystem::path(dir) / object.model_object()->name).string() + (anchor ? ".anchor" : "");
         save_objective_geometry(stem + ".geom.npz", g);
         save_npfield(stem + ".field.npz", f);
-        if (const char *only = std::getenv("NP_SOLVE_ONLY"); only != nullptr && *only != 0 && *only != '0') {
+        if (const char *only = research_switch("NP_SOLVE_ONLY"); only != nullptr && *only != 0 && *only != '0') {
             BOOST_LOG_TRIVIAL(warning) << "One-shot field " << object.model_object()->name << ": solve only: J " << t.J << " S " << t.S << " E "
                                        << t.E << " T " << t.T << (t.feasible() ? " feasible" : " infeasible") << ", spread " << t.spread << ", "
                                        << std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() << " s, dumped "
@@ -1530,19 +1531,19 @@ constexpr double SeamK   = 0.25;
 constexpr double JoinRidgeMs  = 0.0108;
 double join_line_k()
 {
-    static const double k = [] { const char *v = std::getenv("NP_ONESHOT_JOIN_LINE"); return v != nullptr && *v != 0 ? std::atof(v) : 1.; }();
+    static const double k = [] { const char *v = research_switch("NP_ONESHOT_JOIN_LINE"); return v != nullptr && *v != 0 ? std::atof(v) : 1.; }();
     return k;
 }
 bool arm_grade()
 {
-    static const bool on = [] { const char *v = std::getenv("NP_ONESHOT_ARM_GRADE"); return v != nullptr && *v == '1'; }();
+    static const bool on = [] { const char *v = research_switch("NP_ONESHOT_ARM_GRADE"); return v != nullptr && *v == '1'; }();
     return on;
 }
 
 bool force_joins(const std::string &cuts)
 {
-    static const char *force = std::getenv("NP_ONESHOT_ROUTE_FORCE");
-    static const bool  on    = [] { const char *v = std::getenv("NP_ONESHOT_ROUTE_FORCE_JOINS"); return v != nullptr && std::atoi(v) != 0; }();
+    static const char *force = research_switch("NP_ONESHOT_ROUTE_FORCE");
+    static const bool  on    = [] { const char *v = research_switch("NP_ONESHOT_ROUTE_FORCE_JOINS"); return v != nullptr && std::atoi(v) != 0; }();
     return on && force != nullptr && cuts == force;
 }
 constexpr double SlabLayers   = 3.;
@@ -1555,7 +1556,7 @@ constexpr double ChunkOverhangMax = 50.;
 double chunk_overhang_max()
 {
     static const double cap = [] {
-        const char *v = std::getenv("NP_ONESHOT_CHUNK_OVERHANG_MAX");
+        const char *v = research_switch("NP_ONESHOT_CHUNK_OVERHANG_MAX");
         return v != nullptr && *v != 0 ? std::max(0., std::atof(v)) : ChunkOverhangMax;
     }();
     return cap;
@@ -1634,7 +1635,7 @@ bool face_slab(const indexed_triangle_set &mesh, const MultiplanarChunk &c, doub
 
 bool slab_joins_exempt()
 {
-    const char *v = std::getenv("NP_ONESHOT_SLAB_EXEMPT");
+    const char *v = research_switch("NP_ONESHOT_SLAB_EXEMPT");
     return v != nullptr && *v == '1';
 }
 
@@ -2015,7 +2016,7 @@ std::vector<std::pair<double, SpecCut>> lip_offer_cuts(const indexed_triangle_se
 
 bool lip_offers_requested()
 {
-    static const bool on = [] { const char *v = std::getenv("NP_ONESHOT_LIP_OFFER"); return v != nullptr && std::atoi(v) != 0; }();
+    static const bool on = [] { const char *v = research_switch("NP_ONESHOT_LIP_OFFER"); return v != nullptr && std::atoi(v) != 0; }();
     return on;
 }
 }
@@ -2038,7 +2039,7 @@ bool choose_route_once(PrintObject &object, OneShotState &state, double fan_step
     MultiplanarParams          params  = multiplanar_params(object, kinematics.get());
     params.work_budget = oneshot_planner_cuts();
     const bool                 chunk_support = chunk_support_requested() && object.config().enable_support.value;
-    const char                *spec    = std::getenv("NP_ONESHOT_ROUTE_SPEC");
+    const char                *spec    = research_switch("NP_ONESHOT_ROUTE_SPEC");
     const MultiplanarPlan      plan    = spec != nullptr && *spec != 0 ? route_spec_plan(spec, mesh, *kinematics)
                                                                        : object_multiplanar_plan(object, mesh, params);
     if (plan.work_stopped)
@@ -2476,7 +2477,7 @@ bool choose_route_once(PrintObject &object, OneShotState &state, double fan_step
             const std::string source = !spec.contains("source") ? std::string("no source") :
                                        spec.at("source").is_string() ? spec.at("source").get<std::string>() : spec.at("source").dump();
             o.pieces += " (arm " + arm + ", " + source + ", sha256 " + file_sha256(file) + ")";
-            if (const char *v = std::getenv("NP_ONESHOT_ARM_ROOT_PHI"); v != nullptr && *v == '1')
+            if (const char *v = research_switch("NP_ONESHOT_ARM_ROOT_PHI"); v != nullptr && *v == '1')
                 if (const boost::filesystem::path phi = boost::filesystem::path(file).parent_path() /
                                                         (boost::filesystem::path(object.model_object()->name).stem().string() + ".npf.npz");
                     boost::filesystem::exists(phi))
@@ -2499,7 +2500,7 @@ bool choose_route_once(PrintObject &object, OneShotState &state, double fan_step
     double       t_body = std::numeric_limits<double>::quiet_NaN(), t_ps = t_body;
     MeasuredPrint                          body_measured;
     std::vector<std::pair<Meters, Offer *>> metered;
-    const char  *keep_dir = std::getenv("NP_ONESHOT_ROUTE_KEEP");
+    const char  *keep_dir = research_switch("NP_ONESHOT_ROUTE_KEEP");
     auto         keep_as  = [&](const std::string &what) {
         return keep_dir != nullptr && *keep_dir != 0 ? (boost::filesystem::path(keep_dir) / (name + "." + what + ".gcode")).string() : std::string();
     };
@@ -2644,7 +2645,7 @@ bool choose_route_once(PrintObject &object, OneShotState &state, double fan_step
                           solved_term(state, "J_E_wall"), solved_term(state, "J_E_down"), T0)
         << "; routes " << std::lround(screen_s) << " s screen, " << std::lround(total_s) << " s total";
     state.route_log = log.str();
-    if (const char *dir = std::getenv("NP_ONESHOT_DUMP"); dir != nullptr && *dir != 0) {
+    if (const char *dir = research_switch("NP_ONESHOT_DUMP"); dir != nullptr && *dir != 0) {
         std::ofstream out((boost::filesystem::path(dir) / (object.model_object()->name + ".route-offers.tsv")).string());
         out << "cuts\tchunks\tscreen_J\tscreen_J_own_S\tscreen_T\tscreen_T_motion\tseam\tmeasured_s\tmeasured_J\tchosen\twhy\tpieces\n";
         out << "{}\t0\t" << J0 << "\t" << J0 << "\t" << T0 << "\t0\t0\t" << t_body << "\t" << J0 << "\t" << (chosen == nullptr) << "\tbody\t\n";
@@ -2696,7 +2697,7 @@ void choose_route_any(PrintObject &object, OneShotState &state)
 
 bool route_forced(const std::string &cuts)
 {
-    const char *force = std::getenv("NP_ONESHOT_ROUTE_FORCE");
+    const char *force = research_switch("NP_ONESHOT_ROUTE_FORCE");
     return force != nullptr && *force != 0 && (cuts == force || cuts == std::string(force) + "g");
 }
 
@@ -2709,7 +2710,7 @@ void choose_route(PrintObject &object, OneShotState &state)
     state.route_cuts.clear();
     state.forced_why.clear();
     choose_route_any(object, state);
-    if (const char *force = std::getenv("NP_ONESHOT_ROUTE_FORCE"); force != nullptr && std::string(force).rfind("{A:", 0) == 0 && state.route_cuts != force) {
+    if (const char *force = research_switch("NP_ONESHOT_ROUTE_FORCE"); force != nullptr && std::string(force).rfind("{A:", 0) == 0 && state.route_cuts != force) {
         const std::string arm  = std::string(force).substr(3, std::string(force).size() - 4);
         const size_t      lean = state.time_cut_note.find("lean offer arm " + arm + ",");
         const std::string why  = !state.forced_why.empty() ? state.forced_why :
@@ -2717,7 +2718,7 @@ void choose_route(PrintObject &object, OneShotState &state)
                                                              std::string("no such offer");
         throw SlicingError(Slic3r::format("FORCED ARM NOT ADOPTED: %1% did not print (%2%)", force, why));
     }
-    if (const char *force = std::getenv("NP_ONESHOT_ROUTE_FORCE"); force != nullptr && *force != 0 && !route_forced(state.route_cuts))
+    if (const char *force = research_switch("NP_ONESHOT_ROUTE_FORCE"); force != nullptr && *force != 0 && !route_forced(state.route_cuts))
         throw SlicingError(Slic3r::format("FORCED ROUTE NOT ADOPTED: %1% did not print (%2%)", force,
                                           state.forced_why.empty() ? std::string("no such offer") : state.forced_why));
 }

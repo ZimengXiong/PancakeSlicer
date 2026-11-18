@@ -48,3 +48,16 @@ export function heightsFor(nozzle: number, min?: number, max?: number): number[]
   for (let h = lo; h <= hi + 1e-6; h += step) out.push(Math.round(h * 100) / 100);
   return out.length ? out : [lo];
 }
+export function scaleAcross(scales: readonly ScaleRow[], nozzles: readonly number[], layerHeight: number): Config {
+  const out = scaleValues(scales, { nozzle: nozzles[0], layerHeight });
+  for (const d of nozzles.slice(1)) {
+    const other = scaleValues(scales, { nozzle: d, layerHeight });
+    for (const [k, v] of Object.entries(out)) {
+      if (other[k] === v || String(v).endsWith('%')) continue;
+      const a = Number(v), b = Number(other[k]);
+      if (k === 'initial_layer_print_height') out[k] = String(Math.min(a, b));
+      else if (isWidth(k) && Math.abs(a / nozzles[0] - b / d) < 1e-9) out[k] = `${round(a / nozzles[0] * 100)}%`;
+    }
+  }
+  return out;
+}

@@ -3,6 +3,7 @@ import { instanceMatrix, volumeWorld } from './geometry';
 import { gapFill, isPaint, overhangFacets, overhangGeometry, overlayGeometry, paintOf, paintTool, type Paintable, type Painting } from './paint';
 import type { PlateObject, State } from '../state/store';
 import { filamentColor } from './filamentColor';
+import { slotFilaments } from '../profiles/slots';
 
 const LIGHT_RED = 0xc70000;
 
@@ -48,7 +49,7 @@ export class PaintView {
     const kind = isPaint(s.gizmo) ? s.gizmo : null;
     const o = kind ? s.objects.find((ob) => ob.id === s.selected?.object) : undefined;
     const seen = new Set<string>();
-    const palette = [null, ...s.filamentSlots.map((_, i) => new THREE.Color(filamentColor(s, i + 1)).toArray())];
+    const palette = [null, ...slotFilaments(s).map((_, i) => new THREE.Color(filamentColor(s, i + 1)).toArray())];
     for (const ob of s.objects) {
       if (ob === o && kind === 'color') continue;
       const targets: [string, Paintable, number | undefined][] = [['o', ob, undefined], ...(ob.volumes ?? []).filter((v) => v.type === 'part').map((v) => [`v${v.id}`, v, v.id] as [string, Paintable, number])];

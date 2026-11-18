@@ -1,36 +1,37 @@
-import { Popover } from 'radix-ui';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useAddSettingsRequest } from './add-settings-request';
 import type { Config, ConfigValue } from '../api/types';
 import objectKeys from '../object_options.json';
 import { toolValue } from '../config-values';
 import { display } from '../profiles/format';
-import { effectiveConfig, getState, removeObjectOptions, removeVolumeOptions, selectionOf, setObjectOption, setState, setVolumeOption, useStore,
+import { effectiveConfig, getState, removeObjectOptions, removeVolumeOptions, setObjectOption, setVolumeOption, useStore,
   isSelected, type LayerRange, type PlateObject, type State } from '../state/store';
 import { undoable } from '../state/history';
-import { overrideCount } from '../plater/overrides';
+import { selectionValues } from '../profiles/view';
 import { addRangeAfter, canAddAfter, deleteRange, editRange, rangeLabel, removeRangeOptions, setRangeOption } from '../plater/ranges';
-import { Caret } from './Caret';
+import { Field } from './Field';
+import { Glyph } from './Glyph';
+import { OPTIONS } from '../options';
 import { SettingsTab, type ProfileFields } from './SettingsTab';
+import { objectLabels } from '../plater/object-names';
 import './object-overrides.css';
+import { sameValue } from '../state/value-equality';
 
 const REGION_KEYS = new Set(objectKeys.region);
 const OBJECT_KEYS = new Set([...objectKeys.region, ...objectKeys.object]);
-const plain = (name: string) => name.replace(/\.(stl|obj|3mf|drc|step|stp)$/i, '');
 const editable = (o: PlateObject) => !o.project;
-const instanceKeys = (o: PlateObject) => o.instances.map((i) => `${o.id}:${i.id}`);
 
 export interface ObjectOverrides extends ProfileFields { keys: Set<string>; mixed: Record<string, string>;
   target: { kind: 'objects'; ids: number[] } | { kind: 'part'; object: number; volume: number } | { kind: 'range'; object: number; range: LayerRange } }
 
-const same = (key: string, a: ConfigValue | undefined, b: ConfigValue | undefined) => a === b || (a !== undefined && b !== undefined && toolValue(key, a) === toolValue(key, b));
 
 function overridesOf(s: State, project: Config): ObjectOverrides | null {
   const sel = s.selected, object = sel ? s.objects.find((o) => o.id === sel.object) : undefined;
   const single = (kind: 'part' | 'range', settings: Config, name: string, set: (k: string, v: ConfigValue) => void, remove: (keys: string[]) => void, target: ObjectOverrides['target']): ObjectOverrides => {
     const baseline = { ...project, ...object!.settings };
     return { name, keys: REGION_KEYS, mixed: {}, target, config: { ...baseline, ...settings }, baseline, changes: settings,
-      set: (k, v) => undoable(kind === 'part' ? 'Edit part settings' : 'Edit range settings', () => same(k, v, baseline[k]) ? remove([k]) : set(k, v), `${name}:${k}`),
+      set: (k, v) => undoable(kind === 'part' ? 'Edit part settings' : 'Edit range settings', () => sameValue(k, v, baseline[k]) ? remove([k]) : set(k, v), `${name}:${k}`),
       reset: (k) => undoable('Reset to object', () => remove([k])) };
   };
   if (object && editable(object) && sel?.range !== undefined) {
@@ -55,9 +56,9 @@ function overridesOf(s: State, project: Config): ObjectOverrides | null {
     if (distinct.length > 1) mixed[k] = distinct.slice(0, 3).map((v) => display(k, v)).join(', ') + (distinct.length > 3 ? ', …' : '');
   }
   return {
-    name: objects.length === 1 ? plain(objects[0].name) : `${objects.length} objects`, keys: OBJECT_KEYS, mixed, target: { kind: 'objects', ids },
+    name: objects.length === 1 ? objectLabels(s.objects).get(objects[0].id)! : `${objects.length} objects`, keys: OBJECT_KEYS, mixed, target: { kind: 'objects', ids },
     config, baseline: project, changes,
-    set: (k, v) => undoable('Edit object settings', () => objects.forEach((o) => same(k, v, project[k]) ? removeObjectOptions(o.id, [k]) : setObjectOption(o.id, k, v)), `objects:${ids}:${k}`),
+    set: (k, v) => undoable('Edit object settings', () => objects.forEach((o) => sameValue(k, v, project[k]) ? removeObjectOptions(o.id, [k]) : setObjectOption(o.id, k, v)), `objects:${ids}:${k}`),
     reset: (k) => undoable('Reset to project', () => objects.forEach((o) => removeObjectOptions(o.id, [k]))),
   };
 }
@@ -65,34 +66,8 @@ function overridesOf(s: State, project: Config): ObjectOverrides | null {
 export function useObjectOverrides(): ObjectOverrides | null {
   const objects = useStore((s) => s.objects), selected = useStore((s) => s.selected);
   const project = useStore((s) => effectiveConfig(s, 'process'));
-  return useMemo(() => overridesOf(getState(), project), [objects, selected, project]);
-}
-
-export function ObjectPicker({ overrides }: { overrides: ObjectOverrides | null }) {
-  const objects = useStore((s) => s.objects), selected = useStore((s) => s.selected);
-  const [open, setOpen] = useState(false);
-  const usable = objects.filter(editable);
-  const chosen = new Set(usable.filter((o) => o.instances.some((i) => isSelected(selected, o.id, i.id)) && selected?.volume === undefined && selected?.range === undefined).map((o) => o.id));
-  const pickObjects = (ids: number[]) => setState((s) => ({ selected: selectionOf(s, s.objects.filter((o) => ids.includes(o.id)).flatMap(instanceKeys)) }));
-  const toggle = (o: PlateObject) => pickObjects(chosen.has(o.id) ? [...chosen].filter((id) => id !== o.id) : [...chosen, o.id]);
-  const count = (n: number) => n > 0 && <span className="obj-pick-count" aria-label={`${n} ${n === 1 ? 'override' : 'overrides'}`}>{n}</span>;
-  const row = (key: string, label: string, checked: boolean, n: number, onPick: () => void, depth = 0, check = true) =>
-    <button key={key} type="button" role={check ? 'menuitemcheckbox' : 'menuitemradio'} aria-checked={checked} className="menu-item obj-pick-row" data-depth={depth || undefined}
-      onClick={onPick}><span className="menu-check" aria-hidden>{checked ? '✓' : ''}</span><span className="orca-menu-label">{label}</span>{count(n)}</button>;
-  return <Popover.Root open={open} onOpenChange={setOpen}>
-    <Popover.Trigger asChild><button type="button" className="pk-trigger dropdown obj-pick" aria-label={`Objects: ${overrides?.name ?? 'none selected'}`}>
-      <span className="pk-name">{overrides?.name ?? 'Select objects'}</span><Caret className="pk-caret"/></button></Popover.Trigger>
-    <Popover.Portal><Popover.Content className="orca-menu obj-pick-pop" data-menu-family="orca" role="menu" aria-label="Objects" align="start" sideOffset={4} collisionPadding={8}
-      onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') { e.preventDefault(); e.stopPropagation(); pickObjects(usable.map((o) => o.id)); } }}>
-      {usable.map((o) => [
-        row(`o${o.id}`, plain(o.name), chosen.has(o.id), overrideCount(o), () => toggle(o)),
-        ...(o.volumes ?? []).filter((v) => v.type === 'part' || v.type === 'modifier').map((v) => row(`v${o.id}:${v.id}`, v.name, selected?.object === o.id && selected.volume === v.id, Object.keys(v.settings ?? {}).length,
-          () => { setState({ selected: { object: o.id, instance: o.instances[0].id, volume: v.id } }); setOpen(false); }, 1, false)),
-        ...(o.ranges ?? []).map((r) => row(`r${o.id}:${r.id}`, rangeLabel(r), selected?.object === o.id && selected.range === r.id, Object.keys(r.settings).length,
-          () => { setState({ selected: { object: o.id, instance: o.instances[0].id, range: r.id } }); setOpen(false); }, 1, false)),
-      ])}
-    </Popover.Content></Popover.Portal>
-  </Popover.Root>;
+  const answer = { state: useStore((s) => selectionValues(s, 'process').state), error: useStore((s) => selectionValues(s, 'process').error) };
+  return useMemo(() => { const o = overridesOf(getState(), project); return o && { ...o, state: answer.state, error: answer.error }; }, [objects, selected, project, answer.state, answer.error]);
 }
 
 export function RangeEditor({ objectId, range }: { objectId: number; range: LayerRange }) {
@@ -119,14 +94,48 @@ export function RangeEditor({ objectId, range }: { objectId: number; range: Laye
 }
 
 
-export default function ObjectScope() {
+export default function ObjectSettings() {
   const overrides = useObjectOverrides();
-  const top = useRef<HTMLDivElement>(null);
-  useAddSettingsRequest(!!overrides, () => top.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
-  return <>
-    <div className="rail-row rail-row-wide" ref={top}><span className="preset-combo"><ObjectPicker overrides={overrides} /></span></div>
-    {overrides?.target.kind === 'range' && <RangeEditor objectId={overrides.target.object} range={overrides.target.range} />}
-    <div className="process-panel">{overrides ? <SettingsTab type="process" compact hidePreset overrides={overrides} />
-      : <div className="settings-load" role="status">Select objects on the plate or in the list</div>}</div>
-  </>;
+  const [open, setOpen] = useState(false);
+  useAddSettingsRequest(!!overrides, (mode) => setOpen((o) => mode === 'open' || !o));
+  if (!overrides) return null;
+  const keys = Object.keys(overrides.changes).filter((k) => OPTIONS[k]);
+  return <section className="ol-settings" aria-label={`${overrides.name} settings`}>
+    <header className="ol-settings-head"><span className="ol-settings-name">{overrides.name}</span>
+      <button type="button" className="icon-btn rail-act" aria-label={`Add settings to ${overrides.name}`} aria-expanded={open} onClick={() => setOpen((o) => !o)}><Glyph name="plus" size={14}/></button></header>
+    {overrides.target.kind === 'range' && <RangeEditor objectId={overrides.target.object} range={overrides.target.range} />}
+    {keys.map((k) => <Field key={k} optKey={k} type="process" value={overrides.config[k]} systemValue={overrides.baseline[k]} dirty
+      onSet={overrides.set} onReset={overrides.reset} mixed={overrides.mixed[k]} resetTitle="Project"/>)}
+    {open && <ObjectSettingsPanel overrides={overrides} onClose={() => setOpen(false)}/>}
+  </section>;
+}
+
+function ObjectSettingsPanel({ overrides, onClose }: { overrides: ObjectOverrides; onClose(): void }) {
+  const n = Object.keys(overrides.changes).filter((k) => OPTIONS[k]).length;
+  const card = document.querySelector<HTMLElement>('.objects-panel'), panel = useRef<HTMLElement>(null);
+  const [box, setBox] = useState<{ width: number; maxHeight: number }>();
+  useLayoutEffect(() => {
+    const area = card?.closest<HTMLElement>('.canvas-area');
+    if (!card || !area) return;
+    const place = () => {
+      const c = card.getBoundingClientRect(), a = area.getBoundingClientRect(), inset = c.left - a.left;
+      setBox({ width: Math.max(c.width, Math.min(720, a.right - c.left - inset)), maxHeight: Math.max(160, a.bottom - c.bottom - inset - 6) });
+    };
+    place();
+    const observer = new ResizeObserver(place);
+    observer.observe(card); observer.observe(area);
+    return () => observer.disconnect();
+  }, [card]);
+  useEffect(() => {
+    panel.current?.focus({ preventScroll: true });
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented) { e.preventDefault(); onClose(); } };
+    document.addEventListener('keydown', key);
+    return () => document.removeEventListener('keydown', key);
+  }, [onClose]);
+  if (!card) return null;
+  return createPortal(<section ref={panel} tabIndex={-1} className="object-settings-panel" role="dialog" aria-label={`${overrides.name} settings`} style={box}>
+    <header className="object-settings-head"><h2>{overrides.name}{n > 0 && <span className="object-settings-count">{n} change{n === 1 ? '' : 's'}</span>}</h2>
+      <button type="button" className="icon-btn" aria-label="Close" onClick={onClose}><Glyph name="close" size={14}/></button></header>
+    <div className="pf-full-editor object-settings-body"><SettingsTab type="process" overrides={overrides} hidePreset/></div>
+  </section>, card);
 }

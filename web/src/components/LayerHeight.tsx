@@ -8,7 +8,7 @@ import { instanceMatrix, objectHeight } from '../plater/geometry';
 import { adaptiveProfile, adjustProfile, baseProfile, fitProfile, heightAt, slicingParams, smoothProfile, type EditAction, type SlicingParams } from '../plater/layerProfile';
 import { firstLayer } from '../slice-input';
 
-export const canEditLayers = (s: State) => !!s.features.layer_profile && !!s.selected && !s.selected.all && !s.project &&
+export const canEditLayers = (s: State) => !!s.selected && !s.selected.all && !s.project &&
   !!s.objects.find((o) => o.id === s.selected!.object && !o.project);
 
 const THICKNESS_BAR_WIDTH = 70;

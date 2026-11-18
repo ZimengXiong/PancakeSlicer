@@ -1,10 +1,8 @@
-import { resolvePreset, type State } from '../state/store';
+import type { State } from '../state/store';
+import { recordOf } from '../profiles/view';
+import type { PrinterRecord } from '../profiles/records';
 
-export function printerModel(state: State, printer: string): string {
-  const { config, base } = resolvePreset(state, 'machine', printer);
-  const model = config.printer_model;
-  return String((Array.isArray(model) ? model[0] : model) || base?.model || '');
-}
+export const printerModel = (state: State, printer: string): string => (recordOf(state, 'machine', printer) as PrinterRecord | undefined)?.model ?? '';
 
 export function printerCapabilities(model: string) {
   const openBed = /\bA1(?:\s+mini)?\b/i.test(model);

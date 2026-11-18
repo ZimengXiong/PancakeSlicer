@@ -96,7 +96,6 @@
 :where(.orca-parity) .plate-add { align-self: flex-start; }
 @media (max-width: 599px) { :where(.orca-parity) .plate-order { margin-left: 0; } }
 
-:where(.orca-parity) .filament-filters { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-3); }
 :where(.orca-parity) .modal-pick { display: flex; flex-direction: column; min-height: 0; }
 :where(.orca-parity) .modal-pick-head { display: flex; gap: var(--s-4); }
 :where(.orca-parity) .modal-pick-list { max-height: 320px; overflow: auto; }
@@ -151,4 +150,10 @@
 @media (max-width: 599px) { :root.orca-parity .modal.palette { top: 0; transform: none; height: auto; max-height: 80dvh; } }
 
 :where(.orca-parity) .ask-message { white-space: pre-line; overflow-wrap: anywhere; }
+:where(.orca-parity) .ask-problem { margin: var(--s-1) 0 0; color: var(--warn); font: var(--t-small); overflow-wrap: anywhere; }
 :where(.orca-parity) .ask-choices { display: grid; gap: var(--s-2); }
+:where(.orca-parity) .modal .np-table { width: 100%; border-collapse: collapse; font: var(--t-body); }
+:where(.orca-parity) .modal .np-table :is(th, td) { padding: var(--s-1) var(--s-3); text-align: left; vertical-align: middle; }
+:where(.orca-parity) .modal .np-table :is(th, td):first-child { width: 16px; padding-right: 0; }
+:where(.orca-parity) .modal .np-table th { color: var(--ink-2); font-weight: 600; border-bottom: 1px solid var(--line); }
+:where(.orca-parity) .modal .np-table .control-check { display: grid; }

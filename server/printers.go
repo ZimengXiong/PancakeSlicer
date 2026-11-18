@@ -54,18 +54,18 @@ var connectionKinds = map[string]string{
 }
 
 type ConnectionView struct {
-	Printer   string `json:"printer"`
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Kind      string `json:"kind"`
-	Host      string `json:"host,omitempty"`
-	Serial    string `json:"serial,omitempty"`
-	Model     string `json:"model,omitempty"`
-	URL       string `json:"url,omitempty"`
-	Auth      string `json:"auth,omitempty"`
-	Username  string `json:"username,omitempty"`
-	HasSecret bool   `json:"has_secret"`
-	Trust     string `json:"trust,omitempty"`
+	Printer    string `json:"printer"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Kind       string `json:"kind"`
+	Host       string `json:"host,omitempty"`
+	Serial     string `json:"serial,omitempty"`
+	Model      string `json:"model,omitempty"`
+	URL        string `json:"url,omitempty"`
+	Auth       string `json:"auth,omitempty"`
+	Username   string `json:"username,omitempty"`
+	HasSecret  bool   `json:"has_secret"`
+	Trust      string `json:"trust,omitempty"`
 }
 
 func (p *PrinterConfig) view() ConnectionView {
@@ -135,7 +135,7 @@ func (p *PrinterConfig) validate(resources string) error {
 			return errors.New("Serial must be your printer's serial number.")
 		}
 		if p.URL != "" || p.TLS != "" {
-			return errors.New("Flashforge printers use the Host IP field rather than a URL.")
+			return errors.New("Flashforge printers use the Host IP field instead of a URL.")
 		}
 	case "bambu-connect":
 		if p.URL != "" || p.Host != "" || p.TLS != "" {
@@ -291,29 +291,29 @@ func (p *PrinterConfig) trust(mode string, fp []byte) {
 }
 
 type Transfer struct {
-	ID       string        `json:"id"`
-	Job      string        `json:"job"`
-	Printer  string        `json:"printer"`
-	Name     string        `json:"name"`
-	Kind     string        `json:"kind"`
-	Start    bool          `json:"start"`
-	Filename string        `json:"filename"`
-	State    TransferState `json:"state"`
-	Sent     int64         `json:"sent"`
-	Total    int64         `json:"total"`
-	Message  string        `json:"message,omitempty"`
-	Error    string        `json:"error,omitempty"`
-	Outcome  string        `json:"outcome,omitempty"`
-	Reason   string        `json:"reason,omitempty"`
-	Recovery string        `json:"recovery,omitempty"`
-	JobEnd   string     `json:"job_end,omitempty"`
-	JobEndAt *time.Time `json:"job_end_at,omitempty"`
-	Running bool `json:"running,omitempty"`
+	ID        string           `json:"id"`
+	Job       string           `json:"job"`
+	Printer   string           `json:"printer"`
+	Name      string           `json:"name"`
+	Kind      string           `json:"kind"`
+	Start     bool             `json:"start"`
+	Filename  string           `json:"filename"`
+	State     TransferState    `json:"state"`
+	Sent      int64            `json:"sent"`
+	Total     int64            `json:"total"`
+	Message   string           `json:"message,omitempty"`
+	Error     string           `json:"error,omitempty"`
+	Outcome   string           `json:"outcome,omitempty"`
+	Reason    string           `json:"reason,omitempty"`
+	Recovery  string           `json:"recovery,omitempty"`
+	JobEnd    string           `json:"job_end,omitempty"`
+	JobEndAt  *time.Time       `json:"job_end_at,omitempty"`
+	Running   bool             `json:"running,omitempty"`
 	JobErrors []PrinterMessage `json:"job_errors,omitempty"`
-	Project  string     `json:"project,omitempty"`
-	Version  uint64     `json:"version,omitempty"`
-	Started  time.Time  `json:"started"`
-	Finished *time.Time `json:"finished,omitempty"`
+	Project   string           `json:"project,omitempty"`
+	Version   uint64           `json:"version,omitempty"`
+	Started   time.Time        `json:"started"`
+	Finished  *time.Time       `json:"finished,omitempty"`
 
 	sent   *atomic.Int64
 	cancel context.CancelCauseFunc
@@ -349,12 +349,12 @@ func (t *Transfer) to(next TransferState) bool {
 func (t *Transfer) active() bool { return t.State == TransferUploading || t.State == TransferStarting }
 
 type SendManager struct {
-	store *printerStore
-	mu    sync.Mutex
-	conns []*PrinterConfig
-	busy  map[string]bool
-	live  map[string]*Job
-	cards map[string]string
+	store   *printerStore
+	mu      sync.Mutex
+	conns   []*PrinterConfig
+	busy    map[string]bool
+	live    map[string]*Job
+	cards   map[string]string
 	buckets map[string]tokenBucket
 	cameras *cameraHub
 	hub     *statusHub
@@ -363,6 +363,8 @@ type SendManager struct {
 
 const sendBurst = 3
 const sendRate = 0.1
+
+const deviceBurst, deviceRate = 20, 2
 
 func NewSendManager(store *printerStore) *SendManager {
 	m := &SendManager{store: store, busy: map[string]bool{}, live: map[string]*Job{}, cards: map[string]string{}, buckets: map[string]tokenBucket{}}
@@ -402,9 +404,11 @@ func (m *SendManager) connections() []*PrinterConfig {
 	return m.conns
 }
 
-func (m *SendManager) allow(client string) (bool, int) { return m.allowBurst(client, sendBurst) }
+func (m *SendManager) allow(client string) (bool, int) {
+	return m.allowBurst(client, sendBurst, sendRate)
+}
 
-func (m *SendManager) allowBurst(client string, burst float64) (bool, int) {
+func (m *SendManager) allowBurst(client string, burst, rate float64) (bool, int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now()
@@ -412,11 +416,11 @@ func (m *SendManager) allowBurst(client string, burst float64) (bool, int) {
 	if !ok {
 		b = tokenBucket{burst, now}
 	}
-	b.tokens = math.Min(burst, b.tokens+now.Sub(b.at).Seconds()*sendRate)
+	b.tokens = math.Min(burst, b.tokens+now.Sub(b.at).Seconds()*rate)
 	b.at = now
 	if b.tokens < 1 {
 		m.buckets[client] = b
-		return false, int(math.Ceil((1 - b.tokens) / sendRate))
+		return false, int(math.Ceil((1 - b.tokens) / rate))
 	}
 	b.tokens--
 	m.buckets[client] = b
@@ -450,7 +454,7 @@ func (s *Server) getSend(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, t)
 		return
 	}
-	fail(w, 404, "This job hasn't been sent to a printer yet.")
+	fail(w, 404, "job_hasnt_been_sent")
 }
 
 func (s *Server) cancelSend(w http.ResponseWriter, r *http.Request) {
@@ -462,7 +466,7 @@ func (s *Server) cancelSend(w http.ResponseWriter, r *http.Request) {
 	t := j.send
 	if t == nil || !t.active() {
 		j.mu.Unlock()
-		fail(w, 409, "This job isn't currently uploading.")
+		fail(w, 409, "job_isnt_currently_uploading")
 		return
 	}
 	cancel := t.cancel
@@ -473,57 +477,103 @@ func (s *Server) cancelSend(w http.ResponseWriter, r *http.Request) {
 
 var errSendCancelled = errors.New("cancelled")
 
+func sendRefusal(row sendSlot, printer string) failure {
+	switch {
+	case row.State == "unassigned":
+		return newFailure("slot_unassigned", row.Filament, printer)
+	case row.tray == nil:
+		return newFailure("slot_tray_missing", row.Filament, row.Tray, printer)
+	case row.tray.Type == "":
+		return newFailure("slot_tray_empty", row.Filament, row.Tray, printer, row.Expected.Type)
+	}
+	return newFailure("slot_mismatch", row.Filament, row.Tray, row.tray.Type, printer, row.Expected.Type)
+}
+
+func (s *Server) getSendPlan(w http.ResponseWriter, r *http.Request) {
+	j := s.job(w, r)
+	if j == nil {
+		return
+	}
+	p := s.sends.printer(r.URL.Query().Get("printer"))
+	if p == nil || p.Kind != "bambu-lan" {
+		fail(w, 404, "printer_isnt_connected_over")
+		return
+	}
+	if j.AwaitFinished(r.Context()) != StateDone || j.Request.Output != "gcode.3mf" {
+		fail(w, 409, "wait_slicing_finish_before")
+		return
+	}
+	sliced, err := readBambuJobMapping(j.OutputPath("gcode.3mf"))
+	if err != nil {
+		fail(w, 422, "couldnt_read_nozzle_assignment", err.Error())
+		return
+	}
+	lib, err := s.libraryDocument()
+	if err != nil {
+		libraryFailure(w, 503, "library_unavailable", "Profiles could not be read.", "retry_storage", 0)
+		return
+	}
+	var trays []AMSTray
+	if status, ok := s.sends.hub.current(p.Printer); ok && status.Online {
+		trays = status.Trays
+	}
+	plan, err := sendPlanOf(lib, j.Request.Library, sliced, trays)
+	if err != nil {
+		fail(w, 409, "slot_identity", err.Error())
+		return
+	}
+	writeJSON(w, 200, plan)
+}
+
 func (s *Server) sendJob(w http.ResponseWriter, r *http.Request) {
 	j := s.job(w, r)
 	if j == nil {
 		return
 	}
 	if s.sends.store == nil {
-		fail(w, 403, "Printer network connections are disabled on this server.")
+		fail(w, 403, "printer_network_connections_disabled")
 		return
 	}
 	var body struct {
-		Printer       string `json:"printer"`
-		Start         *bool  `json:"start"`
-		Filename      string `json:"filename"`
-		BedLeveling   *bool  `json:"bed_leveling"`
-		BedType       int    `json:"bed_type"`
-		FlowCali      bool   `json:"flow_cali"`
-		Timelapse     bool   `json:"timelapse"`
-		VibrationCali *bool  `json:"vibration_cali"`
-		UseAMS        bool   `json:"use_ams"`
-		AMSMapping  []int              `json:"ams_mapping"`
-		AMSMapping2 []bambuTrayAddress `json:"ams_mapping_2"`
+		Printer       string   `json:"printer"`
+		Start         *bool    `json:"start"`
+		Filename      string   `json:"filename"`
+		BedLeveling   *bool    `json:"bed_leveling"`
+		BedType       int      `json:"bed_type"`
+		FlowCali      bool     `json:"flow_cali"`
+		Timelapse     bool     `json:"timelapse"`
+		VibrationCali *bool    `json:"vibration_cali"`
+		Override      []string `json:"override"`
 	}
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<10))
 	if err != nil {
-		fail(w, 413, "send request exceeds 4 KiB")
+		fail(w, 413, "send_request_exceeds_kib")
 		return
 	}
 	if json.Unmarshal(raw, &body) != nil || body.Printer == "" {
-		fail(w, 400, `expected {"printer": printer setup key, "start": boolean}`)
+		fail(w, 400, "expected_printer_printer_setup")
 		return
 	}
 	p := s.sends.printer(body.Printer)
 	if p == nil {
-		fail(w, 404, "This printer isn't connected yet—add a connection in its Connection settings.")
+		fail(w, 404, "printer_isnt_connected_add")
 		return
 	}
 	if p.Kind == "bambu-connect" {
-		fail(w, 409, "Bambu Connect opens files through the desktop app rather than directly from the server.")
+		fail(w, 409, "bambu_connect_opens_files")
 		return
 	}
 	start := body.Start == nil || *body.Start
 	filename := j.DownloadName()
 	if body.Filename != "" {
 		if strings.ContainsAny(body.Filename, "/\\") || len(body.Filename) > 240 || strings.IndexFunc(body.Filename, unicode.IsControl) >= 0 || !strings.HasSuffix(strings.ToLower(body.Filename), "."+j.Request.Output) || strings.HasPrefix(body.Filename, ".") {
-			fail(w, 400, "filename must be a basename ending in ."+j.Request.Output)
+			fail(w, 400, "filename_must_basename_ending", j.Request.Output)
 			return
 		}
 		filename = body.Filename
 	}
 	if j.AwaitFinished(r.Context()) != StateDone || j.Request.Orient || j.Request.Output == "3mf" {
-		fail(w, 409, "Wait for slicing to finish before sending the job to your printer.")
+		fail(w, 409, "wait_slicing_finish_before")
 		return
 	}
 	if refusal := j.curveRefusal(); refusal != "" {
@@ -531,42 +581,69 @@ func (s *Server) sendJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if want := map[bool]string{true: "gcode.3mf", false: "gcode"}[p.Kind == "bambu-lan"]; j.Request.Output != want {
-		fail(w, 400, fmt.Sprintf("%s needs a .%s export; this job produced .%s", connectionKinds[p.Kind], want, j.Request.Output))
+		fail(w, 400, "needs_export_job_produced", connectionKinds[p.Kind], want, j.Request.Output)
 		return
 	}
-	if body.UseAMS && (p.Kind != "bambu-lan" || len(j.Request.Filaments) != 1) {
-		fail(w, 400, "Single AMS slot selection only applies to single-filament prints on Bambu Lab printers.")
-		return
-	}
-	if body.AMSMapping != nil {
-		_, _, mappingErr := bambuMapping(body.AMSMapping, body.AMSMapping2, len(j.Request.Filaments))
-		if p.Kind != "bambu-lan" || mappingErr != nil {
-			fail(w, 400, "Please assign a valid AMS tray or external spool for each filament used in this Bambu print.")
+	var amsMapping []int
+	var amsMapping2 []bambuTrayAddress
+	if p.Kind == "bambu-lan" && start {
+		sliced, err := readBambuJobMapping(j.OutputPath("gcode.3mf"))
+		if err != nil {
+			fail(w, 422, "couldnt_read_nozzle_assignment", err.Error())
 			return
 		}
-	} else if body.AMSMapping2 != nil {
-		fail(w, 400, "ams_mapping_2 requires ams_mapping")
-		return
+		status, ok := s.sends.hub.current(p.Printer)
+		if !ok || !status.Online || status.Trays == nil {
+			fail(w, 409, "topology_unknown", p.Name)
+			return
+		}
+		lib, err := s.libraryDocument()
+		if err != nil {
+			libraryFailure(w, 503, "library_unavailable", "Profiles could not be read.", "retry_storage", 0)
+			return
+		}
+		plan, err := sendPlanOf(lib, j.Request.Library, sliced, status.Trays)
+		if err != nil {
+			fail(w, 409, "slot_identity", err.Error())
+			return
+		}
+		v0, v1, refused := plan.mapping(body.Override)
+		if refused != nil {
+			refusal := sendRefusal(*refused, p.Name)
+			writeJSON(w, 409, map[string]any{"error": refusal.Error, "code": refusal.Code, "step": refusal.Step, "plan": plan})
+			return
+		}
+		ids := make([]int, len(plan.Slots))
+		for i, row := range plan.Slots {
+			if ids[i] = -1; row.tray != nil {
+				ids[i] = row.tray.ID
+			}
+		}
+		if err := checkSendTopology(sliced, j.submittedFilamentMap(), status, ids, p.Name); err != nil {
+			fail(w, 409, "topology_mismatch", err.Error())
+			return
+		}
+		amsMapping, amsMapping2 = v0, v1
 	}
 	if body.BedType != 0 && (body.BedType != 1 || p.Kind != "elegoolink") {
-		fail(w, 400, "bed_type selects the Elegoo Centauri build plate side: 0 (textured) or 1 (smooth).")
+		fail(w, 400, "bed_type_elegoo", body.BedType)
 		return
 	}
 	client := s.clientIP(r)
 	if ok, retry := s.sends.allow(client); !ok {
 		w.Header().Set("Retry-After", fmt.Sprint(min(retry, 86400)))
-		fail(w, 429, "Too many print uploads started at once—wait a moment before sending again.")
+		fail(w, 429, "too_many_print_uploads")
 		return
 	}
 	f, err := os.Open(j.OutputPath(j.Request.Output))
 	if err != nil {
-		fail(w, 404, "That download link has expired—please slice or export again.")
+		fail(w, 404, "download_link_has_expired")
 		return
 	}
 	st, err := f.Stat()
 	if err != nil {
 		f.Close()
-		fail(w, 500, "Oops! Couldn't read the exported print file.")
+		fail(w, 500, "couldnt_read_exported_print")
 		return
 	}
 	m := s.sends
@@ -574,7 +651,7 @@ func (s *Server) sendJob(w http.ResponseWriter, r *http.Request) {
 	if m.busy[p.Printer] {
 		m.mu.Unlock()
 		f.Close()
-		fail(w, 409, p.Name + " is busy receiving another file right now—try again once that upload finishes.")
+		fail(w, 409, "busy_receiving_another_file", p.Name)
 		return
 	}
 	j.mu.Lock()
@@ -582,7 +659,7 @@ func (s *Server) sendJob(w http.ResponseWriter, r *http.Request) {
 		j.mu.Unlock()
 		m.mu.Unlock()
 		f.Close()
-		fail(w, 409, "This print job is already being uploaded to the printer.")
+		fail(w, 409, "print_job_already_being")
 		return
 	}
 	card := p.Printer + "\x00" + filename
@@ -602,12 +679,9 @@ func (s *Server) sendJob(w http.ResponseWriter, r *http.Request) {
 	m.history.record(view)
 	m.hub.changed()
 	audit(map[string]any{"event": "send_accepted", "job_id": j.ID, "printer": p.Printer, "kind": p.Kind, "client": client, "start_print": start, "bytes": st.Size()})
-	options := bambuOptions{bedLeveling: body.BedLeveling == nil && p.Kind != "elegoolink" || body.BedLeveling != nil && *body.BedLeveling, flowCali: body.FlowCali, timelapse: body.Timelapse, vibrationCali: body.VibrationCali == nil || *body.VibrationCali, useAMS: body.UseAMS, amsMapping: body.AMSMapping, amsMapping2: body.AMSMapping2, bedType: body.BedType}
-	if body.AMSMapping != nil {
-		options.useAMS = false
-		for _, t := range body.AMSMapping {
-			options.useAMS = options.useAMS || !isExternalTray(t)
-		}
+	options := bambuOptions{bedLeveling: body.BedLeveling == nil && p.Kind != "elegoolink" || body.BedLeveling != nil && *body.BedLeveling, flowCali: body.FlowCali, timelapse: body.Timelapse, vibrationCali: body.VibrationCali == nil || *body.VibrationCali, amsMapping: amsMapping, amsMapping2: amsMapping2, bedType: body.BedType}
+	for _, t := range amsMapping {
+		options.useAMS = options.useAMS || t >= 0
 	}
 	go s.runSend(ctx, stopTimeout, j, t, p, f, client, options, resend)
 	w.Header().Set("Location", "/api/jobs/"+j.ID+"/send")
@@ -624,16 +698,16 @@ const sendTimeout = 30 * time.Minute
 const sendStall = 30 * time.Second
 
 type upload struct {
-	printer  *PrinterConfig
-	secret   string
-	filename string
-	file     *os.File
-	size     int64
-	start    bool
-	progress *atomic.Int64
-	starting func()
-	stored   func()
-	options  bambuOptions
+	printer        *PrinterConfig
+	secret         string
+	filename       string
+	file           *os.File
+	size           int64
+	start          bool
+	progress       *atomic.Int64
+	starting       func()
+	stored         func()
+	options        bambuOptions
 	resend, onCard bool
 	outcome        string
 }
@@ -694,7 +768,7 @@ func (s *Server) runSend(ctx context.Context, stopTimeout context.CancelFunc, j 
 			err = cause
 		}
 		if stalled.Load() {
-			err = errors.New("The printer stopped responding during the upload (timed out after 30 seconds).")
+			err = &connError{"timeout", "The printer stopped responding during the upload (timed out after 30 seconds)."}
 		}
 		cancelled = errors.Is(context.Cause(ctx), errSendCancelled)
 	}
@@ -737,26 +811,22 @@ func (s *Server) runSend(ctx context.Context, stopTimeout context.CancelFunc, j 
 }
 
 func sendFailure(err error) (string, string) {
+	reason := "connection"
 	var conn *connError
-	stage := ""
-	if errors.As(err, &conn) {
-		stage = conn.stage
-	}
-	text := strings.ToLower(err.Error())
+	var ftp *ftpError
 	switch {
-	case stage == "access_code" || strings.Contains(text, "access code") || strings.Contains(text, "api key") || strings.Contains(text, "password") || strings.Contains(text, "401") || strings.Contains(text, "403"):
-		return "credentials", "Check the access code or API key in Connection settings, then retry."
-	case strings.Contains(text, "developer mode"):
-		return "developer_mode", "Turn on LAN-only mode and Developer Mode on the printer's screen, then retry."
-	case stage == "busy" || strings.Contains(text, "busy") || strings.Contains(text, "in use") || strings.Contains(text, "409"):
-		return "busy", "Wait for the current print to finish, or upload only and start it later."
-	case strings.Contains(text, "sd card") || strings.Contains(text, "storage") || strings.Contains(text, "no space") || strings.Contains(text, " 452") || strings.Contains(text, " 552"):
-		return "storage", "Insert or free space on the printer's SD card, then retry."
-	case strings.Contains(text, "in time") || strings.Contains(text, "timed out") || strings.Contains(text, "stopped accepting data"):
-		return "timeout", "Check that the printer is on and on the same network, then retry."
-	default:
-		return "connection", "Check the printer and its Connection settings, then retry."
+	case errors.As(err, &conn):
+		reason = map[string]string{"access_code": "credentials", "developer_mode": "developer_mode", "refused": "refused", "busy": "busy",
+			"storage": "storage", "timeout": "timeout"}[conn.stage]
+	case errors.As(err, &ftp) && (ftp.code == 452 || ftp.code == 552):
+		reason = "storage"
+	case errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err):
+		reason = "timeout"
 	}
+	if reason == "" {
+		reason = "connection"
+	}
+	return reason, failureTexts["send_"+reason].Step
 }
 
 func (m *SendManager) activeTransfers() []Transfer {
@@ -821,12 +891,15 @@ func netError(err error, what string) error {
 	var dns *net.DNSError
 	var opErr *net.OpError
 	var verify *tls.CertificateVerificationError
+	var unknownAuthority x509.UnknownAuthorityError
+	var invalid x509.CertificateInvalidError
+	var hostname x509.HostnameError
 	switch {
 	case errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err):
-		return fmt.Errorf("%s didn't respond in time—make sure the printer is powered on and reachable on your network.", what)
+		return &connError{"timeout", fmt.Sprintf("%s didn't respond in time—make sure the printer is powered on and reachable on your network.", what)}
 	case errors.As(err, &dns):
 		return fmt.Errorf("Couldn't find the network address for %s.", what)
-	case errors.As(err, &verify) || strings.Contains(err.Error(), "certificate"):
+	case errors.As(err, &verify) || errors.As(err, &unknownAuthority) || errors.As(err, &invalid) || errors.As(err, &hostname):
 		return fmt.Errorf("%s's security certificate was rejected: %v", what, lastClause(err))
 	case errors.As(err, &opErr) && opErr.Op == "dial":
 		return fmt.Errorf("Couldn't connect to %s—make sure the printer is powered on and on the same network.", what)

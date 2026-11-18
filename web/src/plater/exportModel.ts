@@ -8,7 +8,7 @@ export async function exportModel(format: 'generic3mf' | 'drc') {
   const s = getState();
   if (busy || !s.api || s.api.mock) return;
   busy = true;
-  toast(format === 'drc' ? 'Exporting Draco…' : 'Exporting generic 3MF…');
+  (format === 'drc' ? toast('exporting_draco') : toast('exporting_generic_3mf'));
   try {
     const { record, blob } = await toolJob('export', { export_format: format }, [[await projectBlob(s), 'project.3mf']]);
     const base = (s.projectName ?? s.objects[0]?.name ?? s.projectPlates.flatMap((p) => p.objects)[0]?.name ?? 'model').replace(/\.(stl|obj|3mf|drc|step|stp)$/i, '');
@@ -17,9 +17,9 @@ export async function exportModel(format: 'generic3mf' | 'drc') {
     a.href = href; a.download = `${base}.${format === 'drc' ? 'drc' : '3mf'}`; document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(href), 60000);
     const reasons = (record.fallback_reasons as string[] | undefined) ?? [];
-    toast(record.best_effort ? `Draco export: best effort${reasons.length ? ` (${reasons.join(', ')})` : ''}; check the file` : 'Export finished');
+    (record.best_effort ? toast('draco_export_best_effortx', { value: reasons.length ? ` (${reasons.join(', ')})` : '' }) : toast('export_finished'));
   } catch (e) {
-    toast(`Oops! Export failed: ${e instanceof Error ? e.message : String(e)}`);
+    toast('export_failed', { detail: e instanceof Error ? e.message : String(e) });
   } finally {
     busy = false;
   }

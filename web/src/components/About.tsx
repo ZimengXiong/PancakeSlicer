@@ -13,7 +13,7 @@ export function AboutContent({ info }: { info: BuildInfo }) {
     {info.engine && <><dt>Engine</dt><dd data-truncated="true" data-full-text={info.engineSha}>{info.engineSha ? shortSha(info.engineSha) : info.engine}</dd></>}
     {about?.image && <><dt>Image</dt><dd>{about.image}</dd></>}
     <dt>Links</dt><dd className="about-links">{link(GITHUB_URL, 'GitHub')}</dd>
-    <dt>Licence</dt><dd>{link('/licence.txt', about?.license || 'AGPL-3.0')}<Sep/>{link('/third-party-licences.txt', 'Third-party licences')}</dd>
+    <dt>Licence</dt><dd>{link('https://www.gnu.org/licenses/agpl-3.0.html', about?.license || 'AGPL-3.0')}<Sep/>{link('/third-party-licences.txt', 'Third-party licences')}</dd>
     {source && <><dt>Source</dt><dd>{link(source, source.startsWith('/') ? 'Download' : source.replace(/^https?:\/\//, '').replace(/[0-9a-f]{40}/, (sha) => sha.slice(0, 7)))}</dd></>}
   </dl>;
 }

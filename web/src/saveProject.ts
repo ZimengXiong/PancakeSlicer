@@ -5,7 +5,6 @@ import { markSaved, snapshot } from './state/history';
 import { output } from './flow/output';
 import type { OperationTicket } from './flow/operation';
 import { waitForJob } from './flow/job';
-import { stampProjectProfiles } from './profiles/project';
 
 
 export async function projectBlob(s: State, task?: OperationTicket): Promise<Blob> {
@@ -20,21 +19,28 @@ export async function projectBlob(s: State, task?: OperationTicket): Promise<Blo
   task?.progress(0, 'downloading');
   const response = await fetch(s.api!.downloadUrl(id), { signal: task?.signal });
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-  return stampProjectProfiles(await response.blob(), s);
+  return response.blob();
+}
+
+export function projectFileName(name: string): string {
+  // eslint-disable-next-line no-control-regex
+  const base = name.replace(/\.3mf$/i, '').replace(/[<>:/\\|?*"\u0000-\u001f]/g, '_').replace(/[. ]+$/, '').trim();
+  return `${base || 'project'}.3mf`;
 }
 
 export async function saveProject(as = false) {
   const s = getState();
   if (!s.api || !s.objects.length && !s.projectPlates.some((p) => p.objects.length)) return;
-  if (s.api.mock) { toast('Saving projects requires a connection to the slicing service.'); return; }
+  if (s.api.mock) { toast('saving_projects_requires_connection'); return; }
   const first = s.objects[0] ?? s.projectPlates.flatMap((p) => p.objects)[0];
   let name = s.projectName ?? (first.name.replace(/\.(stl|obj|3mf)$/i, '') + '.3mf');
   if (as) {
-    const proposed = await promptDialog('Save Project as', name);
+    const proposed = await promptDialog('Save Project as', name, (v) => !v.replace(/\.3mf$/i, '').trim() ? 'Enter a name.'
+      : new TextEncoder().encode(v.replace(/\.3mf$/i, '') + '.3mf').length > 240 ? 'Whoa, that name\'s a bit too long for a file — trim it down a little!' : null);
     if (!proposed) return;
-    name = proposed.replace(/\.3mf$/i, '') + '.3mf';
+    name = proposed;
   }
-  name = name.replace(/[<>:/\\|?*"]/g, '_');
+  name = projectFileName(name);
   const task = output.begin('preparing');
   try {
     const blob = await projectBlob(s, task);
@@ -46,10 +52,11 @@ export async function saveProject(as = false) {
     setState({ projectName: name });
     markSaved(snapshot(s));
     task.done();
-    toast('Downloading project…');
+    toast('downloading_project');
   } catch (e) {
     if (!task.current()) return;
     task.fail(e);
-    toast(`Oops! Couldn't save: ${e instanceof Error ? e.message : e}`);
+    const { code, status } = (e ?? {}) as { code?: string; status?: number };
+    toast(code || status && status < 500 ? 'couldnt_save_refused' : 'couldnt_save', { detail: e instanceof Error ? e.message : e });
   }
 }

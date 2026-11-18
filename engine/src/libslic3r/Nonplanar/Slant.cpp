@@ -15,7 +15,6 @@
 #include <iomanip>
 #include <limits>
 #include <sstream>
-#include <string>
 #include <vector>
 
 namespace Slic3r::Nonplanar {
@@ -120,27 +119,6 @@ double slant_budget(const HeadEnvelope &head, double psi, double width, double h
     return tilt - SlopeMargin;
 }
 
-std::string slant_budget_part(const HeadEnvelope &head, double psi, double width, double h)
-{
-    const double rise = psi + M_PI, tol = std::max(0., head.contact_tolerance);
-    double       best = std::numeric_limits<double>::infinity();
-    std::string  part;
-    for (const HeadBox &box : head.boxes) {
-        if (box.infinite_x || box.infinite_y)
-            continue;
-        HeadEnvelope one = head;
-        one.boxes        = { box };
-        double tilt      = one.max_slope(rise, h + tol, width);
-        if (!box.nozzle)
-            tilt = std::min(tilt, one.max_slope(rise, tol, width));
-        if (tilt < best)
-            best = tilt, part = box.name;
-    }
-    if (const double gantry = head.gantry_clearance(); std::isfinite(gantry) && std::atan(std::max(0., gantry + tol - head.margin) / width) < best)
-        part = "gantry";
-    return part;
-}
-
 struct Score
 {
     double steps = 0., overhang = 0.;
@@ -211,7 +189,6 @@ std::shared_ptr<const LayerField> slant_field(const PrintObject &object, SlantCh
     const double hi_h   = 0.8 * nozzle;
     const double range  = std::max(1e-3, hi_h - lo_h);
     const HeadEnvelope head = resolve_head_envelope(print);
-    const bool strict = print.nonplanar_collision_check.value == NonplanarCollisionCheck::Block;
     {
         const Score planar     = score(mesh, FlatField(), h, first, sin_th);
         choice.planar_steps    = planar.steps;
@@ -256,7 +233,7 @@ std::shared_ptr<const LayerField> slant_field(const PrintObject &object, SlantCh
         sh.width    = std::max(hi - lo, EPSILON);
         o.budget    = slant_budget(head, psi, sh.width, h);
         best_budget = std::max(best_budget, o.budget);
-        const bool   user  = config.nonplanar_slant_angle.value > 0. && (!strict || Geometry::deg2rad(config.nonplanar_slant_angle.value) <= o.budget);
+        const bool   user  = config.nonplanar_slant_angle.value > 0. && Geometry::deg2rad(config.nonplanar_slant_angle.value) <= o.budget;
         const double alpha = scale * (user ? Geometry::deg2rad(config.nonplanar_slant_angle.value) : o.budget);
         if (alpha < MinTilt && !(user && alpha > 0.))
             continue;
@@ -307,7 +284,6 @@ std::shared_ptr<const LayerField> slant_field(const PrintObject &object, SlantCh
         choice.direction_deg += 360.;
     choice.budget_deg    = Geometry::rad2deg(o.budget);
     choice.requested_deg = config.nonplanar_slant_angle.value;
-    const std::string part = slant_budget_part(head, std::atan2(sh.u.y(), sh.u.x()), sh.width, h);
     choice.start_mm      = sh.start;
     choice.morph_layers  = sh.morph;
     choice.lowered       = step;
@@ -324,11 +300,7 @@ std::shared_ptr<const LayerField> slant_field(const PrintObject &object, SlantCh
             why << "its tilted layers met the print head, so the angle stepped down " << step << (step == 1 ? " time" : " times");
         } else if (choice.angle_deg + 0.05 < choice.requested_deg) {
             choice.limit = "head";
-            why << "the print head clears no layer steeper than " << choice.budget_deg << " deg in this direction (" << part << ")";
-        } else if (choice.angle_deg > choice.budget_deg + 0.05) {
-            choice.limit = "reach";
-            why << "steeper than the print head clears in this direction (" << choice.budget_deg << " deg, " << part
-                << "), printed as asked because Head clearance check is " << (print.nonplanar_collision_check.value == NonplanarCollisionCheck::Off ? "Off" : "Warn");
+            why << "the print head clears no layer steeper than " << choice.budget_deg << " deg in this direction";
         }
         if (choice.full_tilt_mm > top) {
             const double reached = field->cut() ? 0. : Geometry::rad2deg(std::atan(dt * std::max(0., top - sh.start) / (low + 0.5 * dt * sh.width)));

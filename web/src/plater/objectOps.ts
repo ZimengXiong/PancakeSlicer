@@ -94,7 +94,7 @@ export function replaceFile(id: number) {
       const s = getState();
       replace('Replace with 3D file', s.objects.map((x) => (x.id === id ? { ...x, geometry, source: file, paint: undefined, layerProfile: undefined } : x)));
     } catch (e) {
-      toast(e instanceof Error ? e.message : String(e));
+      toast('objectops_failed', { detail: e instanceof Error ? e.message : String(e) });
     }
   };
   input.click();
@@ -126,7 +126,7 @@ export async function exportVolumeStl(objectId: number, volumeId: number) {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 60000);
   } catch (e) {
-    toast(`Oops! Export failed: ${e instanceof Error ? e.message : e}`);
+    toast('export_failed', { detail: e instanceof Error ? e.message : e });
   }
 }
 

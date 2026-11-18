@@ -140,7 +140,7 @@ export default function HeadDialog({ id, layerHeight, close, onSaved }: { id: st
       setProvenance(fitted.provenance ?? '');
       setPage(0);
     } catch (e) {
-      toast(`Oops! Couldn't calibrate the print head. Double-check all eight clean angles and the head profile.\n${e instanceof Error ? e.message : String(e)}`);
+      toast('couldnt_calibrate_print_head', { detail: e instanceof Error ? e.message : String(e) });
     }
   };
   const save = async () => {
@@ -156,7 +156,7 @@ export default function HeadDialog({ id, layerHeight, close, onSaved }: { id: st
       onSaved(head.id);
       close();
     } catch (e) {
-      toast(`Oops! Couldn't save the print head. Make sure the ID only uses letters, numbers, hyphens, or underscores.\n${e instanceof Error ? e.message : String(e)}`);
+      toast('couldnt_save_print_head', { detail: e instanceof Error ? e.message : String(e) });
       setLoad(load);
     }
   };

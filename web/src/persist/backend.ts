@@ -21,6 +21,7 @@ export interface ProjectCommandAck { revision: number; operationId: string }
 export interface ProjectCommandStatus {
   operationId: string; id: string; kind: 'rename' | 'duplicate' | 'archive' | 'restore'; name?: string; newId?: string;
   expectedRevision: number | null; state: 'preparing' | 'sending' | 'failed' | 'conflict' | 'acknowledged'; error: string | null;
+  held?: boolean;
 }
 
 export interface ProjectStore {
@@ -47,6 +48,7 @@ export const newKey = projectId;
 declare global {
   interface Window { orcaDesktop?: { version: number;
     onBeforeClose?(handler: () => Promise<void>): () => void; flushBeforeClose?(): Promise<void>;
+    onPendingSaves?(count: () => Promise<number>): () => void; pendingSaves?(): Promise<number>;
     bambuConnect?(jobId: string, filename: string): Promise<void> } }
 }
 const storageListeners = new Set<() => void>();

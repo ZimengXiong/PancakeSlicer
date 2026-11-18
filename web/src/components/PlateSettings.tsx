@@ -1,10 +1,12 @@
 import { Dropdown } from './Dropdown';
 import { useState } from 'react';
 import { OPTIONS } from '../options';
-import { getState, printerPreset, useStore } from '../state/store';
+import { getState, useStore } from '../state/store';
+import { plateLabel, plateSetup } from '../profiles/plate-setup';
 import { filamentColor } from '../plater/filamentColor';
 import { setPlateSettings } from '../plater/plates';
 import { Modal, ModalBody, ModalFooter, ModalTitle } from './Modal';
+import { slotFilaments } from '../profiles/slots';
 
 type Range = { from: number; to: number; order: number[] };
 const ints = (v: unknown) => String(v ?? '').split(/[,;]/).map((x) => Number(x.trim())).filter((x) => Number.isFinite(x));
@@ -33,24 +35,19 @@ function Order({ order, colours, onChange }: { order: number[]; colours: string[
 export default function PlateSettings({ close }: { close(): void }) {
   const plate = useStore((s) => s.projectPlates.find((p) => p.index === s.plateIndex));
   const s = getState();
-  const n = s.filamentSlots.length, colours = s.filamentSlots.map((_, i) => filamentColor(s, i + 1));
+  const n = slotFilaments(s).length, colours = slotFilaments(s).map((_, i) => filamentColor(s, i + 1));
   const natural = Array.from({ length: n }, (_, i) => i + 1);
   const cfg = plate?.settings ?? {};
   const [name, setName] = useState(plate?.name ?? '');
-  const [bed, setBed] = useState(String(cfg.curr_bed_type ?? ''));
   const [seq, setSeq] = useState(String(cfg.print_sequence ?? ''));
   const [spiral, setSpiral] = useState(cfg.spiral_mode === undefined ? '' : ['1', 'true'].includes(String(cfg.spiral_mode)) ? '1' : '0');
   const first0 = ints(cfg.first_layer_print_sequence).filter((f) => f >= 1 && f <= n);
   const [first, setFirst] = useState(first0.length === n ? first0 : null);
   const [others, setOthers] = useState<Range[] | null>(() => { const r = ranges(cfg.other_layers_print_sequence, cfg.other_layers_print_sequence_nums, n); return r.length ? r : null; });
-  const bedDef = OPTIONS.curr_bed_type, seqDef = OPTIONS.print_sequence;
-  const machine = printerPreset(s), multiBed = machine?.config.support_multi_bed_types;
-  const bedTypes = machine?.vendor === 'BBL' || multiBed === true || multiBed === 1 || multiBed === '1';
-  const beds = (bedDef?.enum_values ?? []).map((v, i) => [v, bedDef?.enum_labels?.[i] ?? v] as const)
-    .filter(([v, label]) => !machine?.not_support_bed_type?.some((b) => b === v || b === label));
+  const seqDef = OPTIONS.print_sequence;
+  const setup = useStore(plateSetup);
   const ok = () => {
     const out: Record<string, string> = {};
-    if (bed) out.curr_bed_type = bed;
     if (seq) out.print_sequence = seq;
     if (spiral) out.spiral_mode = spiral;
     if (first) out.first_layer_print_sequence = first.join(',');
@@ -62,15 +59,13 @@ export default function PlateSettings({ close }: { close(): void }) {
     close();
   };
   const seg = (label: string, value: string, set: (v: string) => void, options: [string, string][]) => <div className="form-row"><span>{label}</span>
-    <span className="seg" role="radiogroup" aria-label={label}>{options.map(([v, text]) => <button key={v} type="button" role="radio" aria-checked={value === v} onClick={() => set(v)}>{text}</button>)}</span></div>;
+    <Dropdown className="combo" aria-label={label} value={value} onValueChange={set} options={options.map(([v, text]) => ({ value: v, label: text }))} /></div>;
   return (
     <Modal size="m" label="Plate settings" onClose={close}>
       <ModalTitle title="Plate settings" onClose={close} />
       <ModalBody className="modal-fields">
         <label className="form-row"><span>Name</span><input className="text" value={name} onChange={(e) => setName(e.target.value)} /></label>
-        <label className="form-row"><span>Bed type</span>
-          <Dropdown className="combo" value={bed} disabled={!bedTypes} onValueChange={setBed} options={[{ value: "", label: 'Project default' }, ...beds.map(([v, label]) => ({ value: v, label }))]} />
-        </label>
+        {setup?.plate && <div className="form-row"><span>Build plate</span><span className="plate-printer-value">{plateLabel(setup, setup.plate)}</span></div>}
         <label className="form-row"><span>Print sequence</span>
           <Dropdown className="combo" value={seq} onValueChange={setSeq} options={[{ value: "", label: 'Project default' }, ...(seqDef?.enum_values?.map((v, i) => ({ value: v, label: seqDef.enum_labels?.[i] ?? v })) ?? [])]} />
         </label>

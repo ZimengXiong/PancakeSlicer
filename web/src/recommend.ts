@@ -35,7 +35,7 @@ export function applyRecommended(objects: PlateObject[]) {
   if (!objects.length) return;
   const end = beginStep('Change print style to "Standard"');
   try {
-    setState({ processScope: 'objects', selected: { object: objects[0].id, instance: objects[0].instances[0].id } });
+    setState({ selected: { object: objects[0].id, instance: objects[0].instances[0].id } });
     for (const o of objects) applyStyle(getState().recommendedStyle[o.id], o.id);
   } finally {
     end();
@@ -52,7 +52,7 @@ function flatReason(r: ObjectResult, o: PlateObject | undefined, process: Config
   const slope = slopes && slopes.max >= 0.5 ? `Top slope ${slopes.max - slopes.min > 1 ? 'up to ' : ''}${whole(slopes.max)}°` : 'Top';
   const { kind, capDeg, reachableDeg } = r.limit;
   if (kind === 'access') {
-    const moves = r.flatWhy?.match(/would bump the print head in (\d+) moves/)?.[1];
+    const moves = r.flatWhy?.match(/(?:met|would bump) the print head in (\d+) moves/)?.[1];
     return { why: reachableDeg != null ? `${slope} is steeper than the ${r.limit.accessBy === 'nozzle' ? 'nozzle can follow' : 'print head reaches'} (${whole(reachableDeg)}°)`
       : moves ? `The print head would bump into the part in ${Number(moves).toLocaleString('en-US')} places` : 'The print head doesn\'t have enough clearance to reach this top' };
   }

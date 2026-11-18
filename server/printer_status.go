@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -19,19 +18,98 @@ import (
 )
 
 type statusHub struct {
-	m        *SendManager
-	mu       sync.Mutex
-	subs     int
-	status   map[string]PrinterStatus
-	monitors map[string]*monitor
-	wake     chan struct{}
-	idle     *time.Timer
+	m         *SendManager
+	mu        sync.Mutex
+	subs      int
+	status    map[string]PrinterStatus
+	monitors  map[string]*monitor
+	wake      chan struct{}
+	idle      *time.Timer
+	listeners map[string]map[chan bambuHeard]struct{}
+}
+
+type bambuHeard struct {
+	echo   *bambuEcho
+	trays  bool
+	full   bool
+	state  []AMSTray
+	status *PrinterStatus
+}
+
+type bambuEcho struct {
+	Command  string `json:"command"`
+	Sequence string `json:"sequence_id"`
+	Result   string `json:"result"`
+	Reason   string `json:"reason"`
+	ErrCode  int    `json:"err_code"`
+}
+
+func (h *statusHub) listen(key string) (<-chan bambuHeard, func()) {
+	ch := make(chan bambuHeard, 64)
+	h.mu.Lock()
+	if h.listeners == nil {
+		h.listeners = map[string]map[chan bambuHeard]struct{}{}
+	}
+	if h.listeners[key] == nil {
+		h.listeners[key] = map[chan bambuHeard]struct{}{}
+	}
+	h.listeners[key][ch] = struct{}{}
+	h.mu.Unlock()
+	return ch, func() {
+		h.mu.Lock()
+		delete(h.listeners[key], ch)
+		h.mu.Unlock()
+	}
+}
+
+func (h *statusHub) heard(from *monitor, r bambuHeard) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.monitors[from.cfg.Printer] != from {
+		return
+	}
+	for ch := range h.listeners[from.cfg.Printer] {
+		select {
+		case ch <- r:
+		default:
+			log.Printf("printer %s: a report listener fell behind; it missed a report", from.cfg.Printer)
+		}
+	}
 }
 
 type monitor struct {
 	cfg    *PrinterConfig
 	cancel context.CancelFunc
 	poke   chan struct{}
+	link   LinkState
+}
+
+type LinkState string
+
+const (
+	LinkConnecting LinkState = "connecting"
+	LinkOnline     LinkState = "online"
+	LinkRetrying   LinkState = "retrying"
+	LinkStopped    LinkState = "stopped"
+)
+
+var linkTransitions = map[LinkState]map[LinkState]bool{
+	LinkConnecting: {LinkOnline: true, LinkRetrying: true, LinkStopped: true},
+	LinkOnline:     {LinkRetrying: true, LinkStopped: true},
+	LinkRetrying:   {LinkConnecting: true, LinkStopped: true},
+	LinkStopped:    {},
+}
+
+func (h *statusHub) linkTo(mon *monitor, next LinkState) bool {
+	if mon.link == next {
+		return true
+	}
+	if !linkTransitions[mon.link][next] {
+		log.Printf("printer %s: illegal link transition %s -> %s", mon.cfg.Printer, mon.link, next)
+		return false
+	}
+	mon.link = next
+	return true
 }
 
 const pollInterval = 2 * time.Second
@@ -91,6 +169,7 @@ func (h *statusHub) reconcile() {
 	}
 	for key, mon := range h.monitors {
 		if want[key] != mon.cfg {
+			h.linkTo(mon, LinkStopped)
 			mon.cancel()
 			delete(h.monitors, key)
 			delete(h.status, key)
@@ -99,9 +178,9 @@ func (h *statusHub) reconcile() {
 	for key, p := range want {
 		if h.monitors[key] == nil {
 			ctx, cancel := context.WithCancel(context.Background())
-			mon := &monitor{cfg: p, cancel: cancel, poke: make(chan struct{}, 1)}
+			mon := &monitor{cfg: p, cancel: cancel, poke: make(chan struct{}, 1), link: LinkConnecting}
 			h.monitors[key] = mon
-			h.status[key] = PrinterStatus{Printer: key, State: "connecting", At: time.Now().UTC()}
+			h.status[key] = PrinterStatus{Printer: key, Link: LinkConnecting, State: "connecting", At: time.Now().UTC()}
 			go h.run(ctx, mon)
 		}
 	}
@@ -118,6 +197,10 @@ func (h *statusHub) set(from *monitor, st PrinterStatus) {
 		h.mu.Unlock()
 		return
 	}
+	if st.Online {
+		h.linkTo(from, LinkOnline)
+	}
+	st.Link = from.link
 	prev.At, st.At = time.Time{}, time.Time{}
 	a, _ := json.Marshal(prev)
 	b, _ := json.Marshal(st)
@@ -163,7 +246,7 @@ func (h *statusHub) run(ctx context.Context, mon *monitor) {
 			publish := func(st PrinterStatus) { h.set(mon, st) }
 			switch p.Kind {
 			case "bambu-lan":
-				err = monitorBambu(ctx, p, secret, publish)
+				err = monitorBambu(ctx, p, secret, publish, func(r bambuHeard) { h.heard(mon, r) })
 			case "flashforge":
 				err = pollFlashforge(ctx, p, publish, mon.poke)
 			default:
@@ -173,6 +256,9 @@ func (h *statusHub) run(ctx context.Context, mon *monitor) {
 		if ctx.Err() != nil {
 			return
 		}
+		h.mu.Lock()
+		h.linkTo(mon, LinkRetrying)
+		h.mu.Unlock()
 		h.set(mon, PrinterStatus{State: "offline", Detail: redact(fmt.Sprint(err), secret)})
 		if time.Since(began) > time.Minute {
 			backoff = 3 * time.Second
@@ -184,6 +270,12 @@ func (h *statusHub) run(ctx context.Context, mon *monitor) {
 		case <-time.After(backoff):
 		}
 		backoff = min(2*backoff, 30*time.Second)
+		h.mu.Lock()
+		moved := h.monitors[p.Printer] == mon && h.linkTo(mon, LinkConnecting)
+		h.mu.Unlock()
+		if moved {
+			h.set(mon, PrinterStatus{State: "connecting"})
+		}
 	}
 }
 
@@ -257,58 +349,6 @@ func (s *Server) snapshot() statusSnapshot {
 	return snap
 }
 
-func (s *Server) connectionEvents(w http.ResponseWriter, r *http.Request) {
-	controller := http.NewResponseController(w)
-	if _, ok := w.(http.Flusher); !ok {
-		fail(w, 500, "Live progress streaming isn't available in this connection.")
-		return
-	}
-	hub := s.sends.hub
-	defer hub.subscribe()()
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("X-Accel-Buffering", "no")
-	defer controller.SetWriteDeadline(time.Time{})
-	heartbeat := time.NewTicker(15 * time.Second)
-	defer heartbeat.Stop()
-	var last []byte
-	for {
-		hub.mu.Lock()
-		wake := hub.wake
-		hub.mu.Unlock()
-		snap := s.snapshot()
-		b, _ := json.Marshal(snap)
-		if err := controller.SetWriteDeadline(time.Now().Add(15 * time.Second)); err != nil {
-			return
-		}
-		if !bytes.Equal(b, last) {
-			if _, err := fmt.Fprintf(w, "event: state\ndata: %s\n\n", b); err != nil {
-				return
-			}
-			last = b
-		}
-		if err := controller.Flush(); err != nil {
-			return
-		}
-		var tick <-chan time.Time
-		for _, t := range snap.Transfers {
-			if t.active() {
-				tick = time.After(250 * time.Millisecond)
-			}
-		}
-		select {
-		case <-r.Context().Done():
-			return
-		case <-wake:
-		case <-tick:
-		case <-heartbeat.C:
-			if _, err := io.WriteString(w, ": keepalive\n\n"); err != nil {
-				return
-			}
-		}
-	}
-}
-
 type sendHistory struct {
 	path string
 	mu   sync.Mutex
@@ -345,13 +385,17 @@ func loadSendHistory(dir string) *sendHistory {
 	}
 	h.list = file.Sends
 	now := time.Now().UTC()
-	migrated := 0
+	migrated, renamed := 0, 0
 	for i := range h.list {
 		t := &h.list[i]
 		if t.active() {
 			t.Error, t.Finished = "The service restarted during this transfer; check the printer before sending again", &now
 			t.Outcome, t.Reason, t.Recovery = "failed", "interrupted", "Check the printer's screen before sending again."
 			t.to(TransferFailed)
+		}
+		if t.Outcome == "waiting_for_printer" {
+			t.Outcome = "unconfirmed"
+			renamed++
 		}
 		if t.Outcome == "" {
 			t.Outcome = recordedOutcome(*t)
@@ -388,6 +432,16 @@ func loadSendHistory(dir string) *sendHistory {
 			h.writeLocked()
 		}
 	}
+	if renamed > 0 {
+		if err := backupOnce(h.path+".pre-unconfirmed", b); err != nil {
+			log.Printf("warning: send history: cannot back up %s before migrating it: %v", h.path, err)
+			return h
+		}
+		if migrated == 0 {
+			h.writeLocked()
+		}
+		log.Printf("send history: renamed the outcome of %d unconfirmed sends from waiting_for_printer", renamed)
+	}
 	if migrated > 0 {
 		backup := h.path + ".pre-outcome"
 		if _, err := os.Stat(backup); errors.Is(err, os.ErrNotExist) {
@@ -409,7 +463,7 @@ func recordedOutcome(t Transfer) string {
 	case !t.Start:
 		return "uploaded"
 	case strings.Contains(t.Message, "did not confirm"):
-		return "waiting_for_printer"
+		return "unconfirmed"
 	}
 	return "printing"
 }
@@ -460,7 +514,7 @@ func (h *sendHistory) confirmStarted(st PrinterStatus) bool {
 		if t.Printer != st.Printer || !t.Start {
 			continue
 		}
-		if t.Outcome != "waiting_for_printer" || st.At.Before(t.Started) || sendStem(t.Filename) != sendStem(st.File) {
+		if t.Outcome != "unconfirmed" || st.At.Before(t.Started) || sendStem(t.Filename) != sendStem(st.File) {
 			return false
 		}
 		t.Outcome, t.Message = "printing", "Printing started; confirmed by the printer."
@@ -538,7 +592,7 @@ func (h *sendHistory) recent(age time.Duration) []Transfer {
 		latest[t.Printer] = t.ID
 	}
 	for _, t := range h.list {
-		if t.Finished != nil && (time.Since(*t.Finished) < age || latest[t.Printer] == t.ID && (t.Outcome == "waiting_for_printer" || t.Outcome == "printing")) {
+		if t.Finished != nil && (time.Since(*t.Finished) < age || latest[t.Printer] == t.ID && (t.Outcome == "unconfirmed" || t.Outcome == "printing")) {
 			out = append(out, t)
 		}
 	}

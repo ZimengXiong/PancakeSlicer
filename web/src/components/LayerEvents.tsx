@@ -6,6 +6,7 @@ import type { SliderTick } from './PreviewSliders';
 import { Modal, ModalBody, ModalFooter, ModalTitle } from './Modal';
 import { ActionMenu, type MenuEntry } from './Menu';
 import { SEP } from '../separator';
+import { slotFilaments } from '../profiles/slots';
 
 const COLOR: Record<LayerEvent['type'], string> = {
   pause: '#E67E22', custom: '#3A7BD5', template: '#8E44AD', colour: '#E53935', change: '#00AE42',
@@ -32,7 +33,7 @@ export function eventTicks(events: LayerEvent[], layers: LayerRec[]): SliderTick
 
 export function EventMenu({ anchor, z, layer, onClose, onJump }: { anchor: DOMRect; z: number; layer: number; onClose(): void; onJump?(): void }) {
   const events = useStore((s) => s.events);
-  const slots = useStore((s) => s.filamentSlots.length);
+  const slots = useStore((s) => slotFilaments(s).length);
   const template = useStore((s) => String(effectiveConfig(s, 'machine').template_custom_gcode ?? ''));
   const [custom, setCustom] = useState<string | null>(null);
   const here = events.filter((e) => sameZ(e.z, z));

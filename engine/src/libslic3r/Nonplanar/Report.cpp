@@ -23,7 +23,9 @@
 #include "libslic3r/ClipperUtils.hpp"
 #include "libslic3r/GCode/GCodeProcessor.hpp"
 #include "libslic3r/GCode/ClearanceRepair.hpp"
+#include "libslic3r/GCode/ClearanceVerifier.hpp"
 #include "libslic3r/I18N.hpp"
+#include "libslic3r/format.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Print.hpp"
 
@@ -31,12 +33,30 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <boost/format.hpp>
 #include <cmath>
 #include <iterator>
 #include <limits>
 
 namespace Slic3r::Nonplanar {
+
+namespace {
+std::vector<std::string> warning_messages(const std::vector<CodedWarning> &warnings)
+{
+    std::vector<std::string> out;
+    out.reserve(warnings.size());
+    for (const CodedWarning &warning : warnings)
+        out.push_back(warning.message);
+    return out;
+}
+
+std::string fallback_code(const std::string &limit)
+{
+    if (limit == "access" || limit == "hits")
+        return "head_strike";
+    return limit.empty() ? "no_curved_top" : limit;
+}
+}
+
 
 namespace {
 
@@ -196,7 +216,7 @@ NonplanarReport make_report(const Print &print, const GCodeProcessorResult &resu
             out.mode            = "smooth_morph";
             out.morph_hit_moves = hits;
             out.planar_limit    = "hits";
-            out.planar_reason   = "Smooth morph would make the print head bump the part in " + std::to_string(hits) + " moves";
+            out.planar_reason   = "Watch out — Smooth morph would bump the print head into the part in " + std::to_string(hits) + " moves.";
         }
         if (conformal_requested(*object)) {
             out.mode           = "conformal_layers";
@@ -231,7 +251,7 @@ NonplanarReport make_report(const Print &print, const GCodeProcessorResult &resu
             out.curved_tops = curved_tops_stats(*object);
             const auto *asked = object->model_object()->config.get().option<ConfigOptionFloat>("nonplanar_curved_max_angle");
             out.cap_requested = asked != nullptr ? asked->value : print.default_object_config().nonplanar_curved_max_angle.value;
-            out.curved_cone_tolerance = curved_tops_cone_tolerance(print);
+            out.curved_cone_tolerance = clearance_params(print.config(), print_clearance_mode(print), true).cone_tolerance;
             out.top_patches = out.curved_tops.kept;
             out.curved_top = out.curved_tops.footprint_mm2;
             for (const auto &surface : object->nonplanar_surfaces()) {
@@ -316,12 +336,14 @@ NonplanarReport make_report(const Print &print, const GCodeProcessorResult &resu
         out.curved_band  = object->curved_band();
         out.warnings     = object_warnings(*object, out);
         if (out.stepped_top > 0.1 * out.curved_top && out.stepped_top > 1.)
-            out.warnings.emplace_back((boost::format(_u8L("%1%: %2% mm² of the curved top steps between layers: its layers cannot thicken enough "
-                                                          "at this layer height to keep it on one layer. A lower layer height prints it as one surface.")) %
-                                       out.name % int(std::round(out.stepped_top)))
-                                          .str());
+            out.warnings.push_back({ { "conformal_stepped_top", warning_object(out.name), nlohmann::json{ { "area_mm2", std::round(out.stepped_top) } }.dump() },
+                                     Slic3r::format(_u8L("%1%: %2% mm² of the curved top steps between layers "
+                                                         "because they can't thicken enough at this layer height to "
+                                                         "stay on one layer. Try a smaller layer height to print it "
+                                                         "as one smooth surface!"),
+                                                    out.name, int(std::round(out.stepped_top))) });
         if (index == 0 && !head_warning.empty())
-            out.warnings.insert(out.warnings.begin(), head_warning);
+            out.warnings.insert(out.warnings.begin(), CodedWarning{ { "head_profile_fallback", {}, nlohmann::json{ { "head", report.head } }.dump() }, head_warning });
     }
     if (report.empty())
         return report;
@@ -378,7 +400,7 @@ std::string NonplanarReport::to_json(const std::map<size_t, std::string> &orient
         json        jo{ { "name", o.name }, { "mode", o.mode }, { "top_patches", o.top_patches }, { "other_patches", o.other_patches },
                         { "bands", o.bands }, { "curved_top_mm2", o.curved_top }, { "planar_top_mm2", o.planar_top }, { "stepped_top_mm2", o.stepped_top },
                         { "flat_top_mm2", o.flat_top }, { "curved_share", o.curved_share() }, { "support_free_mm2", o.support_free },
-                        { "orientation", note != orientation.end() ? note->second : o.orientation }, { "warnings", o.warnings } };
+                        { "orientation", note != orientation.end() ? note->second : o.orientation }, { "warnings", warning_messages(o.warnings) } };
         if (o.mode == "nonplanar_top") {
             jo["effective_cone_tolerance_mm"] = o.curved_cone_tolerance;
             jo["curved_surfaces_kept"] = o.curved_tops.kept;
@@ -388,7 +410,10 @@ std::string NonplanarReport::to_json(const std::map<size_t, std::string> &orient
             jo["curved_top_area_fraction"] = o.curved_tops.area_fraction;
             jo["curved_top_area_denominator_mm2"] = o.curved_tops.upward_area_mm2;
             jo["curved_top_area_denominator"] = "sum of XY-projected areas of all upward-facing mesh facets";
-            if (!o.curved_tops.planar_fallback_reason.empty()) jo["planar_fallback_reason"] = o.curved_tops.planar_fallback_reason;
+            if (!o.curved_tops.planar_fallback_reason.empty()) {
+                jo["planar_fallback_reason"] = o.curved_tops.planar_fallback_reason;
+                jo["planar_fallback_code"]   = fallback_code(o.curved_tops.planar_limit);
+            }
             jo["curved_max_angle_deg"] = o.curved_tops.max_angle_deg;
             jo["cap_requested"]        = o.cap_requested;
             jo["cap_used"]             = o.curved_tops.max_angle_deg;
@@ -404,11 +429,13 @@ std::string NonplanarReport::to_json(const std::map<size_t, std::string> &orient
             if (!o.planar_limit.empty()) {
                 jo["planar_limit"]           = o.planar_limit;
                 jo["planar_fallback_reason"] = o.planar_reason;
+                jo["planar_fallback_code"]   = fallback_code(o.planar_limit);
             }
         }
         if (o.morph_hit_moves > 0) {
             jo["planar_limit"]           = o.planar_limit;
             jo["planar_fallback_reason"] = o.planar_reason;
+            jo["planar_fallback_code"]   = fallback_code(o.planar_limit);
             jo["hit_moves"]              = o.morph_hit_moves;
         }
         if (o.slant) {
@@ -426,6 +453,7 @@ std::string NonplanarReport::to_json(const std::map<size_t, std::string> &orient
             if (!c.planar_limit.empty()) {
                 jo["planar_limit"]           = c.planar_limit;
                 jo["planar_fallback_reason"] = c.reason;
+                jo["planar_fallback_code"]   = fallback_code(c.planar_limit);
             }
         }
         if (!o.oneshot.empty()) {

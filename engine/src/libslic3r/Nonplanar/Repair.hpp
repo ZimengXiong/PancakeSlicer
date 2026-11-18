@@ -29,8 +29,6 @@ struct RepairHints
     std::vector<Disc>       uniform_beads;
     std::vector<Disc>       upright;
     std::vector<Disc>       planar;
-    std::set<int>           banded_surfaces;
-    double                  band_height = 0.;
     std::vector<Disc>       ordered_roads;
     std::map<int, int>      ordered_road_passes;
     std::set<int>           ordered_surfaces;

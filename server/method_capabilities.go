@@ -22,7 +22,6 @@ type methodRules struct {
 		ID        string `json:"id"`
 		Target    string `json:"target"`
 		Hardware  string `json:"hardware"`
-		Feature   string `json:"feature"`
 		Readiness string `json:"readiness"`
 		Disabled  string `json:"disabled"`
 	} `json:"methods"`
@@ -81,15 +80,6 @@ func (s *Server) methodDecisions(printer map[string]any) []methodDecision {
 	axes := methodTable.KinematicsAxes[fmt.Sprint(printer["nonplanar_kinematics"])]
 	known := printer["printer_technology"] == "FFF" && axes > 0 && positiveNozzles(printer["nozzle_diameter"])
 	rotary := known && printer["nonplanar_kinematics"] != "none" && axes >= 4
-	features := map[string]any{}
-	raw, _ := json.Marshal(s.cfg.Features)
-	json.Unmarshal(raw, &features)
-	var options map[string]struct {
-		Values []string `json:"enum_values"`
-	}
-	if s.cfg.Features.DumpOptions && s.cfg.Options != nil {
-		json.Unmarshal(s.cfg.Options.plain, &options)
-	}
 	artifact := map[string]any{}
 	if h := s.jobs.cfg.NativeHealth; h != nil {
 		artifact, _ = h.snapshot(s.cfg.Tool)["artifact_manifest"].(map[string]any)
@@ -119,9 +109,6 @@ func (s *Server) methodDecisions(printer map[string]any) []methodDecision {
 				d.Recovery = "repair_printer"
 			case rule.Hardware == "rotary" && !rotary:
 				d.Reason = "This method requires configured rotary axes."
-			case !s.cfg.Features.DumpOptions || rule.Target == "mode" && !slices.Contains(options["nonplanar_mode"].Values, rule.ID) || rule.Feature != "" && features[rule.Feature] != true:
-				d.Reason = "The current engine does not support this method."
-				d.Recovery = "update_engine"
 			case rule.Readiness != "" && (!ready || !af[rule.Readiness] || rule.Target == "wave" && !slices.Contains(waveModes, rule.ID)):
 				d.Reason = "This method is not ready in the current engine bundle."
 				d.Recovery = "update_engine"
@@ -163,7 +150,7 @@ func methodSelection(config map[string]any, decisions []methodDecision) *methodP
 		if id == nil || id == "off" {
 			continue
 		}
-		reason, recovery := "The saved method is not supported by this printer and engine.", "change_method"
+		reason, recovery := "Hmm, the saved slicing method isn't supported by this printer and engine.", "change_method"
 		supported := false
 		for _, d := range decisions {
 			if d.Target == selection[0] && d.ID == id {
@@ -180,17 +167,17 @@ func methodSelection(config map[string]any, decisions []methodDecision) *methodP
 	}
 	return nil
 }
-func (s *Server) validateJobMethods(j *Job, req JobRequest, vendor *VendorPresets) *methodProblem {
+func (s *Server) validateJobMethods(j *Job, req JobRequest, presets *jobPresets) *methodProblem {
 	if req.Output == "3mf" || overlayOutput(req.Output) || req.Orient || req.Arrange || req.WipeTower || req.Explode || req.Cut != "" || req.MeshOp != "" {
 		return nil
 	}
-	printer := decodeMethodConfig(vendor.machines[req.Printer].Config)
-	config := decodeMethodConfig(vendor.processes[req.Process].Config)
+	printer := decodeMethodConfig(presets.machine.Config)
+	config := decodeMethodConfig(presets.process.Config)
 	var projectScopes []map[string]any
 	if !req.Plate && len(req.Files) > 0 && strings.EqualFold(filepath.Ext(req.Files[0]), ".3mf") {
 		saved, scopes, err := savedProjectMethods(filepath.Join(j.Dir, "input", req.Files[0]))
 		if err != nil {
-			return &methodProblem{Message: "The saved project's slicing methods could not be read. Repair or reimport the project before slicing.", Code: "mode_incompatible", Recovery: "change_method"}
+			return &methodProblem{Message: "Oops! Couldn't read the saved project's slicing methods — repair or reimport the project before slicing.", Code: "mode_incompatible", Recovery: "change_method"}
 		}
 		for key, value := range saved {
 			config[key] = value

@@ -122,14 +122,14 @@ func (h *cameraHub) subscribe(p *PrinterConfig, camera cameraSource) (<-chan cam
 func (s *Server) printerCameras(w http.ResponseWriter, r *http.Request) {
 	p := s.sends.printer(r.PathValue("printer"))
 	if p == nil {
-		fail(w, 404, "This printer doesn't have a network connection set up yet.")
+		fail(w, 404, "printer_doesnt_have_network")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 	cameras, err := cameraSources(ctx, p)
 	if err != nil {
-		fail(w, 502, "Couldn't read the camera settings for this printer.")
+		fail(w, 502, "couldnt_read_camera_settings")
 		return
 	}
 	writeJSON(w, 200, map[string]any{"cameras": cameras})
@@ -137,14 +137,14 @@ func (s *Server) printerCameras(w http.ResponseWriter, r *http.Request) {
 func (s *Server) printerCamera(w http.ResponseWriter, r *http.Request) {
 	p := s.sends.printer(r.PathValue("printer"))
 	if p == nil {
-		fail(w, 404, "This printer doesn't have a network connection set up yet.")
+		fail(w, 404, "printer_doesnt_have_network")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	sources, err := cameraSources(ctx, p)
 	cancel()
 	if err != nil {
-		fail(w, 502, "Couldn't read the camera settings for this printer.")
+		fail(w, 502, "couldnt_read_camera_settings")
 		return
 	}
 	var camera *cameraSource
@@ -154,7 +154,7 @@ func (s *Server) printerCamera(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if camera == nil {
-		fail(w, 404, "No camera is set up for this printer.")
+		fail(w, 404, "no_camera_set_up")
 		return
 	}
 	if r.Method == "HEAD" {
@@ -180,13 +180,13 @@ func (s *Server) printerCamera(w http.ResponseWriter, r *http.Request) {
 		case packet, ok = <-packets:
 		case <-time.After(30 * time.Second):
 			if first {
-				fail(w, 504, "Didn't receive a video frame from the camera—check your access code and make sure LAN Liveview is enabled on the printer.")
+				fail(w, 504, "didnt_receive_video_frame")
 			}
 			return
 		}
 		if !ok || packet.err != nil {
 			if first {
-				fail(w, 502, "Camera unavailable—check your camera settings, access code, and LAN Liveview toggle on the printer.")
+				fail(w, 502, "camera_unavailable_check_camera")
 			}
 			return
 		}

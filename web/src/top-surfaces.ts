@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
+import { joinParts } from './separator';
 import * as THREE from 'three';
 import { mutation } from './api/access';
-import { toolFeatures } from './api/client';
 import { jobRequest } from './actions';
 import { withBlobs } from './api/blobs';
 import { bakeStl, instanceMatrix } from './plater/geometry';
@@ -168,7 +168,7 @@ export const selectedSurface = () => selected;
 export function surfaceText(f: Surface): string[] {
   const area = f.area < 10 ? f.area.toFixed(1) : String(Math.round(f.area));
   const share = f.share !== undefined && f.share > 0 && f.share < 0.995 ? ` (${Math.round(f.share * 100)}% curved)` : '';
-  return [f.line + share, ...(f.why ? [f.why] : []), `Max slope ${Math.round(f.slope)}° · ${f.span.toFixed(1)} mm tall · ${area} mm²`];
+  return [f.line + share, ...(f.why ? [f.why] : []), joinParts([`Max slope ${Math.round(f.slope)}°`, `${f.span.toFixed(1)} mm tall`, `${area} mm²`])];
 }
 export const headIgnoresDuct = () => ductIgnorable;
 
@@ -343,7 +343,7 @@ async function request() {
   loading = true;
   emit();
   try {
-    if (toolFeatures.plan_tops === true && !s.project) {
+    if (!s.project) {
       source = 'plan';
       const built = await planned(s, objects, mine);
       if (mine !== generation) return built.forEach((b) => b.geometry.dispose());
@@ -382,7 +382,7 @@ async function request() {
     if (curvedMoves) applyOutcome();
   } catch (e) {
     if (mine !== generation) return;
-    toast(`Top surfaces: ${e instanceof Error ? e.message : e}`, null, 5000, 'warning');
+    toast('top_surfaces', { detail: e instanceof Error ? e.message : e });
     lastKey = '';
   } finally {
     if (mine === generation) {

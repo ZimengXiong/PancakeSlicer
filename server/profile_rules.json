@@ -1,6 +1,8 @@
 {
   "comment": "Profile rules shared by the service (profile_resolve.go) and the client resolver (web/src/profiles). One source: edit here only. Spec: profile_spec.json.",
   "schema": 1,
+  "revision": 1,
+  "revisionAbout": "Raise revision on every change: a library saved under a higher revision was saved by a newer PancakeSlicer, which an older one reports when it opens it.",
   "bases": {
     "nozzle": "factor x nozzle diameter",
     "layer": "factor x layer height",
@@ -25,14 +27,16 @@
     { "key": "support_bottom_z_distance", "basis": "layer", "factor": 1 }
   ],
   "notScalable": ["top_shell_layers", "bottom_shell_layers"],
-  "printDefaultKeys": [
-    "outer_wall_speed", "inner_wall_speed", "sparse_infill_speed", "internal_solid_infill_speed", "top_surface_speed",
-    "initial_layer_speed", "initial_layer_infill_speed", "travel_speed",
-    "default_acceleration", "outer_wall_acceleration", "inner_wall_acceleration", "top_surface_acceleration", "travel_acceleration", "initial_layer_acceleration",
-    "elefant_foot_compensation", "enable_arc_fitting", "ironing_flow",
-    "prime_tower_width", "prime_tower_brim_width", "z_direction_outwall_speed_continuous", "monotonic_travel_into_wall"
-  ],
-  "sourceOrder": ["catalog", "printer", "print", "scale", "printer override", "filament", "project"],
+  "sourceOrder": ["vendor", "printer", "library", "scale", "printer override", "calibration", "project"],
+  "calibrationPrefixes": ["filament_", "nozzle_temperature", "hot_plate_temp", "cool_plate_temp", "eng_plate_temp", "textured_plate_temp", "supertack_plate_temp", "fan_", "overhang_fan", "close_fan", "slow_down", "additional_cooling", "reduce_fan", "activate_air_filtration", "during_print_exhaust", "complete_print_exhaust", "temperature_vitrification", "required_nozzle_HRC", "chamber_temperature", "pressure_advance", "enable_pressure_advance", "adaptive_pressure_advance", "full_fan_speed_layer", "cool_special", "dont_slow_down", "textured_cool_plate_temp"],
+  "calibrationKeys": ["pressure_advance", "enable_pressure_advance", "filament_max_volumetric_speed", "filament_flow_ratio",
+    "filament_retraction_length", "filament_retraction_speed", "filament_deretraction_speed", "filament_z_hop", "filament_wipe",
+    "filament_retract_before_wipe", "filament_wipe_distance", "filament_retraction_minimum_travel", "temperature_offset",
+    "close_additional_fan_first_x_layers",
+    "first_x_layer_fan_speed",
+    "long_retractions_when_ec",
+    "retraction_distances_when_ec",
+    "volumetric_speed_coefficients"],
   "speedFeatures": [
     {
       "key": "outer_wall_speed",

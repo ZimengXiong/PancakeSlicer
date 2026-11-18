@@ -1,4 +1,6 @@
 #include "AutoMode.hpp"
+#include <nlohmann/json.hpp>
+#include "libslic3r/Nonplanar/Research.hpp"
 
 #include "ConformalIroning.hpp"
 #include "ConformalShells.hpp"
@@ -438,7 +440,7 @@ void choose_patch_settings(const PrintObject &object, const HeadEnvelope &head, 
     const double shell_slope = steep_node.empty() || count_slopes.empty() ? a.slope90 : percentile(count_slopes, 0.9);
     a.shells = std::clamp(int(std::ceil(T / (h_c * std::cos(shell_slope)) - 0.15)), AutoMinShells, MaxShells);
     a.shells = std::max(AutoMinShells, std::min({ a.shells, n_depth, planar_top_layers(config, h_c) }));
-    if (const char *v = std::getenv("NP_CT1_SHELLS"); v != nullptr && std::atoi(v) > 0)
+    if (const char *v = research_switch("NP_CT1_SHELLS"); v != nullptr && std::atoi(v) > 0)
         a.shells = std::clamp(std::atoi(v), 1, MaxShells);
     patch.shells = a.shells;
     if (!is_auto(object.config()))
@@ -621,19 +623,19 @@ std::string describe_top_patch(const PrintObject &object, const ConformalPatch &
         out += format(_u8L("Single pass over %1$.2f mm of height change."), patch.z_max - patch.z_min) + "\n";
     const bool ironed = !patch.ironing.entities.empty();
     if (ironed)
-        out += patch.automatic ? _u8L("Ironed: gentle enough for the flat nozzle tip.") : _u8L("Ironed (enabled in print settings).");
+        out += patch.automatic ? _u8L("Ironed! Gentle enough for the flat nozzle tip.") : _u8L("Ironed (enabled in print settings).");
     else if (d.requested)
-        out += d.flexible ? _u8L("Skipped ironing: flexible filament.") : _u8L("Skipped ironing: area is too narrow for ironing passes.");
+        out += d.flexible ? _u8L("Skipped ironing — flexible filament doesn't work with it.") : _u8L("Skipped ironing — this spot is too narrow for ironing passes.");
     else if (patch.automatic && d.region_irons)
-        out += _u8L("Skipped ironing: curve is too steep for the flat nozzle tip.");
+        out += _u8L("Skipped ironing — the curve is a bit too steep for the flat nozzle tip.");
     else
-        out += _u8L("Skipped ironing: turned off in print settings.");
+        out += _u8L("Skipped ironing (it's turned off in print settings).");
     return out;
 }
 
-std::vector<std::string> object_warnings(const PrintObject &object, const ReportObject &report)
+std::vector<CodedWarning> object_warnings(const PrintObject &object, const ReportObject &report)
 {
-    std::vector<std::string> warnings;
+    std::vector<CodedWarning> warnings;
     if (report.planar_top > 1. && report.curved_share() < 0.9) {
         std::map<std::string, double> by_reason;
         for (const PatchDiagnostics &diag : object.conformal().diagnostics)
@@ -644,9 +646,12 @@ std::vector<std::string> object_warnings(const PrintObject &object, const Report
                                            [](const auto &a, const auto &b) { return a.second < b.second; });
         char buf[64];
         std::snprintf(buf, sizeof(buf), "%.0f %% (%.0f mm²)", 100. * (1. - report.curved_share()), report.planar_top);
-        warnings.emplace_back((boost::format(_u8L("%1%: %2% of the curved top is printing as flat layers (mostly because %3%).")) % report.name % buf %
-                               (main == by_reason.end() ? std::string("-") : I18N::translate(fallback_reason_text(main->first))))
-                                  .str());
+        warnings.push_back({ { "curved_top_flat_share", warning_object(report.name),
+                               nlohmann::json{ { "percent", std::round(100. * (1. - report.curved_share())) }, { "area_mm2", std::round(report.planar_top) },
+                                               { "reason", main == by_reason.end() ? std::string() : main->first } }.dump() },
+                             (boost::format(_u8L("%1%: %2% of the curved top is printing as flat layers (mostly because %3%).")) % report.name % buf %
+                              (main == by_reason.end() ? std::string("-") : I18N::translate(fallback_reason_text(main->first))))
+                                 .str() });
     }
     return warnings;
 }

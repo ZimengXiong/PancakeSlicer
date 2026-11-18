@@ -14,7 +14,7 @@ export function diffRows(type: PresetType, configs: Config[], all = false): Diff
   const rows: DiffRow[] = [];
   const seen = new Set<string>();
   const differs = (k: string) => new Set(configs.map((c) => {
-    const v = c[k] ?? (OPTIONS[k]?.default as ConfigValue | undefined);
+    const v = c[k];
     return v === undefined ? '' : toolValue(k, normalizeConfigValue(k, v));
   })).size > 1;
   const values = (k: string) => configs.map((c) => c[k]);

@@ -7,9 +7,8 @@ import filamentUrl from './tabs/filament.json?url&no-inline';
 import printerUrl from './tabs/printer.json?url&no-inline';
 import { setOptionTypes } from './config-values';
 import { normalizeOptions } from './option-inventory';
-import { catalogWorker, onWorkerFailure, workerId } from './api/worker';
-import type { CatalogIn, CatalogOut } from './api/catalog.worker';
-import { engineCapabilities } from './api/health';
+import { settingsWorker, onWorkerFailure, workerId } from './api/worker';
+import type { SettingsIn, SettingsOut } from './api/settings.worker';
 
 export type OptionMode = 'simple' | 'advanced' | 'develop' | 'developer';
 
@@ -35,6 +34,7 @@ export interface OptionDef {
   gui_type?: string;
   multiline?: boolean;
   full_width?: boolean;
+  records?: ('printer' | 'filament' | 'print')[];
 }
 
 export interface TabLine {
@@ -98,15 +98,15 @@ export function loadTab(tab: TabDesc['tab']): Promise<void> {
   const cached = pending.get(tab);
   if (cached) return cached;
   const mock = new URLSearchParams(location.search).has('mock');
-  const promise = (mock ? Promise.resolve(null) : engineCapabilities()).then((engine) => new Promise<void>((resolve, reject) => {
-    const worker = catalogWorker();
+  const promise = new Promise<void>((resolve, reject) => {
+    const worker = settingsWorker();
     const id = workerId();
     const cleanup = () => {
       worker.removeEventListener('message', on);
       unsubscribe();
     };
     const fail = (error: Error) => { cleanup(); reject(error); };
-    const on = (e: MessageEvent<CatalogOut>) => {
+    const on = (e: MessageEvent<SettingsOut>) => {
       if (e.data.id !== id) return;
       if (e.data.type === 'settings') {
         if (Object.keys(e.data.options).length) {
@@ -128,8 +128,8 @@ export function loadTab(tab: TabDesc['tab']): Promise<void> {
     };
     const unsubscribe = onWorkerFailure(fail);
     worker.addEventListener('message', on);
-    worker.postMessage({ id, type: 'settings', engine, optionsUrl: new URL(optionsUrl, location.href).href, tabUrl: new URL(URLs[tab], location.href).href } satisfies CatalogIn);
-  })).catch((error) => { pending.delete(tab); throw error; });
+    worker.postMessage({ id, type: 'settings', native: !mock, optionsUrl: new URL(optionsUrl, location.href).href, tabUrl: new URL(URLs[tab], location.href).href } satisfies SettingsIn);
+  }).catch((error) => { pending.delete(tab); throw error; });
   pending.set(tab, promise);
   return promise;
 }
@@ -159,8 +159,13 @@ export function splitKey(k: string): [string, number] {
 const MODE_RANK: Record<OptionMode, number> = { simple: 0, advanced: 1, develop: 2, developer: 3 };
 export const modeVisible = (opt: OptionMode, ui: OptionMode) => MODE_RANK[opt] <= MODE_RANK[ui];
 
-const HIDDEN = /print_host|printhost|printer_agent|host_type|api_key|bbl_use_printhost|upload|cloud|device|octoprint|_plugin_config_overrides/;
+const HIDDEN = /^(default_)?filament_colour$|print_host|printhost|printer_agent|host_type|api_key|bbl_use_printhost|upload|cloud|device|octoprint|_plugin_config_overrides/;
 const REMOVED_KEYS = new Set(removed);
+const RECORD_OF = { machine: 'printer', filament: 'filament', process: 'print' } as const;
+export const profileHolds = (type: 'machine' | 'filament' | 'process', key: string) => {
+  const records = OPTIONS[key]?.records;
+  return records ? records.includes(RECORD_OF[type]) : !!OPTIONS[key];
+};
 export const isHidden = (key: string) => REMOVED_KEYS.has(key) || HIDDEN.test(key);
 
 export const DESKTOP_ONLY = new Set(['post_process', 'slicing_pipeline_plugin']);

@@ -164,7 +164,7 @@ func sendElegoo(ctx context.Context, u *upload) (string, error) {
 				req.Header.Set("X-Token", elegooToken(u.secret))
 			}
 		} else {
-			req, err = multipartFile(ctx, base.JoinPath("uploadFile/upload").String(), "File", u.filename, n, chunk, [][2]string{
+			req, err = multipartUpload(ctx, base.JoinPath("uploadFile/upload").String(), "File", u.filename, n, chunk, [][2]string{
 				{"Check", "1"}, {"S-File-MD5", digest}, {"Offset", strconv.FormatInt(offset, 10)}, {"Uuid", id}, {"TotalSize", strconv.FormatInt(u.size, 10)}})
 		}
 		if err != nil {

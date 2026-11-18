@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/OrcaSlicer/OrcaSlicer/server/resolve"
 )
 
 type meshPoint [3]float64
@@ -306,7 +308,13 @@ func projectBounds(file string, includeNonPrintable ...bool) ([]namedBounds, err
 	return out, nil
 }
 
-func validatePlateBounds(dir string, req JobRequest, machine *Preset, rawPlate string) error {
+type outsideBedError struct{ name, extent string }
+
+func (e outsideBedError) Error() string {
+	return newFailure("outside_build_plate", e.name, e.extent).Error
+}
+
+func validatePlateBounds(dir string, req JobRequest, machine *resolve.Preset, rawPlate string) error {
 	area := stringList(machine.Config["printable_area"])
 	if raw := stringValue(machine.Config["printable_area"]); raw != "" {
 		area = strings.Split(raw, ",")
@@ -340,7 +348,7 @@ func validatePlateBounds(dir string, req JobRequest, machine *Preset, rawPlate s
 		}
 		const tolerance = 1e-3
 		if b.min[0] < bed.min[0]-tolerance || b.min[1] < bed.min[1]-tolerance || b.max[0] > bed.max[0]+tolerance || b.max[1] > bed.max[1]+tolerance {
-			return fmt.Errorf("%s: Model extends outside the build volume:\n%s\nMove the model fully onto the print bed and make sure it fits within the max print height.\n(Model XY [%.3f, %.3f]–[%.3f, %.3f], printable area [%.3f, %.3f]–[%.3f, %.3f])", name, name, b.min[0], b.min[1], b.max[0], b.max[1], bed.min[0], bed.min[1], bed.max[0], bed.max[1])
+			return outsideBedError{name, fmt.Sprintf("Model XY [%.3f, %.3f]–[%.3f, %.3f], printable area [%.3f, %.3f]–[%.3f, %.3f]", b.min[0], b.min[1], b.max[0], b.max[1], bed.min[0], bed.min[1], bed.max[0], bed.max[1])}
 		}
 		return nil
 	}

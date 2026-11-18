@@ -1,11 +1,8 @@
 import type { ConfigValue } from './api/types';
 import type { OptionDef, OptionMode } from './options';
-import type { EngineCapabilities } from './api/health';
 import { normalizeConfigValue, setOptionTypes, unescapeConfigString, vectorType } from './config-values';
 import { hints } from 'virtual:option-hints';
 
-let nativePresets = false;
-export const nativePresetCatalog = () => nativePresets;
 
 const MODES: Record<string, OptionMode> = {
   Simple: 'simple', Advanced: 'advanced', Expert: 'develop', Develop: 'developer',
@@ -71,9 +68,7 @@ export interface RuntimeOptions {
   tooltips: string | null;
 }
 
-export async function loadRuntimeOptions(url: string, engine: EngineCapabilities | null, cached?: RuntimeOptions): Promise<RuntimeOptions> {
-  const native = engine?.options === true;
-  nativePresets = engine?.presets === true;
+export async function loadRuntimeOptions(url: string, native: boolean, cached?: RuntimeOptions): Promise<RuntimeOptions> {
   let etag: string | null = null, tooltips: string | null = null;
   let selected: Record<string, Metadata> | null;
   if (native) {

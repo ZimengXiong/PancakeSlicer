@@ -1,0 +1,166 @@
+name: Release platform
+
+# One target's payload: stage and qualify its engine against the shared Linux reference, build its installers
+# and, on Linux, build and test its Docker image. Nothing here is public: installers attach to the draft
+# release and images push only to a per-commit tag; release.yml's gate job makes the release public.
+on:
+  workflow_call:
+    inputs:
+      target: {type: string, required: true}
+      os: {type: string, required: true}
+      arch: {type: string, required: true}
+      runner: {type: string, required: true}
+      tag: {type: string, required: true}
+      publish: {type: boolean, required: true}
+    secrets:
+      DOCKERHUB_USERNAME: {required: false}
+      DOCKERHUB_TOKEN: {required: false}
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  TAG: ${{ inputs.tag }}
+  PUBLISH: ${{ inputs.publish }}
+  CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+  PYTHONUTF8: '1'
+
+jobs:
+  platform:
+    name: ${{ inputs.target }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '26'
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            desktop/package-lock.json
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.2'
+          cache-dependency-path: server/go.sum
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: engine/scripts/qualification/requirements.txt
+      - run: python -m pip install -r engine/scripts/qualification/requirements.txt
+      - name: Install runtime libraries
+        if: inputs.os == 'linux'
+        run: |
+          .github/scripts/build/apt-install.sh patchelf rpm fakeroot libcurl4-openssl-dev libssl-dev libgl-dev libdbus-1-dev \
+            libfontconfig1-dev libfreetype-dev libx11-dev libudev-dev libva-dev libjpeg-turbo8-dev liblzma-dev libxkbcommon-dev \
+            libwayland-dev libegl-dev
+      - name: Check Rosetta
+        if: inputs.target == 'mac-x64'
+        run: arch -x86_64 /usr/bin/true || sudo softwareupdate --install-rosetta --agree-to-license
+      - name: Set up MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Name the prebuilt assets
+        id: keys
+        run: .github/scripts/build/keys.sh ${{ inputs.target }} ${{ inputs.os }}
+      - name: Fetch the engine, its dependencies and the reference
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/build/prebuilt.sh fetch "${{ steps.keys.outputs.engine }}" build-native/tool
+          .github/scripts/build/prebuilt.sh fetch "${{ steps.keys.outputs.deps }}" engine/deps/build
+          .github/scripts/build/prebuilt.sh fetch "${{ steps.keys.outputs.reference }}" desktop/build/reference
+      - name: Build web UI and desktop shell dependencies
+        run: |
+          npm ci --prefix web
+          npm ci --prefix desktop
+          if [ "$PUBLISH" = true ]; then
+            npm pkg set version="${TAG#v}" --prefix desktop
+            npm pkg set version="${TAG#v}" --prefix web
+          fi
+          npm run build --prefix web
+      - name: Bundle engine shared libraries
+        if: inputs.os == 'linux'
+        run: |
+          mkdir -p build-native/tool/lib
+          ldd build-native/tool/nonplanar_slice_tool | awk '/=> \// {print $3}' | while read l; do
+            case "$(basename "$l")" in libc.so*|libm.so*|libpthread.so*|libdl.so*|librt.so*|ld-linux*) ;; *) cp -L "$l" build-native/tool/lib/ ;; esac
+          done
+          for l in build-native/tool/lib/*; do patchelf --set-rpath '$ORIGIN' "$l"; done
+          patchelf --set-rpath '$ORIGIN/lib' build-native/tool/nonplanar_slice_tool
+      - name: Qualify and stage the payload
+        run: |
+          suffix=''; [ "${{ inputs.os }}" = win ] && suffix=.exe
+          image=(); [ "${{ inputs.os }}" = linux ] && image=(--image "pancakeslicer-check:${GITHUB_SHA::10}")
+          python desktop/scripts/stage-ci.py --os ${{ inputs.os }} --arch ${{ inputs.arch }} \
+            --tool "build-native/tool/nonplanar_slice_tool${suffix}" --reference desktop/build/reference \
+            --engine-source "${{ steps.keys.outputs.source }}" "${image[@]}"
+      - name: Package installers
+        run: |
+          cp desktop/icon-1024.png desktop/build/icon.png
+          case "${{ inputs.os }}" in
+            linux)
+              cp -a build-native/tool/lib desktop/build/engine-${{ inputs.target }}/lib
+              chmod -R a+rX desktop/build/engine-${{ inputs.target }}/lib
+              npm run dist:${{ inputs.target }} --prefix desktop ;;
+            mac)
+              sudo sysctl -w kern.maxfiles=524288 kern.maxfilesperproc=262144
+              ulimit -n 262144
+              if [ "${{ inputs.target }}" = mac-x64 ]; then npm run dist:mac-x64 --prefix desktop; else npm run dist:mac --prefix desktop; fi ;;
+            win) npm run dist:win --prefix desktop ;;
+          esac
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: PancakeSlicer-${{ inputs.target }}
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            desktop/dist/*.AppImage
+            desktop/dist/*.deb
+            desktop/dist/*.tar.gz
+            desktop/dist/*.dmg
+            desktop/dist/*.exe
+            desktop/dist/*.zip
+            desktop/build/PancakeSlicer-*-qualification.zip
+      - name: Attach installers to the draft release
+        if: env.PUBLISH == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/build/attach.sh desktop/dist/*.AppImage desktop/dist/*.deb desktop/dist/*.tar.gz \
+            desktop/dist/*.dmg desktop/dist/*.exe desktop/dist/*.zip desktop/build/PancakeSlicer-*-qualification.zip
+      - name: Build and test the Docker image
+        if: inputs.os == 'linux'
+        run: |
+          engine=engine-${{ inputs.target }}
+          git archive --format=tar.gz -o desktop/build/$engine/source.tar.gz HEAD
+          chmod 0644 desktop/build/$engine/source.tar.gz
+          printf '**\n!%s/\n!%s/**\n!web/\n!web/**\n' $engine $engine > desktop/build/.dockerignore
+          docker build --file deploy/Dockerfile --build-arg ENGINE=$engine --build-arg VERSION="${TAG#v}" --build-arg REVISION="$GITHUB_SHA" \
+            --build-arg SOURCE_SHA256="$(sha256sum desktop/build/$engine/source.tar.gz | cut -d' ' -f1)" \
+            --tag pancakeslicer:ci desktop/build
+          docker run -d --name test -p 6868:6868 pancakeslicer:ci
+          for i in $(seq 30); do curl -fsS http://127.0.0.1:6868/api/healthz && break; sleep 2; done
+          sh deploy/test.sh http://127.0.0.1:6868
+          docker rm -f test
+      - name: Push the Docker image to its commit tag
+        if: inputs.os == 'linux' && env.PUBLISH == 'true'
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          tag="sha-${GITHUB_SHA::10}-${{ inputs.arch == 'x64' && 'amd64' || inputs.arch }}"
+          echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+          for repo in ghcr.io/zimengxiong/pancakeslicer docker.io/zimengxiong/pancakeslicer; do
+            docker tag pancakeslicer:ci "$repo:$tag"; docker push "$repo:$tag"
+          done

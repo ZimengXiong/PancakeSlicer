@@ -60,7 +60,7 @@
 :where(.orca-parity) .objects-panel { --op-w: clamp(260px, 34cqw, 340px); position: absolute; z-index: 6; top: var(--cv-band); left: var(--cv-inset); display: flex; flex-direction: column;
   max-width: var(--op-w); max-height: calc(100% - 56px - 200px); background: var(--raised); border: 1px solid var(--line); border-radius: var(--r-3); box-shadow: var(--shadow-pop); color: var(--ink); }
 :where(.orca-parity) .objects-panel[data-open] { width: var(--op-w); }
-:where(.orca-parity) .op-head { flex: none; display: flex; align-items: center; gap: var(--s-3); width: 100%; min-height: var(--h-compact); padding: var(--s-2) var(--s-3) var(--s-2) var(--s-4);
+:where(.orca-parity) .op-head { flex: none; display: flex; align-items: center; gap: var(--s-3); width: 100%; min-height: var(--h-compact); padding: var(--s-2) var(--s-4);
   border: 0; border-radius: inherit; background: none; color: var(--ink); font: var(--t-title); text-align: left; cursor: pointer; }
 :where(.orca-parity) .op-head:hover { background: var(--hover); }
 :where(.orca-parity) .objects-panel[data-open] .op-head > :last-child { margin-left: auto; }
@@ -68,7 +68,8 @@
 :where(.orca-parity) .op-body { min-height: 0; overflow: auto; padding: 0 var(--s-2) var(--s-2); scrollbar-width: none; overscroll-behavior: contain; }
 :where(.orca-parity) .op-body::-webkit-scrollbar { display: none; }
 :where(.orca-parity) .op-body .object-list { max-height: none; min-height: 0; border: 0; }
-:where(.orca-parity) .op-body .ol-row { border-radius: var(--r-1); column-gap: var(--s-1); }
+:where(.orca-parity) .op-body .ol-row { border-radius: var(--r-1); column-gap: var(--s-1); padding-left: var(--s-3); }
+:where(.orca-parity) .op-body .ol-settings-head { padding-right: 0; }
 :where(.orca-parity) .op-body:not(:has(.ol-status:not(:empty))) .ol-status { display: none; }
 :where(.orca-parity) .op-body .search-bar { margin-bottom: var(--s-1); border-radius: var(--control-radius); }
 :where(.orca-parity) .canvas-area:has(.objects-panel) :is(.transform-anchor, .manip-panel) { top: calc(var(--cv-band) + 44px); }
@@ -88,9 +89,9 @@
 :where(.orca-parity) .canvas-toolbar .tb-tool-btn[aria-disabled=true], :where(.orca-parity) .canvas-toolbar .tb-tool-btn[aria-disabled=true]:hover { background: none; color: color-mix(in srgb, var(--ink) 50%, var(--panel)); cursor: not-allowed; }
 :where(.orca-parity) .canvas-more { display: inline-flex; align-items: center; gap: var(--s-2); color: var(--ink); font: var(--t-body); }
 :where(.orca-parity) .orca-menu[aria-label="Model tools"] .orca-menu-label { gap: var(--s-3); }
-:where(.orca-parity) .orca-menu[aria-label="Model tools"] .orca-menu-key:not(:empty) { min-width: 20px; margin-left: var(--s-4); padding: 1px 5px; border: 1px solid var(--line-strong); border-radius: var(--r-1); background: var(--sunken); color: inherit; font: var(--t-small); text-align: center; }
 :where(.orca-parity) .gizmo-readout { position: absolute; z-index: 30; pointer-events: none; padding: var(--s-1) var(--s-2); border: 1px solid var(--line); border-radius: var(--r-1); background: var(--panel); color: var(--ink); font: var(--t-num); font-variant-numeric: tabular-nums; white-space: nowrap; }
 :where(.orca-parity) .manip-axis { position: relative; display: block; min-width: 0; }
+:where(.orca-parity) .manip-cell { display: block; min-width: 0; }
 :where(.orca-parity) .manip-axis > .axis { position: absolute; left: 6px; top: 50%; transform: translateY(-50%); font: var(--t-label); font-size: 11px; pointer-events: none; }
 :where(.orca-parity) .manip-axis > .manip-num { padding-left: 18px; }
 

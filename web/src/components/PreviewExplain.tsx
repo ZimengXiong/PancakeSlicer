@@ -10,7 +10,7 @@ import { ERROR_BINS, useSurfaceGrid } from '../preview/surface-grid';
 import { plateResults, type PlateResult } from '../recommend';
 import { getState, printerPreset, useStore } from '../state/store';
 import { colorContext, jobColours, sharedRanges, type PreviewUi } from './PreviewView';
-import { Switch } from './fields';
+import { Check } from './Check';
 
 const TWO_SCENE_VERTICES = 8e6;
 const NOT_PART = new Set([12, 17, 18]);
@@ -49,14 +49,14 @@ export function ViewSwitches({ ui, setUi, hasSurfaceGrid }: { ui: PreviewUi; set
   const highlight = ui.view === 'nonplanar' && ui.nonplanar === 'curved';
   return <>
     <label className="lg-switch">
-      <Switch checked={highlight} onChange={(on) => {
+      <Check checked={highlight} onCheckedChange={(next) => { const on = next === true;
         if (on) previous.current = { view: ui.view, nonplanar: ui.nonplanar };
         setUi((u) => ({ ...u, ...(on ? { view: 'nonplanar', nonplanar: 'curved' } : previous.current) }));
       }} />Highlight curved
     </label>
     {hasSurfaceGrid && (
       <label className="lg-switch">
-        <Switch checked={ui.surface} onChange={(next) => setUi((u) => ({ ...u, surface: next }))} />Surface error
+        <Check checked={ui.surface} onCheckedChange={(next) => setUi((u) => ({ ...u, surface: next === true }))} />Surface error
       </label>
     )}
   </>;
@@ -116,7 +116,7 @@ export function ExplainLegend(props: {
       <div className="lg-section-title">Curved</div>
       {summary && <div className="np-summary-line" role="status">{summary}</div>}
       <div className="np-toggles">
-        <label className="lg-switch"><Switch checked={compare} onChange={(next) => setCompare(next)} />Compare with Standard</label>
+        <label className="lg-switch"><Check checked={compare} onCheckedChange={(next) => setCompare(next === true)} />Compare with Standard</label>
         <ViewSwitches ui={ui} setUi={setUi} hasSurfaceGrid={hasSurfaceGrid} />
       </div>
       </div>

@@ -67,7 +67,7 @@ func (m *JobManager) dispatchLocked() {
 		if j.queuePosition != i+1 {
 			j.queuePosition = i + 1
 			pos := i + 1
-			j.appendLocked(Event{Type: "queue", State: j.state, QueuePosition: &pos})
+			j.appendLocked(Event{Type: "queue", State: j.state.legacy(), LifecycleState: j.state, QueuePosition: &pos})
 			j.persistLocked()
 		}
 		j.mu.Unlock()

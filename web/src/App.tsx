@@ -7,19 +7,28 @@ import { isPaint, paintKeyTool, setPaintTool, togglePaint, type PaintKind } from
 import { toggleViewOption } from './plater/viewOptions';
 import { addInstance, arrangeAll, download, importFiles, newProject, openFileDialog, openProjectDialog, removeInstance, toolbarOperation, saveProject, toggleBoolean, toggleText } from './actions';
 import { setCut, toggleCut } from './plater/cut';
-import { CanvasToolbar, CutPanel, PaintPanel, SlantPanel, SliceNotification, Toast } from './components/CanvasOverlays';
 import { LoadingState } from './components/Notices';
-import { PreviewLoading } from './components/PreviewLoading';
-import { LayerHeightBar, LayerHeightPanel } from './components/LayerHeight';
-import { Sidebar } from './components/Sidebar';
+import { SidebarSkeleton } from './components/SidebarSkeleton';
 import WorkspaceRail from './components/WorkspaceRail';
 import { AskHost } from './components/Ask';
 import { TopBar } from './components/TopBar';
 import { graphicsCapability } from './browser-support';
+const overlays = () => import('./components/CanvasOverlays'), heights = () => import('./components/LayerHeight');
+const CanvasToolbar = preloadable(() => overlays().then(m => ({default: m.CanvasToolbar})));
+const CutPanel = preloadable(() => overlays().then(m => ({default: m.CutPanel})));
+const SlantPanel = preloadable(() => overlays().then(m => ({default: m.SlantPanel})));
+const PaintPanel = preloadable(() => overlays().then(m => ({default: m.PaintPanel})));
+const SliceNotification = preloadable(() => overlays().then(m => ({default: m.SliceNotification})));
+const Toast = preloadable(() => overlays().then(m => ({default: m.Toast})));
+const LayerHeightPanel = preloadable(() => heights().then(m => ({default: m.LayerHeightPanel})));
+const LayerHeightBar = preloadable(() => heights().then(m => ({default: m.LayerHeightBar})));
+const PreviewLoading = preloadable(() => import('./components/PreviewLoading').then(m => ({default: m.PreviewLoading})));
+const Sidebar = preloadable(() => import('./components/Sidebar').then(m => ({default: m.Sidebar})));
 const ControlHints = preloadable(() => import('./components/ControlHints').then(m => ({default: m.ControlHints})));
 const BrimEarsPanel = preloadable(() => import('./components/BrimEarsPanel'));
 const TransformPanel = preloadable(() => import('./components/Transform').then(m => ({ default: m.TransformPanel })));
 const ObjectsPanel = preloadable(() => import('./components/ObjectsPanel'));
+const ProfileSlideOut = preloadable(() => import('./profiles/ProfileSlideOut'));
 const ObjectInfo = preloadable(() => import('./components/ObjectInfo'));
 const BooleanPanel = preloadable(() => import('./components/BooleanPanel'));
 const TextPanel = preloadable(() => import('./components/TextPanel'));
@@ -30,10 +39,12 @@ const Navigator = preloadable(() => import('./components/Navigator').then((m) =>
 const PlateChoice = preloadable(() => import('./components/PlateChoice'));
 const EmptyPlate = preloadable(() => import('./components/FirstRun'));
 const SavedPreferencesNotice = preloadable(() => import('./components/SavedPreferencesNotice'));
+const SessionNotice = preloadable(() => import('./components/SessionNotice'));
 const LeaseBar = preloadable(() => import('./components/LeaseBar'));
 const Setup = preloadable(() => import('./onboarding/Setup'));
 const ProjectStatus = preloadable(() => import('./projects/ProjectStatus').then((m) => ({ default: m.ProjectStatus })));
-const ProjectBanner = preloadable(() => import('./projects/ProjectStatus').then((m) => ({ default: m.ProjectBanner })));
+const HeldProjectBanner = preloadable(() => import('./projects/ProjectBanner').then((m) => ({ default: m.HeldProjectBanner })));
+const ProjectBanner = preloadable(() => import('./projects/ProjectBanner').then((m) => ({ default: m.ProjectBanner })));
 const Plater3D = preloadable(() => Promise.all([import('./plater/Plater3D'), threeReady])
   .then(([m]) => graphicsCapability().webgl2 ? m : { default: NoGraphics }));
 import { deleteAll, getState, isSelected, removeSelected, setState, subscribeStore, togglePrintable, updateInstance, useStore } from './state/store';
@@ -44,15 +55,18 @@ const MeasurePanel = preloadable(() => import('./components/MeasurePanel'));
 import { dropLastFeature, setMeasure } from './plater/measureState';
 import { redo, undo, undoable } from './state/history';
 import { assembly, setAssembly, useAssembly } from './plater/assembly';
-import { toggleSidebar, useSidebarHidden } from './sidebar';
+import { toggleSidebar, useRailWidth, useSidebarHidden } from './sidebar';
+import { RailResizer } from './components/RailResizer';
 import { loadedPreviewView, loadPreviewView } from './components/preview-loader';
 
 const PresetDialog = preloadable(() => import('./components/Dialogs').then((m) => ({ default: m.PresetDialog })));
 const PresetUx = preloadable(() => import('./components/PresetUx'));
 const FlushDialog = preloadable(() => import('./components/FlushDialog').then((m) => ({ default: m.FlushDialog })));
+const LibraryPage = preloadable(() => import('./profiles/LibraryPage').then((m) => ({ default: m.LibraryPage })));
 const DeviceView = preloadable(() => import('./printers/DeviceView').then((m) => ({ default: m.DeviceView })));
 const PreviewView = preloadable(() => loadPreviewView().then((viewer) => ({ default: viewer })));
 const ProjectsView = preloadable(() => import('./projects/ProjectsView'));
+export const preloadProjects = ProjectsView.preload;
 const Palette = preloadable(() => import('./commands/Palette'));
 
 import { useSyncExternalStore } from 'react';
@@ -62,6 +76,9 @@ import { useMachine } from './flow/fsm';
 import { setup as setupFlow } from './onboarding/setup-flow';
 const useSetup = <T,>(sel: (s: ReturnType<typeof setupFlow.get>) => T) => useMachine(setupFlow, sel);
 import { threeReady } from './three-runtime';
+import { slotFilaments } from './profiles/slots';
+import './components/prepare.css';
+import { PageScope } from './components/PageLayer';
 const AppDialog = preloadable(() => import('./components/AppDialogs'));
 const CalibDialog = preloadable(() => import('./components/CalibDialog'));
 const NonplanarCalibDialog = preloadable(() => import('./components/NonplanarCalibDialog'));
@@ -116,6 +133,8 @@ export default function App() {
   const contextMenu = useStore((s) => !!s.contextMenu);
   const sessionDialog = useStore((s) => s.sessionDialog);
   const tab = useStore((s) => s.tab);
+  const [libraryOpened, setLibraryOpened] = useState(false);
+  useEffect(() => { if (tab === 'library') setLibraryOpened(true); }, [tab]);
   const gizmo = useStore((s) => s.gizmo);
   const loading = useStore((s) => s.loading);
   const [platerLoaded, setPlaterLoaded] = useState(false);
@@ -123,9 +142,11 @@ export default function App() {
   const jobDone = useStore((s) => s.job.state === 'done');
   const empty = useStore((s) => !s.objects.length && !s.project && s.projectPlates.length < 2);
   const assemblyOn = useAssembly().on;
-  const sidebarHidden = useSidebarHidden();
+  const sidebarHidden = useSidebarHidden(), railWidth = useRailWidth();
   const [dragOver, setDragOver] = useState(false);
   const previewOpened = useRef(false);
+  const slideOutOpened = useRef(false);
+  if (useStore((s) => !!s.slideOut)) slideOutOpened.current = true;
   if (tab === 'preview' || jobDone) previewOpened.current = true;
   const previewViewer = useRef<ComponentType>(undefined);
   if (previewOpened.current) previewViewer.current ??= loadedPreviewView() ?? PreviewView;
@@ -162,7 +183,7 @@ export default function App() {
       else if (ctrl && e.key.toLowerCase() === 'a' && !e.shiftKey && getState().cut?.editing) { const c = getState().cut!; setCut({ selectedConnectors: (c.connectors ?? []).map((_, i) => i) }); }
       else if (ctrl && e.key.toLowerCase() === 'a' && !e.shiftKey) selectAll();
       else if (ctrl && e.shiftKey && e.key === 'Enter') toggleViewOption('wireframe');
-      else if (ctrl && e.key.toLowerCase() === 'e' && getState().features.brim_ears && getState().tab === 'prepare') toggleViewOption('labels');
+      else if (ctrl && e.key.toLowerCase() === 'e' && getState().tab === 'prepare') toggleViewOption('labels');
       else if (ctrl && e.key.toLowerCase() === 'c' && !window.getSelection()?.toString()) copySelection();
       else if (ctrl && e.key.toLowerCase() === 'x' && !window.getSelection()?.toString() && prepare) cutSelection();
       else if (ctrl && e.key === '\\') toggleSidebar();
@@ -173,6 +194,7 @@ export default function App() {
         setState((s) => ({ tab: s.tab === 'prepare' ? 'preview' : 'prepare' }));
         focusSoon(visibleCanvas);
       }
+      else if (!prepare) return;
       else if (getState().gizmo === 'measure' && (e.key === 'Delete' || e.key === 'Backspace')) setMeasure({});
       else if (getState().gizmo === 'measure' && e.key === 'Escape') { if (!dropLastFeature()) setState({ gizmo: 'none' }); }
       else if (e.key === 'Delete' || e.key === 'Backspace') removeSelected();
@@ -193,12 +215,11 @@ export default function App() {
       else if (e.key.toLowerCase() === 'n') togglePaint('color');
       else if (e.key.toLowerCase() === 'e' && getState().tab === 'prepare') {
         const s = getState(), o = s.objects.find((x) => x.id === s.selected?.object);
-        if (!s.features.brim_ears) toggleViewOption('labels');
-        else if (o && !o.native && !o.volumes?.length) setState({ gizmo: s.gizmo === 'brimears' ? 'none' : 'brimears' });
+        if (o && !o.native && !o.volumes?.length) setState({ gizmo: s.gizmo === 'brimears' ? 'none' : 'brimears' });
       }
       else if (e.key.toLowerCase() === 'b' && !e.ctrlKey && !e.metaKey) toggleBoolean();
       else if (e.key.toLowerCase() === 't' && !e.ctrlKey && !e.metaKey) toggleText();
-      else if (getState().gizmo === 'color' && /^[1-9]$/.test(e.key)) { if (Number(e.key) <= getState().filamentSlots.length) setPaintTool({ filament: Number(e.key) }); }
+      else if (getState().gizmo === 'color' && /^[1-9]$/.test(e.key)) { if (Number(e.key) <= slotFilaments(getState()).length) setPaintTool({ filament: Number(e.key) }); }
       else if (e.key === 'F2') startRename();
       else if (e.key.toLowerCase() === 'v') { const selected = getState().selected; if (selected) togglePrintable(selected.object, selected.allInstances ? undefined : selected.instance); }
       else if (prepare && !e.altKey && nudge(e.key, e.shiftKey)) {  }
@@ -282,30 +303,29 @@ export default function App() {
   }, []);
 
   return (
-    <div className="app">
+    <div className="app" style={railWidth ? { '--user-rail-width': `${railWidth}px` } as React.CSSProperties : undefined}>
       <TopBar />
-      <Suspense fallback={null}><SavedPreferencesNotice /></Suspense>
       <Suspense fallback={null}><LeaseBar /></Suspense>
-      {!projects && <Suspense fallback={null}><ProjectBanner /></Suspense>}
+      <Suspense fallback={null}><SavedPreferencesNotice /></Suspense>
+      <Suspense fallback={null}><SessionNotice /></Suspense>
+      {!projects && <Suspense fallback={null}><HeldProjectBanner/><ProjectBanner /></Suspense>}
       {setupOpen && <Suspense fallback={null}><Setup /></Suspense>}
-      {projects && <Suspense fallback={null}><ProjectsView /></Suspense>}
-      {tab === 'device' && <Suspense fallback={<div role="status">Loading devices…</div>}><DeviceView /></Suspense>}
-      <div style={{ display: projects || tab === 'device' ? 'none' : undefined }} className={`main ${sidebarHidden ? 'sidebar-hidden' : ''} ${dragOver ? 'drag-over' : ''}`}>
-        <Suspense fallback={null}><WorkspaceRail><Sidebar /></WorkspaceRail></Suspense>
+      {projects && <PageScope page="projects"><Suspense fallback={null}><ProjectsView /></Suspense></PageScope>}
+      {tab === 'device' && <PageScope page="device"><Suspense fallback={<div role="status">Loading devices…</div>}><DeviceView /></Suspense></PageScope>}
+      {libraryOpened && <PageScope page="library"><Suspense fallback={null}><LibraryPage hidden={tab !== 'library' || projects} /></Suspense></PageScope>}
+      <div style={{ display: projects || tab === 'device' || tab === 'library' ? 'none' : undefined }} className={`main ${sidebarHidden ? 'sidebar-hidden' : ''} ${dragOver ? 'drag-over' : ''}`}>
+        <Suspense fallback={<SidebarSkeleton />}><WorkspaceRail><Suspense fallback={<SidebarSkeleton />}><Sidebar /></Suspense></WorkspaceRail></Suspense>
+        {!sidebarHidden && <RailResizer />}
         <div className="canvas-area" data-viewport={tab}>
-          {!empty && tab === 'prepare' && <Suspense fallback={null}><ObjectsPanel/></Suspense>}
+          <PageScope page="prepare">{!empty && tab === 'prepare' && <Suspense fallback={null}><ObjectsPanel/></Suspense>}
           {sidebarHidden && (
             <button type="button" className="btn sidebar-reveal" aria-expanded={false} onClick={() => toggleSidebar(false)}>Settings</button>
           )}
           <div style={{ display: tab === 'prepare' ? 'contents' : 'none' }}>
             {platerLoaded && <Suspense fallback={null}><Plater3D /></Suspense>}
-            <CanvasToolbar />
+            <Suspense fallback={null}><CanvasToolbar /></Suspense>
             {!projects && tab === 'prepare' && (gizmo === 'move' || gizmo === 'rotate' || gizmo === 'scale') && <Suspense fallback={null}><TransformPanel /></Suspense>}
-            <CutPanel />
-            <SlantPanel />
-            <PaintPanel />
-            <LayerHeightPanel />
-            <LayerHeightBar />
+            <Suspense fallback={null}><CutPanel /><SlantPanel /><PaintPanel /><LayerHeightPanel /><LayerHeightBar /></Suspense>
             {gizmo === 'measure' && <Suspense fallback={null}><MeasurePanel /></Suspense>}
             {!empty && <Suspense fallback={null}><CanvasTools /></Suspense>}
             {!empty && <Suspense fallback={null}><ObjectInfo /></Suspense>}
@@ -315,19 +335,20 @@ export default function App() {
             {gizmo === 'svg' && <Suspense fallback={null}><SvgPanel /></Suspense>}
             {assemblyOn && <Suspense fallback={null}><AssemblyBar /></Suspense>}
             {empty && !loading && <Suspense fallback={null}><EmptyPlate /></Suspense>}
-          </div>
-          {previewOpened.current && (
+            {slideOutOpened.current && <Suspense fallback={null}><ProfileSlideOut /></Suspense>}
+          </div></PageScope>
+          {previewOpened.current && (<PageScope page="preview">
             <div style={{ display: tab === 'preview' ? 'contents' : 'none' }}>
               {graphicsCapability().webgl2 ? <Suspense fallback={<div role="status">Loading preview…</div>}>
                 <Viewer />
               </Suspense> : <NoGraphics />}
             </div>
-          )}
+          </PageScope>)}
           {multiPlate && <Suspense fallback={null}><PlateChoice /></Suspense>}
           <Suspense fallback={null}><Navigator /></Suspense>
           <Suspense fallback={null}><ProjectStatus /></Suspense>
-          <SliceNotification />
-          {loading ? <LoadingState text={loading} /> : <PreviewLoading />}
+          <Suspense fallback={null}><SliceNotification /></Suspense>
+          {loading ? <LoadingState text={loading} /> : <Suspense fallback={null}><PreviewLoading /></Suspense>}
         </div>
       </div>
       <Suspense fallback={<div role="status">Loading dialog…</div>}>
@@ -343,7 +364,7 @@ export default function App() {
       </Suspense>
       <Suspense fallback={null}><ControlHints /></Suspense>
       <AskHost />
-      <Toast />
+      <Suspense fallback={null}><Toast /></Suspense>
     </div>
   );
 }

@@ -34,7 +34,6 @@ class PrintObject;
 class Print;
 bool   curved_cone_allowance(NonplanarMode mode);
 double curved_cone_tolerance(NonplanarMode mode);
-double curved_tops_cone_tolerance(const Print &print);
 struct CurvedTopsStats {
     size_t kept = 0, candidates = 0;
     double footprint_mm2 = 0., extrusion_mm = 0., upward_area_mm2 = 0., area_fraction = 0.;

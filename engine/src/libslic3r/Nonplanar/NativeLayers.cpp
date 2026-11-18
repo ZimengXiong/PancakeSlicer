@@ -1,4 +1,5 @@
 #include "NativeLayers.hpp"
+#include "libslic3r/Nonplanar/Research.hpp"
 
 #include "libslic3r/ClipperUtils.hpp"
 #include "libslic3r/Line.hpp"
@@ -374,7 +375,7 @@ Vec3d tool_axis(const LayerField &field, const Vec3d &p, double tilt_cap)
 {
     if (tilt_cap <= 0.)
         return Vec3d::UnitZ();
-    static const bool given = [] { const char *v = std::getenv("NP_FIELD_AXIS"); return v != nullptr && *v == '1'; }();
+    static const bool given = [] { const char *v = research_switch("NP_FIELD_AXIS"); return v != nullptr && *v == '1'; }();
     const std::optional<Vec3d> axis = given ? field.given_axis(p) : std::nullopt;
     Vec3d                      g    = axis ? *axis : field.gradient(p);
     if (g.squaredNorm() < 1e-24)

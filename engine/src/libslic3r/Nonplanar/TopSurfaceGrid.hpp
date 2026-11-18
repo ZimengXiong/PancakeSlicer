@@ -23,7 +23,7 @@ public:
     Vec2d origin;
     int nx, ny;
     std::vector<double> mesh, normal, bead;
-    std::vector<unsigned char> conformal, ironed, eligible, cliff;
+    std::vector<unsigned char> conformal, ironed, eligible;
     std::vector<uint16_t> owner;
     explicit TopSurfaceGrid(const indexed_triangle_set &its, const std::vector<uint16_t> &face_owner = {})
     {
@@ -57,18 +57,14 @@ public:
             });
         }
         const int inset = 8;
-        cliff.assign(cells, 0);
         for (int y = inset; y < ny - inset; ++y) for (int x = inset; x < nx - inset; ++x) {
-            bool ok = true, near_cliff = false;
-            const double here = mesh[size_t(y) * nx + x];
+            bool ok = true;
             for (int dy = -inset; ok && dy <= inset; ++dy) for (int dx = -inset; dx <= inset; ++dx) {
                 if (dx * dx + dy * dy > inset * inset) continue;
                 const size_t k = size_t(y + dy) * nx + x + dx;
                 if (!std::isfinite(mesh[k]) || normal[k] < std::cos(70. * 3.14159265358979323846 / 180.)) { ok = false; break; }
-                near_cliff |= std::abs(mesh[k] - here) > 1.;
             }
             eligible[size_t(y) * nx + x] = ok;
-            cliff[size_t(y) * nx + x]    = near_cliff;
         }
     }
     template<class F> void visit(const Vec2d &lo, const Vec2d &hi, F fn) { visit(lo, hi, 0, ny, fn); }
@@ -146,9 +142,8 @@ public:
         for (int y = 0; y < ny; ++y) for (int x = 0; x < nx; ++x) {
             const size_t k = size_t(y) * nx + x;
             if (!eligible[k] || !accepts(origin + pitch * Vec2d(x + 0.5, y + 0.5))) continue;
-            const double error = bead[k] - mesh[k];
-            if (cliff[k] && std::abs(error) > 1.) continue;
             ++cells;
+            const double error = bead[k] - mesh[k];
             if (std::isfinite(error)) { squared += error * error; ++finite; }
             if (error < -1.) ++gaps;
             if (conformal[k] && std::abs(error) <= 1.) { ++covered; squared_conformal += error * error; }

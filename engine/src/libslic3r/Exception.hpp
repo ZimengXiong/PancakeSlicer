@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace Slic3r {
@@ -27,10 +28,16 @@ class SlicingError : public Exception
 public:
     using Exception::Exception;
     SlicingError(std::string const &msg, size_t objectId) : Exception(msg), objectId_(objectId) {}
+    SlicingError(std::string const &msg, std::string code, std::string object = {}, std::string params = "{}")
+        : Exception(msg), code_(std::move(code)), object_(std::move(object)), params_(std::move(params)) {}
     size_t objectId() const { return objectId_; }
+    const std::string &code() const { return code_; }
+    const std::string &object() const { return object_; }
+    const std::string &params() const { return params_; }
 
 private:
     size_t objectId_ = 0;
+    std::string code_, object_, params_ = "{}";
 };
 
 class SlicingErrors : public Exception

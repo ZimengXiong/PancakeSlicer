@@ -58,7 +58,7 @@ export function loadVolume(objectId: number, type: VolumeType) {
         (b, size) => new THREE.Vector3((b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, b.min.z + size.z / 2),
         type === 'part' ? 'Load Part' : 'Load Modifier');
     } catch (e) {
-      toast(e instanceof Error ? e.message : String(e));
+      toast('volumes_failed', { detail: e instanceof Error ? e.message : String(e) });
     }
   };
   input.click();

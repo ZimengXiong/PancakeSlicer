@@ -1,24 +1,24 @@
-import { responseError } from '../api/access';
+import { catalogList, loadedList } from '../catalog/read';
+import type { CatalogList, CatalogPrinterEntry } from '../catalog/types';
 
-export interface CatalogModel { id: string; name: string; cover?: string; nozzles: string[]; machines: Record<string, string> }
+export type CatalogModel = CatalogPrinterEntry;
 export interface CatalogVendor { id: string; name: string; models: CatalogModel[] }
-export interface CatalogFamily { id: string; name: string; brand?: string; material?: string; colour?: string; models: string[]; variants: Record<string, string>; fallback?: string }
-export type CatalogRead = { vendors: CatalogVendor[] } | { families: CatalogFamily[] };
 
-export const PRINTER_CATALOG = '/api/printer-catalog';
-export const filamentCatalogPath = (vendor: string) => `/api/filament-catalog?vendor=${encodeURIComponent(vendor)}`;
-
-const reads = new Map<string, Promise<unknown>>(), bodies = new Map<string, unknown>();
-export function readCatalog<T>(path: string): Promise<T> {
-  let r = reads.get(path);
-  if (!r) reads.set(path, (r = fetch(path).then(async (res) => { if (!res.ok) throw await responseError(res); return res.json(); })
-    .then((body) => { bodies.set(path, body); return body; }, (e) => { reads.delete(path); throw e; })));
-  return r as Promise<T>;
+const grouped = new WeakMap<CatalogList, CatalogVendor[]>();
+export function printerVendors(list: CatalogList): CatalogVendor[] {
+  let out = grouped.get(list);
+  if (!out) {
+    const vendors = new Map<string, CatalogVendor>();
+    for (const m of list.entries as CatalogModel[]) {
+      const v = vendors.get(m.vendor) ?? { id: m.vendor, name: m.vendorName, models: [] };
+      v.models.push(m); vendors.set(m.vendor, v);
+    }
+    grouped.set(list, out = [...vendors.values()]);
+  }
+  return out;
 }
-export const loadedCatalog = <T,>(path: string) => bodies.get(path) as T | undefined;
-
-export const printerCatalog = () => readCatalog<{ vendors: CatalogVendor[] }>(PRINTER_CATALOG).then((b) => b.vendors);
-export const filamentCatalog = (vendor: string) => readCatalog<{ families: CatalogFamily[] }>(filamentCatalogPath(vendor)).then((b) => b.families);
+export const printerCatalog = () => catalogList('printers').then(printerVendors);
+export const loadedPrinterVendors = () => { const list = loadedList('printers'); return list && printerVendors(list); };
 
 export const FIRST_SCREEN = 24;
 const covers = new Map<string, HTMLImageElement>();

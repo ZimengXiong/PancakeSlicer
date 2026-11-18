@@ -4,7 +4,7 @@ import { assertNever, createMachine, useMachine } from './fsm';
 import { readRecovery, rememberRecovery } from './recovery';
 export type Transfer = { id: string; job: string; printer: string; name: string; kind: string; start: boolean; filename: string;
   state: 'uploading' | 'starting' | 'done' | 'failed' | 'cancelled'; sent: number; total: number; message?: string; error?: string;
-  outcome?: 'uploaded' | 'printing' | 'waiting_for_printer' | 'failed';
+  outcome?: 'uploaded' | 'printing' | 'unconfirmed' | 'failed';
   reason?: string; recovery?: string; started: string; finished?: string;
   job_end?: 'finished' | 'failed' | 'cancelled';
   job_errors?: { code: string; message?: string }[] };

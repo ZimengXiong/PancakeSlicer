@@ -1,4 +1,5 @@
 #include "LayerSchedule.hpp"
+#include "libslic3r/Nonplanar/Research.hpp"
 
 #include <math.h>
 
@@ -75,7 +76,7 @@ bool field_layers_considered(const PrintObject &object, bool planar_pass)
     const PrintConfig       &pcfg  = object.print()->config();
     const ModelObject       &model = *object.model_object();
     static const bool uniform = [] {
-        const char *v = std::getenv("NP_AUTO_UNIFORM");
+        const char *v = research_switch("NP_AUTO_UNIFORM");
         return v != nullptr && *v != 0 && *v != '0';
     }();
     if (uniform)

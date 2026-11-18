@@ -14,79 +14,83 @@ import (
 	"log"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
+
+	"github.com/OrcaSlicer/OrcaSlicer/server/resolve"
 )
 
 type JobRequest struct {
-	Library                *resolveRequest  `json:"library,omitempty"`
-	SubmittedFilaments     []string         `json:"submitted_filaments,omitempty"`
-	Submission             *submittedConfig `json:"submission,omitempty"`
-	SourcePlates           []projectPlate   `json:"source_plates,omitempty"`
-	PlateIndex             int              `json:"plate_index,omitempty"`
-	Orient                 bool             `json:"orient,omitempty"`
-	OrientScores           bool             `json:"orient_scores,omitempty"`
-	Arrange                bool             `json:"arrange,omitempty"`
-	ArrangeSpacing         float64          `json:"arrange_spacing,omitempty"`
-	ArrangeNoRotation      bool             `json:"arrange_no_rotation,omitempty"`
-	ArrangeMaterials       string           `json:"arrange_materials,omitempty"`
-	WipeTower              bool             `json:"wipe_tower,omitempty"`
-	Explode                bool             `json:"explode,omitempty"`
-	AllowMixedTemperatures bool             `json:"allow_mixed_temperatures,omitempty"`
-	Cut                    string           `json:"cut,omitempty"`
-	CutKeep                string           `json:"cut_keep,omitempty"`
-	CutPlaceLower          bool             `json:"cut_place_lower,omitempty"`
-	CutConnectors          string           `json:"cut_connectors,omitempty"`
-	CutDovetail            string           `json:"cut_dovetail,omitempty"`
-	MeshOp                 string           `json:"mesh_op,omitempty"`
-	SimplifyRatio          float64          `json:"simplify_ratio,omitempty"`
-	SimplifyTriangles      int              `json:"simplify_triangles,omitempty"`
-	SimplifyMaxError       float64          `json:"simplify_max_error,omitempty"`
-	BooleanOp              string           `json:"boolean_op,omitempty"`
-	Text                   []string         `json:"text,omitempty"`
-	TextSurface            []string         `json:"text_surface,omitempty"`
-	ExportFormat           string           `json:"export_format,omitempty"`
-	DracoBits              int              `json:"draco_bits,omitempty"`
-	Vendor                 string           `json:"vendor"`
-	Printer                string           `json:"printer"`
-	Process                string           `json:"process"`
-	Filaments              []string         `json:"filaments"`
-	Overrides              [][2]string      `json:"overrides"`
-	Events                 []string         `json:"events"`
-	Files                  []string         `json:"files"`
-	Plate                  bool             `json:"plate"`
-	Output                 string           `json:"output"`
-	Filename               string           `json:"filename,omitempty"`
-	ProjectSettings        [][2]string      `json:"project_settings,omitempty"`
-	ForcePlanar            bool             `json:"force_planar,omitempty"`
-	Floating               bool             `json:"floating,omitempty"`
-	Calib                  string           `json:"calib,omitempty"`
-	CalibParams            string           `json:"calib_params,omitempty"`
-	CalibHead              string           `json:"calib_head,omitempty"`
-	Edits                  bool             `json:"edits,omitempty"`
-	Priority               string           `json:"priority,omitempty"`
-	Session                string           `json:"session,omitempty"`
-	SliceGroup             string           `json:"slice_group,omitempty"`
-	PreviewBudget          float64          `json:"preview_budget,omitempty"`
+	Library      *resolve.Request  `json:"library,omitempty"`
+	Submission   *submittedConfig `json:"submission,omitempty"`
+	SourcePlates []projectPlate   `json:"source_plates,omitempty"`
+	PlateIndex   int              `json:"plate_index,omitempty"`
+	Orient       bool             `json:"orient,omitempty"`
+	OrientScores bool `json:"orient_scores,omitempty"`
+	Arrange           bool    `json:"arrange,omitempty"`
+	ArrangeSpacing    float64 `json:"arrange_spacing,omitempty"`
+	ArrangeNoRotation bool    `json:"arrange_no_rotation,omitempty"`
+	ArrangeMaterials string `json:"arrange_materials,omitempty"`
+	WipeTower bool `json:"wipe_tower,omitempty"`
+	Explode bool `json:"explode,omitempty"`
+	AllowMixedTemperatures bool `json:"allow_mixed_temperatures,omitempty"`
+	Cut           string `json:"cut,omitempty"`
+	CutKeep       string `json:"cut_keep,omitempty"`
+	CutPlaceLower bool   `json:"cut_place_lower,omitempty"`
+	CutConnectors string `json:"cut_connectors,omitempty"`
+	CutDovetail   string `json:"cut_dovetail,omitempty"`
+	MeshOp            string  `json:"mesh_op,omitempty"`
+	SimplifyRatio     float64 `json:"simplify_ratio,omitempty"`
+	SimplifyTriangles int     `json:"simplify_triangles,omitempty"`
+	SimplifyMaxError float64 `json:"simplify_max_error,omitempty"`
+	BooleanOp string `json:"boolean_op,omitempty"`
+	Text []string `json:"text,omitempty"`
+	TextSurface []string `json:"text_surface,omitempty"`
+	ExportFormat string      `json:"export_format,omitempty"`
+	DracoBits    int         `json:"draco_bits,omitempty"`
+	Printer      string      `json:"printer"`
+	Process      string      `json:"process"`
+	Filaments    []string    `json:"filaments"`
+	Overrides    [][2]string `json:"overrides"`
+	Events       []string    `json:"events"`
+	Files        []string    `json:"files"`
+	Plate        bool        `json:"plate"`
+	Output       string      `json:"output"`
+	Filename     string      `json:"filename,omitempty"`
+	ProjectSettings [][2]string `json:"project_settings,omitempty"`
+	ForcePlanar bool `json:"force_planar,omitempty"`
+	Floating bool `json:"floating,omitempty"`
+	Calib       string `json:"calib,omitempty"`
+	CalibParams string `json:"calib_params,omitempty"`
+	CalibHead string `json:"calib_head,omitempty"`
+	Edits bool `json:"edits,omitempty"`
+	Priority string `json:"priority,omitempty"`
+	Session string `json:"session,omitempty"`
+	SliceGroup string `json:"slice_group,omitempty"`
+	PreviewBudget float64 `json:"preview_budget,omitempty"`
 }
 
 type Event struct {
-	Seq           uint64   `json:"seq"`
-	QueuePosition *int     `json:"queue_position,omitempty"`
-	ETA           *float64 `json:"eta_seconds,omitempty"`
-	ReplayGap     bool     `json:"replay_gap,omitempty"`
-	ID            int      `json:"id"`
-	Type          string   `json:"type"`
-	Stream        string   `json:"stream,omitempty"`
-	Line          string   `json:"line,omitempty"`
-	State         JobState `json:"state,omitempty"`
-	Error         string   `json:"error,omitempty"`
-	Stage         string   `json:"stage,omitempty"`
-	Pct           *float64 `json:"pct,omitempty"`
+	Seq            uint64   `json:"seq"`
+	QueuePosition  *int     `json:"queue_position,omitempty"`
+	ETA            *float64 `json:"eta_seconds,omitempty"`
+	ReplayGap      bool     `json:"replay_gap,omitempty"`
+	ID             int      `json:"id"`
+	Type           string   `json:"type"`
+	Stream         string   `json:"stream,omitempty"`
+	Line           string   `json:"line,omitempty"`
+	State          JobState `json:"state,omitempty"`
+	LifecycleState JobState `json:"lifecycle_state,omitempty"`
+	Error          string   `json:"error,omitempty"`
+	ErrorCode      string   `json:"error_code,omitempty"`
+	Stage          string   `json:"stage,omitempty"`
+	Pct            *float64 `json:"pct,omitempty"`
 }
 
 const maxEvents = 20000
@@ -119,6 +123,8 @@ type Job struct {
 	started       time.Time
 	finished      time.Time
 	errMsg        string
+	errCode       string
+	failCode      string
 	exitCode      *int
 	slice         json.RawMessage
 	events        []Event
@@ -130,7 +136,7 @@ type Job struct {
 	stage         string
 	progress      *float64
 	send          *Transfer
-	resultReady   bool
+	resultReady bool
 }
 
 type JobView struct {
@@ -138,10 +144,12 @@ type JobView struct {
 	Stage          string          `json:"stage,omitempty"`
 	Progress       *float64        `json:"progress,omitempty"`
 	State          JobState        `json:"state"`
+	LifecycleState JobState        `json:"lifecycle_state"`
 	Created        time.Time       `json:"created"`
 	Started        *time.Time      `json:"started,omitempty"`
 	Finished       *time.Time      `json:"finished,omitempty"`
 	Error          string          `json:"error,omitempty"`
+	ErrorCode      string          `json:"error_code,omitempty"`
 	ExitCode       *int            `json:"exit_code,omitempty"`
 	Request        JobRequest      `json:"request"`
 	DownloadURL    string          `json:"download_url,omitempty"`
@@ -151,8 +159,8 @@ type JobView struct {
 	RetryOf        string          `json:"retry_of,omitempty"`
 	QueuePosition  int             `json:"queue_position"`
 	ETA            *float64        `json:"eta_seconds,omitempty"`
-	ResultReady    bool            `json:"result_ready,omitempty"`
-	HasSurfaceGrid bool            `json:"has_surface_grid"`
+	ResultReady bool `json:"result_ready,omitempty"`
+	HasSurfaceGrid bool `json:"has_surface_grid"`
 }
 
 func (j *Job) View() JobView {
@@ -169,7 +177,7 @@ func (j *Job) View() JobView {
 func (j *Job) snapshotView() JobView {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	v := JobView{ID: j.ID, RetryOf: j.RetryOf, State: j.state, Created: j.Created, Error: j.errMsg, ExitCode: j.exitCode,
+	v := JobView{ID: j.ID, RetryOf: j.RetryOf, State: j.state.legacy(), LifecycleState: j.state, Created: j.Created, Error: j.errMsg, ErrorCode: j.errCode, ExitCode: j.exitCode,
 		Stage: j.stage, Progress: j.progress, Request: j.Request, QueuePosition: j.queuePosition, ETA: j.eta, EventsURL: "/api/jobs/" + j.ID + "/events", Slice: j.slice,
 		ResultReady: j.resultReady && !j.state.Finished()}
 	if !j.started.IsZero() {
@@ -272,7 +280,7 @@ func (j *Job) EventsSince(after int) ([]Event, <-chan struct{}, bool) {
 		id := j.events[0].ID - 1
 		pos := j.queuePosition
 		out = append(out, Event{ID: id, Seq: uint64(id), Type: "reset", ReplayGap: true,
-			State: j.state, Stage: j.stage, Pct: j.progress,
+			State: j.state.legacy(), LifecycleState: j.state, Stage: j.stage, Pct: j.progress,
 			ETA: j.eta, QueuePosition: &pos})
 	}
 	for _, e := range j.events {
@@ -285,6 +293,34 @@ func (j *Job) EventsSince(after int) ([]Event, <-chan struct{}, bool) {
 
 func (j *Job) OutputPath(kind string) string {
 	return filepath.Join(j.Dir, "out", outputBase(j.Request)+"."+kind)
+}
+
+func (j *Job) SettingsPath() string { return filepath.Join(j.Dir, "settings.json") }
+
+func (j *Job) writeSettings() error {
+	if len(j.Request.Overrides) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(j.Request.Overrides)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(j.SettingsPath(), raw, 0600)
+}
+
+func keyArgs(j *Job, args []string) []string {
+	out := make([]string, 0, len(args)+2*len(j.Request.Overrides))
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--set-file" && i+1 < len(args) {
+			for _, kv := range j.Request.Overrides {
+				out = append(out, "--set", kv[0]+"="+kv[1])
+			}
+			i++
+			continue
+		}
+		out = append(out, args[i])
+	}
+	return out
 }
 
 func validPiece(side string) bool {
@@ -668,20 +704,17 @@ func (m *JobManager) toolArgs(j *Job) []string {
 	}
 	args := []string{
 		"--profiles", filepath.Join(m.cfg.Resources, "profiles"),
+		"--catalog", filepath.Join(m.cfg.Resources, "catalog"),
 		"--datadir", filepath.Join(j.Dir, "datadir"),
-		"--vendor", r.Vendor,
 		"--printer", r.Printer,
 		"--process", r.Process,
-	}
-	if dir := presetCacheDir(m); dir != "" {
-		args = append(args, "--preset-cache", dir)
 	}
 	args = append(args, stageCacheArgs(m)...)
 	for _, f := range r.Filaments {
 		args = append(args, "--filament", f)
 	}
-	for _, kv := range r.Overrides {
-		args = append(args, "--set", kv[0]+"="+kv[1])
+	if len(r.Overrides) > 0 {
+		args = append(args, "--set-file", j.SettingsPath())
 	}
 	for _, e := range r.Events {
 		args = append(args, "--event", e)
@@ -736,23 +769,12 @@ func (m *JobManager) toolArgs(j *Job) []string {
 		}
 		return append(args, filepath.Join(in, r.Files[0]))
 	}
-	if m.cfg.Features.MovesOut {
-		if m.cfg.Features.MovesExtended {
-			args = append(args, "--moves-out", j.ExtendedMovesPath(), "--moves-extended")
-		} else {
-			args = append(args, "--moves-out", j.MovesPath())
-		}
-	}
-	if m.cfg.Features.Progress {
-		args = append(args, "--progress")
-	}
+	args = append(args, "--moves-out", j.ExtendedMovesPath(), "--moves-extended", "--progress")
 	if r.Output == "3mf" {
 		args = append(args, "--save-3mf", j.OutputPath("3mf"))
 	} else {
 		args = append(args, "--json", j.OutputPath("json"), "-o", j.OutputPath("gcode"))
-		if m.cfg.Features.SurfaceGrid {
-			args = append(args, "--surface-grid")
-		}
+		args = append(args, "--surface-grid")
 	}
 	if r.Output == "gcode.3mf" {
 		args = append(args, "--gcode-3mf", j.OutputPath("gcode.3mf"))
@@ -799,8 +821,13 @@ func (m *JobManager) run(ctx context.Context, j *Job) {
 		return
 	}
 	j.log("server", "progress preparing 0")
+	if err := j.writeSettings(); err != nil {
+		j.failWith("slice_setup_failed", "cannot write the job settings: "+err.Error())
+		return
+	}
 	args := m.toolArgs(j)
 	j.log("server", "nonplanar_slice_tool "+quoteArgs(args))
+	j.log("server", fmt.Sprintf("argv_chars %d", len(m.cfg.Tool)+1+len(quoteArgs(args))))
 	if jobResultGet != nil && jobResultGet(m, j, args) {
 		return
 	}
@@ -809,44 +836,38 @@ func (m *JobManager) run(ctx context.Context, j *Job) {
 	}
 
 	if err := copyUserHeads(m.cfg, filepath.Join(j.Dir, "datadir")); err != nil {
-		j.setState(StateFailed, "cannot copy the user heads: "+err.Error())
+		j.failWith("slice_setup_failed", "cannot copy the user heads: "+err.Error())
 		return
 	}
 	cmd, commandErr := lineBufferedCommand(ctx, m.cfg.Tool, args)
 	if commandErr != nil {
-		j.setState(StateFailed, sanitizeToolError(commandErr))
+		j.failWith("slice_setup_failed", sanitizeToolError(commandErr))
 		return
 	}
 	cmd.Dir = j.Dir
-	cmd.Env = append(os.Environ(), "TMPDIR="+filepath.Join(j.Dir, "tmp"), "TMP="+filepath.Join(j.Dir, "tmp"), "TEMP="+filepath.Join(j.Dir, "tmp"))
+	cmd.Env = engineEnv(filepath.Join(j.Dir, "tmp"))
 	if err := limitJobMemory(cmd); err != nil {
-		j.setState(StateFailed, err.Error())
+		j.failWith("slice_setup_failed", err.Error())
 		return
 	}
 	configureJobProcess(cmd)
 	cmd.WaitDelay = 5 * time.Second
-	stdout, stdoutWriter := io.Pipe()
-	stderr, stderrWriter := io.Pipe()
+	stdout, stderr := newSpool(), newSpool()
 	defer stdout.Close()
 	defer stderr.Close()
-	defer stdoutWriter.Close()
-	defer stderrWriter.Close()
-	cmd.Stdout = stdoutWriter
-	cmd.Stderr = stderrWriter
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	if !j.setState(StateSlicing, "") {
 		return
-	}
-	if !m.cfg.Features.Progress {
-		j.log("server", "progress slicing 0")
 	}
 	if err := cmd.Start(); err != nil {
 		switch {
 		case errors.Is(ctx.Err(), context.Canceled):
 			j.setState(StateCancelled, "cancelled before the slicer started")
 		case errors.Is(ctx.Err(), context.DeadlineExceeded):
-			j.setState(StateFailed, "slicing exceeded the time limit")
+			j.failWith("slice_timeout", "slicing exceeded the time limit")
 		default:
-			j.setState(StateFailed, "cannot start the slicer: "+sanitizeToolError(err))
+			j.failWith("slice_setup_failed", "cannot start the slicer: "+sanitizeToolError(err))
 		}
 		return
 	}
@@ -908,8 +929,8 @@ func (m *JobManager) run(ctx context.Context, j *Job) {
 	if cmd.Cancel != nil {
 		cmd.Cancel()
 	}
-	stdoutWriter.Close()
-	stderrWriter.Close()
+	stdout.Close()
+	stderr.Close()
 	readers.Wait()
 	published.Wait()
 
@@ -966,11 +987,11 @@ func (m *JobManager) run(ctx context.Context, j *Job) {
 	case errors.Is(ctx.Err(), context.Canceled):
 		j.setState(StateCancelled, "cancelled")
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
-		j.setState(StateFailed, fmt.Sprintf("slicing exceeded the %s time limit", m.cfg.JobTimeout))
+		j.failWith("slice_timeout", fmt.Sprintf("slicing exceeded the %s time limit", m.cfg.JobTimeout))
 	case waitErr != nil:
-		j.setState(StateFailed, lastErr.message(waitErr))
+		j.failWith(lastErr.code(waitErr), lastErr.message(waitErr))
 	case recordErr != nil:
-		j.setState(StateFailed, "the slicer output could not be read: "+sanitizeToolError(recordErr))
+		j.failWith("slice_output_unreadable", "the slicer output could not be read: "+sanitizeToolError(recordErr))
 	default:
 		kind := j.Request.Output
 		if j.Request.Arrange || j.Request.WipeTower {
@@ -982,7 +1003,7 @@ func (m *JobManager) run(ctx context.Context, j *Job) {
 		if kind == "plan-tops" {
 			mapped, err := m.mapPlanFacets(ctx, j, raw)
 			if err != nil {
-				j.setState(StateFailed, "the curved tops plan could not be read: "+sanitizeToolError(err))
+				j.failWith("slice_output_unreadable", "the curved tops plan could not be read: "+sanitizeToolError(err))
 				return
 			}
 			raw = mapped
@@ -995,7 +1016,7 @@ func (m *JobManager) run(ctx context.Context, j *Job) {
 			m.keepPreview(j, args, raw)
 		}
 		if _, err := os.Stat(j.OutputPath(kind)); !j.Request.Orient && !j.Request.Explode && j.Request.Cut == "" && err != nil {
-			j.setState(StateFailed, "the slicer finished without writing "+filepath.Base(j.OutputPath(kind)))
+			j.failWith("slice_output_missing", "the slicer finished without writing "+filepath.Base(j.OutputPath(kind)))
 			return
 		}
 		if !j.setState(StateStoring, "") {
@@ -1006,12 +1027,9 @@ func (m *JobManager) run(ctx context.Context, j *Job) {
 		j.mu.Unlock()
 		if _, err := os.Stat(j.ExtendedMovesPath()); err == nil && !stripped {
 			if err := stripExtendedMoves(j.ExtendedMovesPath(), j.MovesPath()); err != nil {
-				j.setState(StateFailed, "the preview stream could not be written: "+sanitizeToolError(err))
+				j.failWith("slice_output_unreadable", "the preview stream could not be written: "+sanitizeToolError(err))
 				return
 			}
-		}
-		if !m.cfg.Features.Progress {
-			j.log("server", "progress export 100")
 		}
 		if jobResultPut != nil && ctx.Err() == nil {
 			jobResultPut(m, j, args, raw)
@@ -1045,7 +1063,53 @@ func (m *JobManager) publishResult(j *Job) {
 		return
 	}
 	j.slice, j.resultReady = raw, true
-	j.appendLocked(Event{Type: "result", State: j.state})
+	j.appendLocked(Event{Type: "result", State: j.state.legacy(), LifecycleState: j.state})
+}
+
+type spool struct {
+	mu     sync.Mutex
+	ready  *sync.Cond
+	buf    []byte
+	closed bool
+}
+
+func newSpool() *spool {
+	s := &spool{}
+	s.ready = sync.NewCond(&s.mu)
+	return s
+}
+
+func (s *spool) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return 0, io.ErrClosedPipe
+	}
+	s.buf = append(s.buf, p...)
+	s.ready.Signal()
+	return len(p), nil
+}
+
+func (s *spool) Read(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for len(s.buf) == 0 && !s.closed {
+		s.ready.Wait()
+	}
+	if len(s.buf) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(p, s.buf)
+	s.buf = s.buf[n:]
+	return n, nil
+}
+
+func (s *spool) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
+	s.ready.Broadcast()
+	return nil
 }
 
 func scanLines(r io.Reader, fn func(string)) {
@@ -1057,10 +1121,27 @@ func scanLines(r io.Reader, fn func(string)) {
 	io.Copy(io.Discard, r)
 }
 
-type lastLines struct{ lines []string }
+type lastLines struct {
+	lines []string
+	engineCode, engineDetail string
+}
 
 func (l *lastLines) add(s string) {
 	if strings.TrimSpace(s) == "" {
+		return
+	}
+	trimmed := strings.TrimSpace(s)
+	if strings.HasPrefix(trimmed, `{"warning":`) {
+		return
+	}
+	var typed struct {
+		Error *struct {
+			Code   string `json:"code"`
+			Detail string `json:"detail"`
+		} `json:"error"`
+	}
+	if strings.HasPrefix(trimmed, `{"error":`) && json.Unmarshal([]byte(trimmed), &typed) == nil && typed.Error != nil && typed.Error.Code != "" {
+		l.engineCode, l.engineDetail = typed.Error.Code, typed.Error.Detail
 		return
 	}
 	l.lines = append(l.lines, s)
@@ -1070,6 +1151,9 @@ func (l *lastLines) add(s string) {
 }
 
 func (l *lastLines) message(waitErr error) string {
+	if l.engineDetail != "" {
+		return sanitizeToolError(errors.New(l.engineDetail))
+	}
 	for i := len(l.lines) - 1; i >= 0; i-- {
 		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(l.lines[i])), "error") {
 			return sanitizeToolError(errors.New(strings.TrimSpace(l.lines[i])))
@@ -1079,6 +1163,24 @@ func (l *lastLines) message(waitErr error) string {
 		return sanitizeToolError(errors.New(strings.TrimSpace(l.lines[len(l.lines)-1])))
 	}
 	return "slicer " + waitErr.Error()
+}
+
+func (l *lastLines) code(waitErr error) string {
+	var exit *exec.ExitError
+	switch {
+	case l.engineCode != "":
+		return "engine_" + l.engineCode
+	case errors.As(waitErr, &exit) && exitSignal(exit) == syscall.SIGKILL:
+		return "slice_out_of_memory"
+	}
+	return "slice_failed"
+}
+
+func exitSignal(e *exec.ExitError) syscall.Signal {
+	if ws, ok := e.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		return ws.Signal()
+	}
+	return -1
 }
 
 func quoteArgs(args []string) string {
@@ -1208,7 +1310,7 @@ func (m *JobManager) Retry(parent *Job, client string) (*Job, error) {
 	for _, name := range required {
 		info, err := os.Stat(filepath.Join(parent.Dir, "input", name))
 		if err != nil || !info.Mode().IsRegular() {
-			return nil, &admissionError{410, "Original job inputs are unavailable. Reimport the original project before slicing again; retained outputs remain available.", 0}
+			return nil, &admissionError{410, "Oops, the original job inputs are gone! Reimport the original project before slicing again (your saved outputs are still here).", 0}
 		}
 	}
 	j, err := m.newJobLocked(client)

@@ -8,9 +8,9 @@ declare module 'virtual:option-hints' {
   export const hints: Record<string, { type: string; gui_type?: string; multiline?: boolean; full_width?: boolean }>;
 }
 
-declare module 'virtual:mock-presets' {
-  const url: string;
-  export default url;
+declare module 'virtual:demo-resolver' {
+  export const wasm: string;
+  export const exec: string;
 }
 
 declare const __BUILD__: string;

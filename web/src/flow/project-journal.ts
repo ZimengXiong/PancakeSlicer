@@ -1,40 +1,18 @@
-import type { ProjectDraft, ProjectDraftStore, ProjectFailure } from '../persist/drafts';
+import type { DraftRef, ProjectDraft, ProjectDraftStore, ProjectFailure } from '../persist/drafts';
 import type { DraftCheckpoint, DraftCodec } from './project-recovery';
 import type { ProjectDraftInventory } from './project';
-import { flushServiceSession, loadServiceSession, patchServiceSession } from '../persist/service-session';
-import { requireWorkspaceService } from '../persist/service';
-export async function draftSession(newOwner: string): Promise<{ owner: string; previousOwner: string | null; previousOwners: readonly string[] }> {
-  const remote = await loadServiceSession(), lineage = remote.document.projectDraftOwners ?? [];
-  if (!Array.isArray(lineage) || lineage.some((owner) => typeof owner !== 'string')) throw new Error('Oops! Your local draft is out of sync with the saved project history.');
-  const previousOwners = [...new Set(lineage as string[])].slice(0, 32), previousOwner = previousOwners[0] ?? null;
-  return { owner: newOwner, previousOwner, previousOwners };
-}
-async function registerDraftOwner(owner: string, storage: () => Promise<ProjectDraftStore>): Promise<void> {
-  await requireWorkspaceService();
-  await flushServiceSession(true);
-  const remote = await loadServiceSession(), lineage = remote.document.projectDraftOwners ?? [];
-  if (!Array.isArray(lineage) || lineage.some(value => typeof value !== 'string')) throw new Error('Oops! Your local draft is out of sync with the saved project history.');
-  if (lineage.includes(owner)) return;
-  const next = [owner, ...new Set(lineage as string[])];
-  if (next.length > 32) {
-    const holding = new Set((await (await storage()).listMetadata()).map((draft) => draft.owner));
-    for (let i = next.length - 1; i > 0 && next.length > 32; i--) if (!holding.has(next[i])) next.splice(i, 1);
-  }
-  await patchServiceSession({ projectDraftOwners: next.slice(0, 32) });
-  await flushServiceSession();
-}
 export function createDraftJournal<D>(owner: string, storage: () => Promise<ProjectDraftStore>, codec: () => Promise<DraftCodec<D>>,
   beginMutation: (id: string) => (error?: unknown) => void = () => () => {}) {
-  let serial = 0, tail = Promise.resolve(), registered: Promise<void> | null = null;
-  const register = () => registered ??= registerDraftOwner(owner, storage).catch(error => { registered = null; throw error; });
+  let serial = 0, tail = Promise.resolve();
   const failures = new Map<string, unknown>();
-  type Capture = { checkpoint: DraftCheckpoint; baseRevision: number; document: D; failure: ProjectFailure | null };
+  type Capture = { checkpoint: DraftCheckpoint; baseRevision: number; document: D; failure: ProjectFailure | null; editedAt: number; supersedes: readonly DraftRef[] };
   const pending = new Map<string, { latest: Capture; durable: Promise<ProjectDraft>; release(): void }>();
   return {
-    capture(projectId: string, baseRevision: number, document: D, failure: ProjectFailure | null = null) {
+    capture(projectId: string, baseRevision: number, document: D, failure: ProjectFailure | null = null, editedAt = Date.now(), supersedes: readonly DraftRef[] = []) {
       const checkpoint = { id: `${owner}.${projectId}`, sequence: ++serial };
       const finish = beginMutation(checkpoint.id);
-      const latest = { checkpoint, baseRevision, document, failure }, queued = pending.get(projectId);
+      const queued = pending.get(projectId);
+      const latest = { checkpoint, baseRevision, document, failure, editedAt, supersedes: [...(queued?.latest.supersedes ?? []), ...supersedes] };
       if (queued) {
         queued.latest = latest; void queued.durable.then(() => finish(), (error: unknown) => finish(error));
         return { checkpoint, durable: queued.durable };
@@ -48,13 +26,12 @@ export function createDraftJournal<D>(owner: string, storage: () => Promise<Proj
       const durable = tail.then(async () => {
         await delay;
         pending.delete(projectId);
-        const { checkpoint, baseRevision, document, failure } = batch.latest;
+        const { checkpoint, baseRevision, document, failure, editedAt, supersedes } = batch.latest;
         const { encode, nameOf, plateCount } = await codec(), { stored, blobs } = encode(document);
         const draft: ProjectDraft = { ...checkpoint, owner, projectId, baseRevision, doc: stored,
-          name: nameOf(document), objects: plateCount(document), updatedAt: Date.now(), kind: 'dirty', failure,
+          name: nameOf(document), objects: plateCount(document), updatedAt: Date.now(), editedAt, kind: 'dirty', failure,
           blobs: Object.fromEntries(blobs) };
-        await register();
-        await (await storage()).put(draft); failures.delete(projectId); return draft;
+        await (await storage()).put(draft, supersedes); failures.delete(projectId); return draft;
       });
       batch.durable = durable; pending.set(projectId, batch);
       void durable.then(() => finish(), (error: unknown) => finish(error));

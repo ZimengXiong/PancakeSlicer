@@ -1,6 +1,7 @@
-import type { PresetType, UserPreset } from '../api/types';
+import type { PresetType } from '../api/types';
+import type { FilamentRecord, PrinterRecord, ProcessRecord } from './records';
 import type { State } from '../state/store';
-import { randomId } from '../random-id';
+import { slotFilaments } from './slots';
 
 export type ProfileKey = string;
 export interface ProfileReference {
@@ -14,34 +15,26 @@ export interface ProfileReferenceSource {
 }
 export interface ProfileReferenceInventory { complete: boolean; references: readonly ProfileReference[] }
 
-const assigned = new WeakMap<UserPreset, ProfileKey>();
-export function profileKey(profile: UserPreset): ProfileKey {
-  if (profile.id) return profile.id;
-  let id = assigned.get(profile);
-  if (!id) { id = `profile:${randomId()}`; assigned.set(profile, id); }
-  return id;
-}
-export const withProfileIdentity = (profile: UserPreset): UserPreset => profile.id ? profile : { ...profile, id: profileKey(profile) };
-export const matchesProfile = (profile: UserPreset, key: ProfileKey) => profileKey(profile) === key || profile.name === key || !!profile.aliases?.includes(key);
+export type LibraryProfile = (PrinterRecord | FilamentRecord | ProcessRecord) & { type: PresetType };
+export const profileKey = (profile: { id: string }): ProfileKey => profile.id;
+export const matchesProfile = (profile: { id: string; name: string; aliases?: string[] }, key: ProfileKey) =>
+  profile.id === key || profile.name === key || !!profile.aliases?.includes(key);
 
-interface ProfileIndex { ids: Map<string, UserPreset | null>; names: Map<string, UserPreset | null>; aliases: Map<string, UserPreset | null> }
-const profileIndexes = new WeakMap<UserPreset[], Map<string, ProfileIndex>>();
-const indexProfile = (map: Map<string, UserPreset | null>, key: string, profile: UserPreset) => {
-  if (!map.has(key)) map.set(key, profile); else map.set(key, null);
-};
-export function lookupProfile(s: Pick<State, 'userPresets'>, type: PresetType, key: ProfileKey, printerId?: ProfileKey): { profile?: UserPreset; ambiguous: boolean } {
-  let scopes = profileIndexes.get(s.userPresets);
-  if (!scopes) profileIndexes.set(s.userPresets, (scopes = new Map()));
-  const scope = JSON.stringify([type, printerId]);
-  let index = scopes.get(scope);
+const indexes = new WeakMap<object, Map<PresetType, { ids: Map<string, LibraryProfile | null>; names: Map<string, LibraryProfile | null>; aliases: Map<string, LibraryProfile | null> }>>();
+const put = (map: Map<string, LibraryProfile | null>, key: string, p: LibraryProfile) => map.set(key, map.has(key) ? null : p);
+export function lookupProfile(s: Pick<State, 'records'>, type: PresetType, key: ProfileKey): { profile?: LibraryProfile; ambiguous: boolean } {
+  let byType = indexes.get(s.records);
+  if (!byType) indexes.set(s.records, (byType = new Map()));
+  let index = byType.get(type);
   if (!index) {
     index = { ids: new Map(), names: new Map(), aliases: new Map() };
-    for (const profile of s.userPresets) if (profile.type === type && (printerId === undefined || profile.printerId === printerId)) {
-      indexProfile(index.ids, profileKey(profile), profile);
-      indexProfile(index.names, profile.name, profile);
-      for (const alias of new Set(profile.aliases ?? [])) indexProfile(index.aliases, alias, profile);
+    const list = type === 'machine' ? s.records.printers : type === 'process' ? s.records.processes : s.records.filaments;
+    for (const record of list) {
+      const p = { ...record, type } as LibraryProfile;
+      put(index.ids, p.id, p); put(index.names, p.name, p);
+      for (const alias of new Set((p as FilamentRecord).aliases ?? [])) put(index.aliases, alias, p);
     }
-    scopes.set(scope, index);
+    byType.set(type, index);
   }
   for (const map of [index.ids, index.names, index.aliases]) if (map.has(key)) {
     const profile = map.get(key);
@@ -49,25 +42,18 @@ export function lookupProfile(s: Pick<State, 'userPresets'>, type: PresetType, k
   }
   return { ambiguous: false };
 }
-export const findProfile = (s: Pick<State, 'userPresets'>, type: PresetType, key: ProfileKey, printerId?: ProfileKey): UserPreset | undefined => lookupProfile(s, type, key, printerId).profile;
+export const findProfile = (s: Pick<State, 'records'>, type: PresetType, key: ProfileKey): LibraryProfile | undefined => lookupProfile(s, type, key).profile;
 
 export function profileReferenceInventory(s: State, type: PresetType, key: ProfileKey, external?: ProfileReferenceSource): ProfileReferenceInventory {
   const p = findProfile(s, type, key);
   if (!p) return { complete: false, references: [] };
   const references: ProfileReference[] = [];
-  const selected = type === 'machine' ? [s.printer] : type === 'process' ? [s.process] : s.filamentSlots;
+  const selected = type === 'machine' ? [s.printer] : type === 'process' ? [s.process] : slotFilaments(s);
   selected.forEach((selectedKey, slot) => {
     if (!matchesProfile(p, selectedKey)) return;
     references.push({ kind: 'active', label: type === 'filament' ? `Filament ${slot + 1}` : type === 'machine' ? 'Printer' : 'Process' });
     if (s.project || s.projectName) references.push({ kind: 'project', label: s.projectName ?? s.project?.name ?? 'Current project' });
   });
-  for (const child of s.userPresets) if (child.type === type && child.parent && matchesProfile(p, child.parent))
-    references.push({ kind: 'inheritance', label: child.name, owner: profileKey(child) });
   for (const item of external?.references ?? []) if (item.type === type && matchesProfile(p, item.key)) references.push(item.reference);
   return { complete: external?.complete === true, references };
 }
-export const profileReferences = (s: State, type: PresetType, key: ProfileKey, source?: ProfileReferenceSource) => profileReferenceInventory(s, type, key, source).references;
-export const isProfileDeletable = (s: State, type: PresetType, key: ProfileKey, source?: ProfileReferenceSource) => {
-  const inventory = profileReferenceInventory(s, type, key, source);
-  return inventory.complete && inventory.references.length === 0;
-};

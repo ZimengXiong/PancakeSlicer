@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log"
@@ -58,19 +59,39 @@ type versionIndex struct {
 	Versions []projectVersion `json:"versions"`
 }
 
+func (p workspaceProject) history() *versionIndex {
+	if p.Versions == nil {
+		return &versionIndex{Next: 1, Versions: []projectVersion{}}
+	}
+	x := *p.Versions
+	x.Versions = append([]projectVersion{}, p.Versions.Versions...)
+	for i, v := range x.Versions {
+		if v.Slice != nil {
+			slice := *v.Slice
+			x.Versions[i].Slice = &slice
+		}
+	}
+	return &x
+}
+
 func (st *workspaceStore) versionOfJob(job string) (string, uint64) {
 	if st == nil {
 		return "", 0
 	}
-	dirs, _ := os.ReadDir(filepath.Join(st.root, "versions"))
-	for _, d := range dirs {
-		x, err := st.readVersions(d.Name())
-		if err != nil {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	d, err := st.read()
+	if err != nil {
+		log.Printf("version of job %s: %v", job, err)
+		return "", 0
+	}
+	for id, p := range d.Projects {
+		if p.Versions == nil {
 			continue
 		}
-		for _, v := range x.Versions {
+		for _, v := range p.Versions.Versions {
 			if v.Slice != nil && v.Slice.Job == job {
-				return d.Name(), v.ID
+				return id, v.ID
 			}
 		}
 	}
@@ -125,20 +146,6 @@ func (h *sendHistory) sendsByVersion(project string) map[uint64][]versionSend {
 }
 
 func (st *workspaceStore) versionDir(id string) string { return filepath.Join(st.root, "versions", id) }
-func (st *workspaceStore) readVersions(id string) (*versionIndex, error) {
-	raw, err := os.ReadFile(filepath.Join(st.versionDir(id), "index.json"))
-	if errors.Is(err, os.ErrNotExist) {
-		return &versionIndex{Next: 1}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var x versionIndex
-	if err = json.Unmarshal(raw, &x); err != nil {
-		return nil, err
-	}
-	return &x, nil
-}
 
 func recordChange(raw json.RawMessage) []versionChange {
 	var v struct {
@@ -177,28 +184,20 @@ next:
 	return out
 }
 
-func (st *workspaceStore) recordVersion(id string, revision uint64, record json.RawMessage, change []versionChange, kind string) {
-	if err := st.writeVersion(id, revision, record, change, kind); err != nil {
-		log.Printf("project %s version history: %v", id, err)
-	}
-}
-func (st *workspaceStore) writeVersion(id string, revision uint64, record json.RawMessage, change []versionChange, kind string) error {
-	dir := st.versionDir(id)
-	if err := os.MkdirAll(filepath.Join(dir, "records"), 0700); err != nil {
-		return err
-	}
+func (st *workspaceStore) keepRecord(id string, record json.RawMessage) (string, error) {
 	sum := sha256.Sum256(record)
 	sha := hex.EncodeToString(sum[:])
-	path := filepath.Join(dir, "records", sha+".json")
+	path := filepath.Join(st.versionDir(id), "records", sha+".json")
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		if err := durableWrite(path, record); err != nil {
-			return err
-		}
+		return sha, durableWrite(path, record)
+	} else if err != nil {
+		return "", err
 	}
-	x, err := st.readVersions(id)
-	if err != nil {
-		return err
-	}
+	return sha, nil
+}
+
+func withVersion(p workspaceProject, revision uint64, sha string, record json.RawMessage, change []versionChange, kind string, now int64) *versionIndex {
+	x := p.history()
 	var meta struct {
 		Meta struct {
 			Name    string `json:"name"`
@@ -206,7 +205,6 @@ func (st *workspaceStore) writeVersion(id string, revision uint64, record json.R
 		} `json:"meta"`
 	}
 	json.Unmarshal(record, &meta)
-	now := time.Now().UnixMilli()
 	content := recordContent(record)
 	if last := lastVersion(x); last != nil && (last.Record == sha || content != "" && last.Content == content) && last.Name == meta.Meta.Name {
 		last.Revision, last.Until, last.Record, last.Content = revision, now, sha, content
@@ -219,7 +217,8 @@ func (st *workspaceStore) writeVersion(id string, revision uint64, record json.R
 			Name: meta.Meta.Name, Objects: meta.Meta.Objects, Change: mergeChanges(nil, change)})
 		x.Next++
 	}
-	return st.saveVersions(id, x)
+	thinVersions(x)
+	return x
 }
 
 func recordContent(record json.RawMessage) string {
@@ -246,7 +245,7 @@ func lastVersion(x *versionIndex) *projectVersion {
 	return &x.Versions[len(x.Versions)-1]
 }
 
-func (st *workspaceStore) saveVersions(id string, x *versionIndex) error {
+func thinVersions(x *versionIndex) {
 	kept, fresh, days := x.Versions[:0:0], 0, map[string]bool{}
 	for i := len(x.Versions) - 1; i >= 0; i-- {
 		v := x.Versions[i]
@@ -263,9 +262,11 @@ func (st *workspaceStore) saveVersions(id string, x *versionIndex) error {
 	}
 	sort.Slice(kept, func(i, j int) bool { return kept[i].ID < kept[j].ID })
 	x.Versions = kept
-	dir := st.versionDir(id)
-	if err := durableJSON(filepath.Join(dir, "index.json"), x); err != nil {
-		return err
+}
+
+func (st *workspaceStore) pruneVersionFiles(id string, x *versionIndex) {
+	if x == nil {
+		return
 	}
 	records, slices := map[string]bool{}, map[string]bool{}
 	for _, v := range x.Versions {
@@ -274,15 +275,28 @@ func (st *workspaceStore) saveVersions(id string, x *versionIndex) error {
 			slices[v.Slice.Key] = true
 		}
 	}
+	dir := st.versionDir(id)
 	for sub, used := range map[string]map[string]bool{"records": records, "slices": slices} {
 		entries, _ := os.ReadDir(filepath.Join(dir, sub))
 		for _, e := range entries {
 			if !used[e.Name()] && e.Name()[0] != '.' {
-				os.RemoveAll(filepath.Join(dir, sub, e.Name()))
+				if err := os.RemoveAll(filepath.Join(dir, sub, e.Name())); err != nil {
+					log.Printf("project %s version files: %v", id, err)
+				}
 			}
 		}
 	}
-	return nil
+}
+
+func (st *workspaceStore) storeHistory(w http.ResponseWriter, d *workspaceData, id string, x *versionIndex) bool {
+	p := d.Projects[id]
+	p.Versions = x
+	d.Projects[id] = p
+	if err := st.save(d); err != nil {
+		workspaceFailure(w, 507, "versions_write_failed", "Uh-oh, couldn't save the version history ("+storageCause(err)+").", "retry_storage", 0)
+		return false
+	}
+	return true
 }
 
 func sliceNumbers(raw json.RawMessage, s *versionSlice) {
@@ -337,11 +351,7 @@ func (s *Server) versionRoutes(mux *http.ServeMux) {
 	}
 	version := func(w http.ResponseWriter, r *http.Request, fn func(d *workspaceData, id string, x *versionIndex, v *projectVersion)) {
 		project(w, r, func(d *workspaceData, id string) {
-			x, err := st.readVersions(id)
-			if err != nil {
-				workspaceFailure(w, 503, "versions_unavailable", "Version history could not be read.", "retry_storage", 0)
-				return
-			}
+			x := d.Projects[id].history()
 			want, _ := strconv.ParseUint(r.PathValue("v"), 10, 64)
 			for i := range x.Versions {
 				if x.Versions[i].ID == want {
@@ -349,16 +359,12 @@ func (s *Server) versionRoutes(mux *http.ServeMux) {
 					return
 				}
 			}
-			workspaceFailure(w, 404, "version_missing", "This version is no longer kept.", "open_versions", 0)
+			workspaceFailure(w, 404, "version_missing", "Hmm, this version isn't kept anymore.", "open_versions", 0)
 		})
 	}
 	mux.HandleFunc("GET /api/versions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		project(w, r, func(d *workspaceData, id string) {
-			x, err := st.readVersions(id)
-			if err != nil {
-				workspaceFailure(w, 503, "versions_unavailable", "Version history could not be read.", "retry_storage", 0)
-				return
-			}
+			x := d.Projects[id].history()
 			type listed struct {
 				projectVersion
 				Sends []versionSend `json:"sends,omitempty"`
@@ -375,7 +381,7 @@ func (s *Server) versionRoutes(mux *http.ServeMux) {
 		version(w, r, func(d *workspaceData, id string, _ *versionIndex, v *projectVersion) {
 			raw, err := os.ReadFile(filepath.Join(st.versionDir(id), "records", v.Record+".json"))
 			if err != nil {
-				workspaceFailure(w, 503, "version_unavailable", "This version could not be read.", "retry_storage", 0)
+				workspaceFailure(w, 503, "version_unavailable", "Oops! Couldn't read this version.", "retry_storage", 0)
 				return
 			}
 			w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
@@ -383,8 +389,8 @@ func (s *Server) versionRoutes(mux *http.ServeMux) {
 		})
 	})
 	mux.HandleFunc("GET /api/versions/{id}/{v}/summary", func(w http.ResponseWriter, r *http.Request) {
-		version(w, r, func(_ *workspaceData, id string, _ *versionIndex, v *projectVersion) {
-			etag := `"` + v.Record + `"`
+		version(w, r, func(d *workspaceData, id string, _ *versionIndex, v *projectVersion) {
+			etag := fmt.Sprintf(`"%s.%d"`, v.Record, len(d.Migrations))
 			w.Header().Set("Cache-Control", "private, no-cache")
 			w.Header().Set("ETag", etag)
 			if r.Header.Get("If-None-Match") == etag {
@@ -399,10 +405,10 @@ func (s *Server) versionRoutes(mux *http.ServeMux) {
 				Doc map[string]json.RawMessage `json:"doc"`
 			}
 			if err == nil {
-				err = json.Unmarshal(raw, &rec)
+				err = json.Unmarshal(migrateVersionRecord(d, raw, v.At), &rec)
 			}
 			if err != nil {
-				workspaceFailure(w, 503, "version_unavailable", "This version could not be read.", "retry_storage", 0)
+				workspaceFailure(w, 503, "version_unavailable", "Oops! Couldn't read this version.", "retry_storage", 0)
 				return
 			}
 			doc := map[string]json.RawMessage{}
@@ -421,17 +427,16 @@ func (s *Server) versionRoutes(mux *http.ServeMux) {
 		if !workspaceDecode(w, r, &in) {
 			return
 		}
-		project(w, r, func(_ *workspaceData, id string) {
-			x, err := st.readVersions(id)
+		project(w, r, func(d *workspaceData, id string) {
+			x := d.Projects[id].history()
 			last := lastVersion(x)
-			if err != nil || last == nil || last.Revision != in.Revision {
-				workspaceFailure(w, 409, "version_moved", "The project changed after this revision.", "reload", 0)
+			if last == nil || last.Revision != in.Revision {
+				workspaceFailure(w, 409, "version_moved", "The project changed after this revision.", "reload", d.Projects[id].Revision)
 				return
 			}
 			if !last.Sealed {
 				last.Sealed = true
-				if err = st.saveVersions(id, x); err != nil {
-					workspaceFailure(w, 507, "versions_write_failed", "Version history could not be saved.", "retry_storage", 0)
+				if !st.storeHistory(w, d, id, x) {
 					return
 				}
 			}
@@ -451,7 +456,7 @@ func (s *Server) versionRoutes(mux *http.ServeMux) {
 			j.AwaitFinished(r.Context())
 		}
 		if j == nil || !sliceJob(j) {
-			workspaceFailure(w, 409, "slice_unavailable", "The slice is not finished or no longer exists.", "slice_again", 0)
+			workspaceFailure(w, 409, "slice_unavailable", "Oops, that slice isn't finished or isn't around anymore.", "slice_again", 0)
 			return
 		}
 		key := j.ID
@@ -462,7 +467,7 @@ func (s *Server) versionRoutes(mux *http.ServeMux) {
 		view := j.View()
 		root := filepath.Join(st.root, "versions")
 		if err := os.MkdirAll(root, 0700); err != nil {
-			workspaceFailure(w, 507, "slice_copy_failed", "The slice could not be kept with this version.", "retry_storage", 0)
+			workspaceFailure(w, 507, "slice_copy_failed", "Uh-oh, couldn't keep the slice with this version.", "retry_storage", 0)
 			return
 		}
 		var pending string
@@ -476,12 +481,12 @@ func (s *Server) versionRoutes(mux *http.ServeMux) {
 			err = errors.Join(copyKeptSlice(j.Dir, pending), atomicJobFile(filepath.Join(pending, "record.json"), view.Slice), atomicJobFile(filepath.Join(pending, "request.json"), request))
 		}
 		if err != nil {
-			workspaceFailure(w, 507, "slice_copy_failed", "The slice could not be kept with this version.", "retry_storage", 0)
+			workspaceFailure(w, 507, "slice_copy_failed", "Uh-oh, couldn't keep the slice with this version.", "retry_storage", 0)
 			return
 		}
-		version(w, r, func(_ *workspaceData, id string, x *versionIndex, v *projectVersion) {
+		version(w, r, func(d *workspaceData, id string, x *versionIndex, v *projectVersion) {
 			if v.Revision != in.Revision {
-				workspaceFailure(w, 409, "version_moved", "This version changed after the slice started.", "slice_again", 0)
+				workspaceFailure(w, 409, "version_moved", "Heads up — this version changed after the slice started.", "slice_again", 0)
 				return
 			}
 			target := filepath.Join(st.versionDir(id), "slices", key)
@@ -492,24 +497,23 @@ func (s *Server) versionRoutes(mux *http.ServeMux) {
 					err = errors.Join(os.MkdirAll(filepath.Dir(target), 0700), os.Rename(pending, target), syncWorkspaceDirectory(filepath.Dir(target)))
 				}
 				if err != nil {
-					workspaceFailure(w, 507, "slice_copy_failed", "The slice could not be kept with this version.", "retry_storage", 0)
+					workspaceFailure(w, 507, "slice_copy_failed", "Uh-oh, couldn't keep the slice with this version.", "retry_storage", 0)
 					return
 				}
 			}
 			v.Sealed = true
 			v.Slice = &versionSlice{Key: key, Job: j.ID, At: time.Now().UnixMilli()}
 			sliceNumbers(view.Slice, v.Slice)
-			if err := st.saveVersions(id, x); err != nil {
-				workspaceFailure(w, 507, "versions_write_failed", "Version history could not be saved.", "retry_storage", 0)
+			if !st.storeHistory(w, d, id, x) {
 				return
 			}
 			writeJSON(w, 200, v)
 		})
 	})
 	mux.HandleFunc("POST /api/versions/{id}/{v}/open-slice", func(w http.ResponseWriter, r *http.Request) {
-		version(w, r, func(_ *workspaceData, id string, x *versionIndex, v *projectVersion) {
+		version(w, r, func(d *workspaceData, id string, x *versionIndex, v *projectVersion) {
 			if v.Slice == nil {
-				workspaceFailure(w, 404, "slice_missing", "This version was not sliced.", "slice_again", 0)
+				workspaceFailure(w, 404, "slice_missing", "This version hasn't been sliced yet!", "slice_again", 0)
 				return
 			}
 			if j := s.jobs.Get(v.Slice.Job); j != nil && sliceJob(j) {
@@ -531,12 +535,12 @@ func (s *Server) versionRoutes(mux *http.ServeMux) {
 			}
 			if err != nil {
 				log.Printf("project %s version %d slice: %v", id, v.ID, err)
-				workspaceFailure(w, 503, "slice_unavailable", "The kept slice could not be opened.", "slice_again", 0)
+				workspaceFailure(w, 503, "slice_unavailable", "Oops! Couldn't open the saved slice.", "slice_again", 0)
 				return
 			}
 			v.Slice.Job = j.ID
-			if err := st.saveVersions(id, x); err != nil {
-				log.Printf("project %s version %d slice job: %v", id, v.ID, err)
+			if !st.storeHistory(w, d, id, x) {
+				return
 			}
 			writeJSON(w, 200, j.View())
 		})

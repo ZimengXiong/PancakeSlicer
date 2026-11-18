@@ -58,13 +58,13 @@ func (s *Server) source(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, errSourceUnconfigured) {
 			status = http.StatusNotFound
 		}
-		fail(w, status, err.Error())
+		fail(w, status, "source_failed", err.Error())
 		return
 	}
 	defer file.Close()
 	stat, err := file.Stat()
 	if err != nil {
-		fail(w, http.StatusServiceUnavailable, "Source code archive isn't available on this server.")
+		fail(w, http.StatusServiceUnavailable, "source_code_archive_isnt")
 		return
 	}
 	w.Header().Set("Content-Type", "application/gzip")

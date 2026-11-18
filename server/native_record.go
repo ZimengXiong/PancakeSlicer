@@ -230,6 +230,7 @@ func uncurvedObjects(raw, rawInputs json.RawMessage) []map[string]any {
 		share, measured := o["curved_share"].(float64)
 		limit, _ := o["planar_limit"].(string)
 		reason, _ := o["planar_fallback_reason"].(string)
+		reasonCode, _ := o["planar_fallback_code"].(string)
 		if mode == "" || mode == "off" || !measured || share > 0 || (limit == "" && reason == "") {
 			continue
 		}
@@ -238,7 +239,7 @@ func uncurvedObjects(raw, rawInputs json.RawMessage) []map[string]any {
 			method = mode
 		}
 		entry := map[string]any{"object": i, "name": o["name"], "mode": mode, "method": method, "planar_limit": limit, "reason": reason,
-			"try_ignore_duct": marked && !report.Clearance.Override && o["access_by"] != "nozzle" && (limit == "access" || strings.Contains(reason, "print head"))}
+			"try_ignore_duct": marked && !report.Clearance.Override && o["access_by"] != "nozzle" && (limit == "access" || reasonCode == "head_strike")}
 		for _, k := range []string{"curved_max_angle_deg", "reachable_slope_deg"} {
 			if v, ok := o[k].(float64); ok {
 				entry[k] = v
@@ -320,13 +321,11 @@ func collidingObjects(raw json.RawMessage, c Config, j *Job) (failures []map[str
 			}
 			continue
 		}
-		reason := "Could not check " + method + " for collisions; try again or slice flat"
+		reason := "Couldn't check " + method + " for bumps — give it another try or slice flat!"
 		if checked && body > 0 {
-			reason = method + " would hit the part in " + strconv.Itoa(body) + " moves, up to " + strconv.FormatFloat(depth, 'f', 2, 64) +
-				" mm deep, past your " + strconv.FormatFloat(v.Tolerance, 'f', -1, 64) + " mm collision tolerance"
+			reason = "Watch out! " + method + " would bump the part in " + strconv.Itoa(body) + " moves (up to " + strconv.FormatFloat(depth, 'f', 2, 64) + " mm deep, past your " + strconv.FormatFloat(v.Tolerance, 'f', -1, 64) + " mm tolerance)."
 		} else if checked {
-			reason = method + " would graze the part with the fan duct in " + strconv.Itoa(duct) + " moves, past your limit of " +
-				strconv.Itoa(v.DuctLimit)
+			reason = "Careful! " + method + " would graze the part with the fan duct in " + strconv.Itoa(duct) + " moves (past your " + strconv.Itoa(v.DuctLimit) + " limit)."
 		}
 		failures = append(failures, map[string]any{"object": i, "name": o["name"], "mode": mode, "method": method, "planar_limit": "clearance",
 			"reason": reason, "try_ignore_duct": checked && duct > v.DuctLimit && body == 0})
@@ -409,7 +408,9 @@ func (j *Job) morphClearance(c Config) clearanceVerdict {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), verifierTimeout)
 		defer cancel()
-		out, err := exec.CommandContext(ctx, c.Tool, "--verify-gcode", gcode, "--profiles", filepath.Join(c.Resources, "profiles")).Output()
+		cmd := exec.CommandContext(ctx, c.Tool, "--verify-gcode", gcode, "--profiles", filepath.Join(c.Resources, "profiles"))
+		cmd.Env = engineEnv(os.TempDir())
+		out, err := cmd.Output()
 		v := clearanceVerdict{}
 		duct := false
 		for _, line := range strings.Split(string(out), "\n") {
@@ -433,7 +434,7 @@ func (j *Job) morphClearance(c Config) clearanceVerdict {
 		}
 		settings := gcodeSettings(gcode, "nonplanar_collision_tolerance", "nonplanar_duct_graze_limit", "nonplanar_ignore_duct", "nonplanar_collision_check")
 		v.Check = settings["nonplanar_collision_check"]
-		defaults := optionDefaults(optionData)
+		defaults := optionDefaults(c.Options.plain)
 		for key, policy := range map[string]string{"nonplanar_collision_tolerance": "1", "nonplanar_duct_graze_limit": "200", "nonplanar_ignore_duct": "0"} {
 			if _, ok := settings[key]; ok {
 				continue

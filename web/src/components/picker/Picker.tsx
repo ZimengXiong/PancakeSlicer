@@ -10,11 +10,12 @@ import { Caret } from '../Caret';
 import { edgeOf, type Edge } from '../anchor';
 import { SlotChip } from '../SlotChip';
 import { joinParts } from '../../separator';
-export interface PickerItem { id: string; label: string; child?: boolean; sub?: string; swatch?: string | null; meta?: string; facet?: string; search?: string; disabled?: boolean | string;
+import { InLayer } from '../PageLayer';
+export interface PickerItem { id: string; label: string; child?: boolean;  muted?: boolean; sub?: string; meta?: string; facet?: string; search?: string; disabled?: boolean | string;
   image?: string | null; status?: { label: string; tone: 'online' | 'printing' | 'paused' | 'offline' | 'error' }; slots?: { n: number; colour: string }[] }
 export interface PickerGroup { id: string; title: string; items: PickerItem[]; filter?: boolean; allOnly?: boolean }
 export interface PickerAction { label: string; run(): void; keep?: boolean }
-interface Props { label: string; value?: string; groups(): PickerGroup[]; sections?: boolean; onPick(id: string): void; facetHeads?: boolean; memory?: string; footer?: PickerAction[]; className?: string; triggerProps?: ComponentPropsWithRef<'button'> & { 'data-autofocus'?: boolean | string }; children: ReactNode }
+interface Props { label: string; value?: string; groups(): PickerGroup[]; sections?: boolean; onPick(id: string): void; facetHeads?: boolean; memory?: string; footer?: PickerAction[]; className?: string; triggerProps?: ComponentPropsWithRef<'button'> & { 'data-autofocus'?: boolean | string }; empty?: string; children: ReactNode }
 const read = (key: string): string[] => { const v = preferenceJson<unknown>(key, []); return Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : []; };
 const write = (key: string, value: string[]) => savePreferences({[key]:value});
 const splitTail = (label: string): [string, string] => {
@@ -61,8 +62,8 @@ const PickerRow = memo(function PickerRow({ row, index, id, active, selected, pi
   countRender('picker-row');
   const media = row.image !== undefined, [head, tail] = splitTail(row.label);
   return <div className={`pk-row ${active ? 'is-active' : ''}`} data-index={index} data-child={row.child || undefined}>
-    <button id={`${id}-${index}`} type="button" role="option" tabIndex={active ? 0 : -1} aria-selected={selected} aria-disabled={!!row.disabled} className="pk-option" onFocus={() => onActive(index)} onPointerMove={(e) => { if (e.pointerType === 'mouse') onActive(index); }} data-full-text={joinParts([row.label, row.sub, row.meta])} onClick={() => onPick(row)}>
-      {media && <PickerArt src={row.image ?? null}/>}{row.swatch !== undefined && <span className="profile-color-swatch" data-unknown={!row.swatch} style={{backgroundColor:row.swatch ?? undefined}}/>}
+    <button id={`${id}-${index}`} type="button" role="option" tabIndex={active ? 0 : -1} aria-selected={selected} aria-disabled={!!row.disabled} className={`pk-option${row.muted ? ' is-muted' : ''}`} onFocus={() => onActive(index)} onPointerMove={(e) => { if (e.pointerType === 'mouse') onActive(index); }} data-full-text={joinParts([row.label, row.sub, row.meta])} onClick={() => onPick(row)}>
+      {media && <PickerArt src={row.image ?? null}/>}
       <span className="pk-text"><span className="pk-label"><span className="pk-head">{head}</span>{tail && <span className="pk-tail">{tail}</span>}</span>{row.sub && <span className="pk-sub">{row.sub}</span>}{media && row.meta && <span className="pk-sub">{row.meta}</span>}{row.status && <span className="pk-status status-text" data-tone={row.status.tone}>{row.status.label}</span>}</span>
       {!media && row.meta && <span className="pk-meta">{row.meta}</span>}
       {!!row.slots?.length && <span className="pk-slots" role="img" aria-label={`Also in slot ${row.slots.map(c => c.n).join(', ')}`}>{row.slots.map(c => <SlotChip key={c.n} n={c.n} colour={c.colour}/>)}</span>}
@@ -77,7 +78,7 @@ const PickerTab = memo(function PickerTab({ t, on, active, id, value, pinned, em
 }) {
   return <div className="pk-tab" data-off={on ? undefined : ''}>{t.rows.map((row, i) => <Fragment key={`${i}:${row.id}`}>{t.heads.has(i) && <div className="pk-group" role="presentation">{t.heads.get(i)}</div>}<PickerRow row={row} index={i} id={`${id}-${t.tab}`} active={on && active === i} selected={value === row.id} pinned={pinned.has(row.id)} onActive={onActive} onPick={onPick} onPin={onPin} /></Fragment>)}{!t.rows.length && <div className="pk-empty">{empty}</div>}</div>;
 });
-export function Picker({ label, value, groups, sections = false, onPick, facetHeads = false, memory = `orca.parity.${label}`, footer = [], className = '', triggerProps, children }: Props) {
+export function Picker({ label, value, groups, sections = false, onPick, facetHeads = false, memory = `orca.parity.${label}`, footer = [], className = '', triggerProps, empty = 'No profiles', children }: Props) {
   countRender('picker');
   const triggerEl = useRef<HTMLButtonElement | null>(null), [edge, setEdge] = useState<Edge>({ align: 'start' });
   const [open, setOpen] = useState(false), [primed, setPrimed] = useState(false), [rail, setRail] = useState(''), [active, setActive] = useState(0);
@@ -145,7 +146,7 @@ export function Picker({ label, value, groups, sections = false, onPick, facetHe
       triggerProps?.onKeyDown?.(e);
       if (!e.defaultPrevented && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) { e.preventDefault(); e.stopPropagation(); resetType(); setRail(''); setOpen(true); }
     }}>{children}<Caret className="pk-caret"/></button></Popover.Trigger>
-    <Popover.Portal forceMount={primed || undefined}><Popover.Content forceMount={primed || undefined} className={`orca-menu pk-pop ${rows.some(r => r.image !== undefined) ? 'pk-media' : ''}`} data-menu-family="orca" aria-label={label} side="bottom" align={edge.align} sideOffset={4} collisionPadding={8} onOpenAutoFocus={e => { e.preventDefault(); if (open) focusChoice(); }} onKeyDown={e => {
+    <InLayer portal={Popover.Portal} forceMount={primed || undefined}><Popover.Content forceMount={primed || undefined} className={`orca-menu pk-pop ${rows.some(r => r.image !== undefined) ? 'pk-media' : ''}`} data-menu-family="orca" aria-label={label} side="bottom" align={edge.align} sideOffset={4} collisionPadding={8} onOpenAutoFocus={e => { e.preventDefault(); if (open) focusChoice(); }} onKeyDown={e => {
       if (e.key === 'Escape' || e.key === 'Tab') return;
       e.stopPropagation();
       const at = enabled.indexOf(active), inRail = e.target instanceof Element && !!e.target.closest('.pk-rail');
@@ -173,9 +174,9 @@ export function Picker({ label, value, groups, sections = false, onPick, facetHe
     }}>
       <div ref={body} className="pk-body">
         <PickerRail tabs={rails} active={activeRail} hover label={`${label} groups`} list={list} railRef={railRef} onChange={changeRail} />
-        <div className="pk-list" role="listbox" aria-label={label} ref={list}>{tabs.map(t => <PickerTab key={t.tab} t={t} on={t.tab === activeRail} active={t.tab === activeRail ? active : -1} id={id} value={value} pinned={pinnedSet} empty="No profiles" onActive={setActive} onPick={pick} onPin={pin} />)}</div>
+        <div className="pk-list" role="listbox" aria-label={label} ref={list}>{tabs.map(t => <PickerTab key={t.tab} t={t} on={t.tab === activeRail} active={t.tab === activeRail ? active : -1} id={id} value={value} pinned={pinnedSet} empty={empty} onActive={setActive} onPick={pick} onPin={pin} />)}</div>
       </div>
       <div className="pk-foot">{footer.map(a => <button type="button" className="btn" key={a.label} onClick={() => { if (!a.keep) setOpen(false); a.run(); }}>{a.label}</button>)}</div>
-    </Popover.Content></Popover.Portal>
+    </Popover.Content></InLayer>
   </Popover.Root>;
 }

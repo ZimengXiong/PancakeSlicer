@@ -7,27 +7,29 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+
+	"github.com/OrcaSlicer/OrcaSlicer/server/resolve"
 )
 
-func livePrinterProfiles(doc map[string]json.RawMessage) (map[string]*v4Record, error) {
-	all, err := v4Profiles(doc)
+func livePrinterProfiles(catalog *resolve.Catalog, doc map[string]json.RawMessage) (map[string]*resolve.Printer, error) {
+	lib, err := catalog.ReadLibrary(doc)
 	if err != nil {
 		return nil, err
 	}
-	live := map[string]*v4Record{}
-	for id, r := range all {
-		if r.Type == "printer" && r.live() {
-			live[id] = r
+	live := map[string]*resolve.Printer{}
+	for id, p := range lib.Printers {
+		if p.Live() {
+			live[id] = p
 		}
 	}
 	return live, nil
 }
 
 func (s *Server) storedLibrary() (map[string]json.RawMessage, error) {
-	l := s.libraryV4
+	l := s.library
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if _, err := os.Stat(filepath.Join(l.dir, libraryV4File)); err != nil {
+	if _, err := os.Stat(filepath.Join(l.dir, libraryFile)); err != nil {
 		return nil, err
 	}
 	e, err := l.read()
@@ -57,7 +59,7 @@ func (s *Server) reconcileConnections(doc map[string]json.RawMessage, reason str
 	if m.store == nil {
 		return
 	}
-	live, err := livePrinterProfiles(doc)
+	live, err := livePrinterProfiles(s.catalog, doc)
 	if err != nil {
 		log.Printf("printer connections: not reconciled with the library (%s): %v", reason, err)
 		return
@@ -121,7 +123,7 @@ func (s *Server) connectionConflict(key, serial string, self *PrinterConfig) str
 	if err != nil {
 		return "the printer profiles could not be read; try again"
 	}
-	live, err := livePrinterProfiles(doc)
+	live, err := livePrinterProfiles(s.catalog, doc)
 	if err != nil {
 		return "the printer profiles could not be read; try again"
 	}

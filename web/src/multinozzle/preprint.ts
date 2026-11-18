@@ -1,17 +1,18 @@
 import type { Config } from '../api/types';
 import type { PrinterStatus, Tray } from '../printers/connections';
-import { extruderCount, extruderLabel, installedVariant, valueAt } from './config';
+import type { PrinterRecord } from '../profiles/records';
+import { extruderLabel, installedVariant, valueAt } from './config';
 import type { SendFilament } from './ams';
 
-export function preprintWarnings(machine: Config, status: PrinterStatus | undefined, filaments: SendFilament[], mapping: number[], trays: Tray[]): string[] {
-  const warnings: string[] = [], count = extruderCount(machine);
+export function preprintWarnings(printer: PrinterRecord, machine: Config, status: PrinterStatus | undefined, filaments: SendFilament[], mapping: number[], trays: Tray[]): string[] {
+  const warnings: string[] = [], count = printer.nozzles.length;
   if (status?.online && status.nozzles?.length) for (let extruder = 0; extruder < count; extruder++) {
     if (filaments.length && filaments.every((f) => f.extruder !== undefined && f.extruder !== extruder)) continue;
     const actual = status.nozzles.filter((n) => n.extruder === extruder && (count === 1 || !n.legacy));
     if (!actual.length) continue;
-    const configuredDiameter = Number(valueAt(machine.nozzle_diameter, extruder));
-    const configuredFlow = valueAt(machine.nozzle_volume_type ?? machine.default_nozzle_volume_type, extruder, 'Standard');
-    const variant = installedVariant(machine, 'machine', machine, extruder);
+    const configuredDiameter = printer.nozzles[extruder].diameter;
+    const configuredFlow = printer.nozzles[extruder].volume ?? 'Standard';
+    const variant = installedVariant(machine, 'machine', printer.nozzles[extruder], extruder);
     const material = valueAt(machine.nozzle_type, variant);
     const label = extruderLabel(extruder, count, true);
     const sliced = filaments.filter((f) => f.extruder === extruder && f.flow);

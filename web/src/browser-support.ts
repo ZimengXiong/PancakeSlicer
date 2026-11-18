@@ -40,8 +40,9 @@ export async function checkBrowserSupport(): Promise<void> {
   if (typeof Worker === 'undefined' || typeof fetch === 'undefined' ||
       typeof ReadableStream === 'undefined' || typeof TransformStream === 'undefined' ||
       typeof DecompressionStream === 'undefined' || typeof ResizeObserver === 'undefined' ||
-      typeof Blob === 'undefined' || typeof Blob.prototype.stream !== 'function')
-    throw new Error('Oops! Your browser is missing a few features PancakeSlicer needs (web workers, streaming, or ResizeObserver).');
+      typeof Blob === 'undefined' || typeof Blob.prototype.stream !== 'function' ||
+      typeof BroadcastChannel === 'undefined' || typeof EventSource === 'undefined')
+    throw new Error('Oops! Your browser is missing a few features PancakeSlicer needs (web workers, streaming, ResizeObserver, or tab messaging).');
 
   await new Promise<void>((resolve, reject) => {
     const worker = new Worker(new URL('./browser-support.worker.ts', import.meta.url), { type: 'module' });

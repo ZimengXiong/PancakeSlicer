@@ -1,4 +1,5 @@
 #include "libslic3r/Nonplanar/CurvedTopsScaffold.hpp"
+#include "libslic3r/Nonplanar/Research.hpp"
 #include "ClearanceRepair.hpp"
 #include "libslic3r/Nonplanar/ConformalLayers.hpp"
 #include "libslic3r/Nonplanar/StageCache.hpp"
@@ -22,7 +23,6 @@
 #include "libslic3r/Nonplanar/CurvedTopsSurface.hpp"
 #include "libslic3r/Nonplanar/HeadBoxLabel.hpp"
 #include "libslic3r/Nonplanar/HeadEnvelope.hpp"
-#include "libslic3r/Nonplanar/PatchTools.hpp"
 #include "libslic3r/Nonplanar/MultiplanarConfirm.hpp"
 #include "libslic3r/Nonplanar/OneShotField.hpp"
 #include "libslic3r/Nonplanar/Rests.hpp"
@@ -37,6 +37,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <nlohmann/json.hpp>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -297,7 +298,6 @@ private:
 };
 
 }
-
 ClearanceReport ClearanceRepair::verify(const Print &print, const GCodeProcessorResult &result, const ClearanceParams &params,
                                         const ToolKinematics &kinematics)
 {
@@ -320,16 +320,14 @@ void ClearanceRepair::check_export(Print &print, GCodeProcessorResult &result)
 {
     trim_free_memory();
     if (wave_enabled(print)) {
-        ClearanceParams params;
-        params.head = resolve_head_envelope(print.config());
-        params.contact_bar = true;
-        params.cone_tolerance = 0.05;
+        const ClearanceParams params = clearance_params(print.config(), print_clearance_mode(print), true);
         result.clearance_report = verify(print, result, params, *make_tool_kinematics(print.config()));
         result.clearance = result.clearance_report.per_move;
         if (result.clearance_report.hit_moves > 0) {
             const std::string message = Slic3r::format(_u8L("Non-planar waves: %1% moves hit printed material."),
                                                       result.clearance_report.hit_moves);
-            print.active_step_add_warning(PrintStateBase::WarningLevel::CRITICAL, message);
+            print.active_step_add_warning(PrintStateBase::WarningLevel::CRITICAL,
+                                          { "wave_hits", {}, nlohmann::json{ { "moves", result.clearance_report.hit_moves } }.dump() }, message);
             if (print.config().nonplanar_collision_check.value == NonplanarCollisionCheck::Block)
                 throw Slic3r::RuntimeError(message);
         }
@@ -343,19 +341,21 @@ void ClearanceRepair::check_export(Print &print, GCodeProcessorResult &result)
     if (self != nullptr && self->curved_tops_step(result))
         return;
     if (self != nullptr) {
-        for (const std::string &warning : self->m_guard_warnings)
-            print.active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, warning);
+        for (const CodedWarning &warning : self->m_guard_warnings)
+            print.active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, warning.code, warning.message);
         stage_cache_note_guard_warnings(print, self->m_guard_warnings);
     }
     for (const PrintObject *object : print.objects())
         if (!object->auto_kept_warning().empty() && !object->m_auto_planar)
-            print.active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL,
+            print.active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, { "auto_printed_curved", warning_object(object->model_object()->name) },
                                           Slic3r::format(_u8L("%1%: printed curved; %2%."), object->model_object()->name, object->auto_kept_warning()));
     for (const PrintObject *object : print.objects())
         if (object->m_auto_planar && !object->auto_plain_reason().empty()) {
             const auto *set  = object->model_object()->config.get().option<ConfigOptionEnum<NonplanarMode>>("nonplanar_mode");
             const bool  shot = (set ? set->value : print.default_object_config().nonplanar_mode.value) == NonplanarMode::OneShot;
             print.active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL,
+                                          { "auto_switched_flat", warning_object(object->model_object()->name),
+                                            nlohmann::json{ { "method", shot ? "oneshot" : "auto" } }.dump() },
                                           Slic3r::format(shot ? _u8L("%1%: Switched from One-shot to flat layers (%2%)") : _u8L("%1%: Switched from Auto to flat layers (%2%)"),
                                                          object->model_object()->name, object->auto_plain_reason()));
         }
@@ -367,8 +367,7 @@ void ClearanceRepair::check_export(Print &print, GCodeProcessorResult &result)
         }
         if (self != nullptr && result.nonplanar && effective_collision_check(print) != NonplanarCollisionCheck::Off &&
             self->m_pass < self->m_max_passes) {
-            ClearanceParams params;
-            params.head = resolve_head_envelope(print.config());
+            const ClearanceParams params = clearance_params(print.config(), print_clearance_mode(print), false);
             const auto      started = std::chrono::steady_clock::now();
             ClearanceReport report  = verify(print, result, params, *make_tool_kinematics(print.config()));
             const auto      checked = std::chrono::steady_clock::now();
@@ -381,7 +380,8 @@ void ClearanceRepair::check_export(Print &print, GCodeProcessorResult &result)
                                     << " s, plan " << std::chrono::duration<double>(std::chrono::steady_clock::now() - checked).count() << " s";
             if (report.hit_moves == 0 || repaired) {
                 if (report.hit_moves == 0 && self->m_pass > 0)
-                    print.active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, self->summary(0));
+                    print.active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL,
+                                                  { "clearance_repaired", {}, nlohmann::json{ { "passes", self->m_pass } }.dump() }, self->summary(0));
                 result.clearance_report = std::move(report);
                 result.clearance        = result.clearance_report.per_move;
                 if (!repaired)
@@ -407,13 +407,8 @@ void ClearanceRepair::check_export(Print &print, GCodeProcessorResult &result)
                            std::all_of(print.objects().begin(), print.objects().end(), [](const PrintObject *o) {
                                return o->config().nonplanar_mode.value == NonplanarMode::Auto || o->config().nonplanar_mode.value == NonplanarMode::Off;
                            });
-    ClearanceParams params;
-    params.head        = resolve_head_envelope(print.config());
-    params.contact_bar = auto_only;
-    if (std::any_of(print.objects().begin(), print.objects().end(),
-                    [](const PrintObject *o) { return o->config().nonplanar_mode.value == NonplanarMode::SmoothMorph; }))
-        params.cone_tolerance = curved_tops_cone_tolerance(print);
-    if (const char *tol = std::getenv("NP_CONTACT_CONE_TOL"); tol != nullptr)
+    ClearanceParams params = clearance_params(print.config(), print_clearance_mode(print), auto_only);
+    if (const char *tol = research_switch("NP_CONTACT_CONE_TOL"); tol != nullptr)
         params.cone_tolerance = std::max(0., std::atof(tol));
     ClearanceReport report = verify(print, result, params, ThreeAxisKinematics());
     const size_t hits = report.hit_moves;
@@ -444,7 +439,7 @@ void ClearanceRepair::check_export(Print &print, GCodeProcessorResult &result)
     self->m_last_min   = report.min_clearance;
     constexpr int BarRepairPasses = 5;
     int           max_passes      = params.contact_bar && self->m_max_passes > 0 ? std::max(self->m_max_passes, BarRepairPasses) : self->m_max_passes;
-    if (const char *passes = std::getenv("NP_BAR_REPAIR_PASSES"); passes != nullptr && params.contact_bar)
+    if (const char *passes = research_switch("NP_BAR_REPAIR_PASSES"); passes != nullptr && params.contact_bar)
         max_passes = std::max(0, std::atoi(passes));
     if (hits > 0 && !stalled && stop.empty() && self->plan(result, report, params.head, params.contact_bar) && self->m_pass < max_passes) {
         result.clearance_report = std::move(report);
@@ -473,7 +468,10 @@ void ClearanceRepair::check_export(Print &print, GCodeProcessorResult &result)
                               Slic3r::format(_u8L("Curved moves that still hit printed material: %1% (worst %2$.3f mm, %3%, G-code line %4%)."),
                                              conformal_hits, worst->penetration, head_box_label(worst->component), worst->gcode_line));
     }
-    print.active_step_add_warning(conformal_hits > 0 ? PrintStateBase::WarningLevel::CRITICAL : PrintStateBase::WarningLevel::NON_CRITICAL, message);
+    print.active_step_add_warning(conformal_hits > 0 ? PrintStateBase::WarningLevel::CRITICAL : PrintStateBase::WarningLevel::NON_CRITICAL,
+                                  conformal_hits > 0 ? WarningCode{ "clearance_residual_hits", {}, nlohmann::json{ { "passes", self->m_pass }, { "moves", conformal_hits } }.dump() } :
+                                                       WarningCode{ "clearance_repair_summary", {}, nlohmann::json{ { "passes", self->m_pass }, { "moves", hits } }.dump() },
+                                  message);
     if (mode == NonplanarCollisionCheck::Block && conformal_hits > 0)
         throw RuntimeError(message + " " + _u8L("Export blocked by the head clearance check. Review the path or set the check to Warn to export it."));
 }
@@ -602,7 +600,7 @@ bool ClearanceRepair::plan(const GCodeProcessorResult &result, const ClearanceRe
                     if (it != layers.end())
                         h.travel_layers.push_back((*it)->id());
                     ++lifts;
-                    static const bool travel_disc = std::getenv("NP_CT1_TRAVEL_DISC") != nullptr;
+                    static const bool travel_disc = research_switch("NP_CT1_TRAVEL_DISC") != nullptr;
                     if (travel_disc && bar && site.patch >= 0 &&
                         size_t(site.patch) < site.object->conformal().patches.size() &&
                         droppable(site.object->conformal().patches[size_t(site.patch)].kind)) {
@@ -745,7 +743,7 @@ bool ClearanceRepair::oneshot_step(GCodeProcessorResult &result)
         if (const OneShotState *s = object->oneshot_state(); s != nullptr)
             if (const std::string why = may_need_support(object->model_object()->name, Floating{ s->planar_air < 0. ? -1. : 0., 0., s->planar_air });
                 !why.empty())
-                m_print.active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, why);
+                m_print.active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, { "may_need_support", warning_object(object->model_object()->name) }, why);
     std::vector<PrintObject *> objects;
     for (PrintObject *object : m_print.m_objects)
         if (oneshot_requested(*object))
@@ -753,9 +751,7 @@ bool ClearanceRepair::oneshot_step(GCodeProcessorResult &result)
     if (objects.empty())
         return false;
     const double    time = result.print_statistics.modes[size_t(PrintEstimatedStatistics::ETimeMode::Normal)].time;
-    ClearanceParams params;
-    params.head            = resolve_head_envelope(m_print.config());
-    params.contact_bar     = true;
+    const ClearanceParams params = clearance_params(m_print.config(), print_clearance_mode(m_print), true);
     ClearanceReport report = verify(m_print, result, params, *make_tool_kinematics(m_print.config()));
     const size_t    hits   = report.hit_moves;
     for (PrintObject *object : objects) {
@@ -785,9 +781,10 @@ bool ClearanceRepair::oneshot_step(GCodeProcessorResult &result)
             ++s.measured_repicks;
             s.solved.reset();
             s.decision += Slic3r::format(", %1% moves the contact bar strikes -> control", hits);
-            m_guard_warnings.push_back(Slic3r::format(_u8L("%1%: the non-planar print would touch printed plastic with the nozzle in %2% "
-                                                           "moves, so it prints planar layers with support instead."),
-                                                      object->model_object()->name, hits));
+            m_guard_warnings.push_back({ { "nozzle_contacts_planar", warning_object(object->model_object()->name), nlohmann::json{ { "moves", hits } }.dump() },
+                                         Slic3r::format(_u8L("%1%: the non-planar print would touch printed plastic with the nozzle in %2% "
+                                                             "moves, so it prints planar layers with support instead."),
+                                                        object->model_object()->name, hits) });
             m_repick.push_back(object);
         }
         if (!m_repick.empty()) {
@@ -821,12 +818,12 @@ bool ClearanceRepair::oneshot_step(GCodeProcessorResult &result)
                     std::string(", support on (the user's)");
     }
     auto refuse_forced_route = [](const OneShotState &s) {
-        if (const char *force = std::getenv("NP_ONESHOT_ROUTE_FORCE"); force != nullptr && *force != 0 && s.route && route_forced(s.route_cuts))
+        if (const char *force = research_switch("NP_ONESHOT_ROUTE_FORCE"); force != nullptr && *force != 0 && s.route && route_forced(s.route_cuts))
             throw Slic3r::SlicingError(Slic3r::format("FORCED %1% NOT ADOPTED: %2% did not print (the export's checks re-pick it%3%%4%)",
                                                       std::string(force).rfind("{A:", 0) == 0 ? "ARM" : "ROUTE", force, s.floating_decision(),
                                                       s.band_note + s.auto_note));
     };
-    if (m_print.objects().size() == 1 && std::getenv("NP_ONESHOT_NO_MEASURED_CHECK") == nullptr && !rotary_auto_measurement()) {
+    if (m_print.objects().size() == 1 && research_switch("NP_ONESHOT_NO_MEASURED_CHECK") == nullptr && !rotary_auto_measurement()) {
         PrintObject  *object = objects.front();
         OneShotState &s      = object->oneshot_state();
         const MeasureDeadline deadline(measure_deadline(s));
@@ -896,7 +893,7 @@ bool auto_morph_refused(const ModelObject &object)
 
 bool top_picks_morph()
 {
-    static const bool on = std::getenv("NP_TOP_PICKS_MORPH") != nullptr && std::string(std::getenv("NP_TOP_PICKS_MORPH")) == "1";
+    static const bool on = research_switch("NP_TOP_PICKS_MORPH") != nullptr && std::string(research_switch("NP_TOP_PICKS_MORPH")) == "1";
     return on;
 }
 
@@ -947,7 +944,7 @@ std::vector<Vec3d> conformal_struck_points(const ModelObject &object)
 
 int conformal_cap_step(const ModelObject &object)
 {
-    static const int first = std::getenv("NP_CONFORMAL_RUNG") ? std::atoi(std::getenv("NP_CONFORMAL_RUNG")) : 0;
+    static const int first = research_switch("NP_CONFORMAL_RUNG") ? std::atoi(research_switch("NP_CONFORMAL_RUNG")) : 0;
     const std::lock_guard<std::mutex> lock(conformal_step_mutex);
     const auto it = conformal_steps.find(object.id().id);
     return std::max(first, it == conformal_steps.end() ? 0 : it->second);
@@ -959,7 +956,7 @@ bool ClearanceRepair::step_down_conformal(const GCodeProcessorResult &result)
     for (PrintObject *object : m_print.m_objects)
         if (object->config().nonplanar_mode.value == NonplanarMode::ConformalLayers && conformal_cap_step(*object->model_object()) < ConformalSteps)
             picked.push_back(object);
-    static const bool no_fallback = std::getenv("NP_CONFORMAL_NO_FALLBACK") != nullptr;
+    static const bool no_fallback = research_switch("NP_CONFORMAL_NO_FALLBACK") != nullptr;
     if (picked.empty() || no_fallback)
         return false;
     bool changed = false;
@@ -971,8 +968,9 @@ bool ClearanceRepair::step_down_conformal(const GCodeProcessorResult &result)
         }
         object->m_config.nonplanar_mode.value = NonplanarMode::Off;
         object->m_nonplanar_repair.reset();
-        m_guard_warnings.push_back(Slic3r::format(_u8L("%1%: Conformal layers met the print head in %2% moves; printed with flat layers."),
-                                                  object->model_object()->name, hits));
+        m_guard_warnings.push_back({ { "conformal_flat_fallback", warning_object(object->model_object()->name), nlohmann::json{ { "moves", hits } }.dump() },
+                                     Slic3r::format(_u8L("%1%: Conformal layers met the print head in %2% moves; printed with flat layers."),
+                                                    object->model_object()->name, hits) });
     };
     const auto replan = [this, &changed](PrintObject *object) {
         {
@@ -994,10 +992,7 @@ bool ClearanceRepair::step_down_conformal(const GCodeProcessorResult &result)
     picked.erase(std::remove(picked.begin(), picked.end(), nullptr), picked.end());
     if (picked.empty() || !result.nonplanar)
         return changed;
-    ClearanceParams params;
-    params.head           = resolve_head_envelope(m_print.config());
-    params.contact_bar    = true;
-    params.cone_tolerance = curved_tops_cone_tolerance(m_print);
+    const ClearanceParams params = clearance_params(m_print.config(), print_clearance_mode(m_print), true);
     const ClearanceReport report = verify(m_print, result, params, *make_tool_kinematics(m_print.config()));
     if (report.hit_moves == 0)
         return changed;
@@ -1114,8 +1109,6 @@ size_t slant_step_hits(const ModelObject &object)
 
 bool ClearanceRepair::step_down_slant(const GCodeProcessorResult &result)
 {
-    if (m_print.config().nonplanar_collision_check.value != NonplanarCollisionCheck::Block)
-        return false;
     std::vector<PrintObject *> picked;
     for (PrintObject *object : m_print.m_objects)
         if (object->config().nonplanar_mode.value == NonplanarMode::Slant && object->slant_choice() && object->slant_choice()->angle_deg > 0. &&
@@ -1123,10 +1116,7 @@ bool ClearanceRepair::step_down_slant(const GCodeProcessorResult &result)
             picked.push_back(object);
     if (picked.empty() || !result.nonplanar)
         return false;
-    ClearanceParams params;
-    params.head           = resolve_head_envelope(m_print.config());
-    params.contact_bar    = true;
-    params.cone_tolerance = curved_tops_cone_tolerance(m_print);
+    const ClearanceParams params = clearance_params(m_print.config(), print_clearance_mode(m_print), true);
     const ClearanceReport report = verify(m_print, result, params, *make_tool_kinematics(m_print.config()));
     if (report.hit_moves == 0)
         return false;
@@ -1167,10 +1157,7 @@ bool ClearanceRepair::refuse_struck_morph(const GCodeProcessorResult &result)
         for (const PrintObject *object : chosen)
             morph_struck.erase(object->model_object()->id().id);
     }
-    ClearanceParams params;
-    params.head           = resolve_head_envelope(m_print.config());
-    params.contact_bar    = true;
-    params.cone_tolerance = curved_tops_cone_tolerance(m_print);
+    const ClearanceParams params = clearance_params(m_print.config(), print_clearance_mode(m_print), true);
     const size_t hits = verify(m_print, result, params, *make_tool_kinematics(m_print.config())).hit_moves;
     if (hits == 0)
         return false;
@@ -1181,8 +1168,9 @@ bool ClearanceRepair::refuse_struck_morph(const GCodeProcessorResult &result)
         }
         object->m_config.nonplanar_mode.value = NonplanarMode::NonplanarTop;
         object->invalidate_step(posSlice);
-        m_guard_warnings.push_back(Slic3r::format(_u8L("%1%: Auto printed Curved tops: Smooth morph's roads would touch the "
-                                                       "nozzle in %2% moves."), object->model_object()->name, hits));
+        m_guard_warnings.push_back({ { "auto_morph_to_curved_tops", warning_object(object->model_object()->name), nlohmann::json{ { "moves", hits } }.dump() },
+                                     Slic3r::format(_u8L("%1%: Auto printed Curved tops: Smooth morph's roads would touch the "
+                                                         "nozzle in %2% moves."), object->model_object()->name, hits) });
         BOOST_LOG_TRIVIAL(warning) << "Auto Smooth morph refused: " << object->model_object()->name << ", " << hits << " contact-bar hits";
     }
     for (PrintObject *object : chosen) {
@@ -1192,8 +1180,9 @@ bool ClearanceRepair::refuse_struck_morph(const GCodeProcessorResult &result)
         }
         object->m_config.nonplanar_mode.value = NonplanarMode::Off;
         object->invalidate_step(posSlice);
-        m_guard_warnings.push_back(Slic3r::format(_u8L("%1%: Smooth morph would hit the part in %2% moves; printed flat."),
-                                                  object->model_object()->name, hits));
+        m_guard_warnings.push_back({ { "smooth_morph_flat", warning_object(object->model_object()->name), nlohmann::json{ { "moves", hits } }.dump() },
+                                     Slic3r::format(_u8L("%1%: Smooth morph would hit the part in %2% moves; printed flat."),
+                                                    object->model_object()->name, hits) });
         BOOST_LOG_TRIVIAL(warning) << "Smooth morph struck: " << object->model_object()->name << ", " << hits << " contact-bar hits; printed flat";
     }
     return true;
@@ -1209,10 +1198,7 @@ bool ClearanceRepair::step_down_morph_direction(const GCodeProcessorResult &resu
             picked.push_back(object);
     if (picked.empty() || !result.nonplanar)
         return false;
-    ClearanceParams params;
-    params.head           = resolve_head_envelope(m_print.config());
-    params.contact_bar    = true;
-    params.cone_tolerance = curved_tops_cone_tolerance(m_print);
+    const ClearanceParams params = clearance_params(m_print.config(), print_clearance_mode(m_print), true);
     const size_t hits = verify(m_print, result, params, *make_tool_kinematics(m_print.config())).hit_moves;
     if (hits == 0)
         return false;
@@ -1228,9 +1214,7 @@ bool ClearanceRepair::step_down_morph_direction(const GCodeProcessorResult &resu
 
 size_t ClearanceRepair::curved_contacts(const Print &print, const GCodeProcessorResult &result)
 {
-    ClearanceParams params;
-    params.head        = resolve_head_envelope(print.config());
-    params.contact_bar = true;
+    const ClearanceParams params = clearance_params(print.config(), print_clearance_mode(print), true);
     const ClearanceReport report = verify(print, result, params, *make_tool_kinematics(print.config()));
     size_t contacts = 0;
     for (size_t i = 0; i < result.moves.size() && i < report.per_move.size(); ++i)
@@ -1246,12 +1230,10 @@ bool ClearanceRepair::contact_guard(const GCodeProcessorResult &result, size_t c
         if (oneshot_requested(*object) || object->config().nonplanar_mode.value == NonplanarMode::Auto || object->m_auto_planar ||
             auto_rotary_requested(*object))
             guarded.push_back(object);
-    if (guarded.empty() || !result.nonplanar || m_guard_passes >= 2 * int(guarded.size()) || std::getenv("NP_CONTACT_GUARD_OFF") != nullptr)
+    if (guarded.empty() || !result.nonplanar || m_guard_passes >= 2 * int(guarded.size()) || research_switch("NP_CONTACT_GUARD_OFF") != nullptr)
         return false;
     if (contacts == 0) {
-        ClearanceParams params;
-        params.head        = resolve_head_envelope(m_print.config());
-        params.contact_bar = true;
+        const ClearanceParams params = clearance_params(m_print.config(), print_clearance_mode(m_print), true);
         contacts = verify(m_print, result, params, *make_tool_kinematics(m_print.config())).hit_moves;
     }
     if (contacts == 0)
@@ -1280,9 +1262,10 @@ bool ClearanceRepair::contact_guard(const GCodeProcessorResult &result, size_t c
         BOOST_LOG_TRIVIAL(warning) << "Contact guard: " << name << ": " << contacts << " moves strike printed material under the "
                                    << "contact bar; it prints without them";
         if (oneshot_requested(*object))
-            m_guard_warnings.push_back(Slic3r::format(_u8L("%1%: the non-planar print would touch printed plastic with the nozzle in %2% "
-                                                           "moves, so it prints planar layers with support instead."),
-                                                      name, contacts));
+            m_guard_warnings.push_back({ { "nozzle_contacts_planar", warning_object(name), nlohmann::json{ { "moves", contacts } }.dump() },
+                                         Slic3r::format(_u8L("%1%: the non-planar print would touch printed plastic with the nozzle in %2% "
+                                                             "moves, so it prints planar layers with support instead."),
+                                                        name, contacts) });
         m_repick.push_back(object);
         ++m_guard_passes;
     }
@@ -1295,10 +1278,7 @@ bool ClearanceRepair::curved_tops_step(GCodeProcessorResult &result)
         return curved_tops_mode(object->config().nonplanar_mode.value);
     });
     if (!curved) return false;
-    ClearanceParams params;
-    params.head = resolve_head_envelope(m_print.config());
-    params.contact_bar = true;
-    params.cone_tolerance = curved_tops_cone_tolerance(m_print);
+    const ClearanceParams params = clearance_params(m_print.config(), print_clearance_mode(m_print), true);
     const auto      started = std::chrono::steady_clock::now();
     ClearanceReport report = verify(m_print, result, params, ThreeAxisKinematics());
     BOOST_LOG_TRIVIAL(warning) << "Curved tops clearance pass " << m_curved_pass << ": " << report.hit_moves
@@ -1323,16 +1303,17 @@ bool ClearanceRepair::curved_tops_step(GCodeProcessorResult &result)
                         object->m_curved_fallback_zaa = false;
                         object->m_curved_fallback_off = true;
                         if (std::find(m_repick.begin(), m_repick.end(), object) == m_repick.end()) m_repick.push_back(object);
-                        m_guard_warnings.push_back(object->model_object()->name +
-                                                   ": its tops print flat layers instead of mid-layer Z contouring, which struck the head.");
+                        m_guard_warnings.push_back({ { "curved_tops_zaa_flat", warning_object(object->model_object()->name) },
+                                                     object->model_object()->name +
+                                                         ": its tops print flat layers instead of mid-layer Z contouring, which struck the head." });
                         break;
                     }
             }
         }
         if (!m_repick.empty()) {
             ++m_curved_pass;
-            for (const auto &warning : m_guard_warnings)
-                m_print.active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, warning);
+            for (const CodedWarning &warning : m_guard_warnings)
+                m_print.active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, warning.code, warning.message);
             result.clearance_report = std::move(report);
             result.clearance = result.clearance_report.per_move;
             return true;
@@ -1381,8 +1362,8 @@ bool ClearanceRepair::curved_tops_step(GCodeProcessorResult &result)
         for (const auto &key : m_curved_roads_last)
             if (surface_hits[key] > 0 && surface_hits[key] >= m_curved_hits_last[key])
                 m_curved_roads_stalled.insert(key);
-        std::set<std::pair<const PrintObject *, int>> ordered_now;
-        std::set<std::pair<const PrintObject *, int>> roads_now;
+        std::set<SurfaceKey> ordered_now;
+        std::set<SurfaceKey> roads_now;
         auto repair_hit = [&](const CurvedHit &hit) {
             PrintObject *owner       = hit.owner;
             const int    surface_id  = hit.surface_id;
@@ -1392,16 +1373,6 @@ bool ClearanceRepair::curved_tops_step(GCodeProcessorResult &result)
             if (curved_tops_mode(owner->config().nonplanar_mode.value)) {
                 if (!owner->m_nonplanar_repair) owner->m_nonplanar_repair = std::make_shared<RepairHints>();
                 RepairHints &hints = *owner->m_nonplanar_repair;
-                const double band = head_band_height(params.head) + params.head.contact_tolerance;
-                const auto   struck = std::find_if(owner->nonplanar_surfaces().begin(), owner->nonplanar_surfaces().end(),
-                                                   [surface_id](const NonplanarSurface &s) { return s.stable_id == surface_id; });
-                if (struck != owner->nonplanar_surfaces().end() && band > 0. && hints.banded_surfaces.count(surface_id) == 0 &&
-                    struck->stats.max.z - struck->stats.min.z > band + EPSILON) {
-                    hints.banded_surfaces.insert(surface_id);
-                    hints.band_height = band;
-                    if (std::find(m_repick.begin(), m_repick.end(), owner) == m_repick.end()) m_repick.push_back(owner);
-                    return;
-                }
                 if (hints.ordered_surfaces.count(surface_id) == 0 && m_curved_roads_stalled.count({ owner, surface_id }) == 0) {
                     if (roads_now.count({ owner, surface_id }) == 0 && ordered_now.count({ owner, surface_id }) == 0) {
                         if (hints.ordered_road_passes[surface_id] < 3) {
@@ -1495,12 +1466,12 @@ bool ClearanceRepair::curved_tops_step(GCodeProcessorResult &result)
         for (PrintObject *object : m_repick)
             if (object->m_curved_planar_surfaces.size() >= object->curved_surface_candidates()) {
                 const std::string warning = object->model_object()->name + ": Curved tops printed planar: every curved surface was struck by the head clearance check.";
-                m_guard_warnings.push_back(warning);
+                m_guard_warnings.push_back({ { "curved_tops_all_struck_planar", warning_object(object->model_object()->name) }, warning });
                 BOOST_LOG_TRIVIAL(warning) << warning;
             } else if (repaired && pass < disc_passes) {
                 const std::string warning = object->model_object()->name +
                     ": Curved tops returned the head-strike neighbourhood to planar layers and retained the remaining cap for clearance verification.";
-                m_guard_warnings.push_back(warning);
+                m_guard_warnings.push_back({ { "curved_tops_head_strike_planar", warning_object(object->model_object()->name) }, warning });
                 BOOST_LOG_TRIVIAL(warning) << warning;
             }
         ++m_curved_pass;
@@ -1508,8 +1479,8 @@ bool ClearanceRepair::curved_tops_step(GCodeProcessorResult &result)
             ++m_curved_angle_passes;
     }
     restore_planar_remainders();
-    for (const auto &warning : m_guard_warnings)
-        m_print.active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, warning);
+    for (const CodedWarning &warning : m_guard_warnings)
+        m_print.active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, warning.code, warning.message);
     result.clearance_report = std::move(report);
     result.clearance = result.clearance_report.per_move;
     mark_clearance_override(m_print, result);
@@ -1533,7 +1504,7 @@ bool ClearanceRepair::restore_planar_remainders()
                 m_repick.push_back(object);
             const std::string warning = object->model_object()->name +
                 ": Curved tops printed planar: no curved top remains; restored the original planar body.";
-            m_guard_warnings.push_back(warning);
+            m_guard_warnings.push_back({ { "curved_tops_restored_planar", warning_object(object->model_object()->name) }, warning });
             BOOST_LOG_TRIVIAL(warning) << warning;
         }
     }

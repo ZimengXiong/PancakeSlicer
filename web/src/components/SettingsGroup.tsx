@@ -1,3 +1,4 @@
+import { Glyph } from './Glyph';
 import { memo, useSyncExternalStore, type ReactNode } from 'react';
 import { SectionHeading } from './SectionHeading';
 
@@ -14,7 +15,9 @@ export function setGroupOpen(id: string, open: boolean) {
 export const isGroupOpen = (id: string, byDefault = false) => expanded.has(id) || (byDefault && !folded.has(id));
 export const useSettingsGroups = () => useSyncExternalStore(subscribe, () => version);
 
-export const GroupHead = memo(function GroupHead({ id, title, modified, open, aside, tag }: { id: string; title: string; modified: boolean; open: boolean; aside?: ReactNode; tag?: string }) {
+export type Mark = 'unsaved' | undefined;
+export const markOf = (keys: string[], unsaved: (key: string) => boolean): Mark => keys.some(unsaved) ? 'unsaved' : undefined;
+export const GroupHead = memo(function GroupHead({ id, title, modified, open, aside, tag, onReset }: { id: string; title: string; modified: Mark; open: boolean; aside?: ReactNode; tag?: string;  onReset?: () => void }) {
   const content = <>
     <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
     <span>{title}</span>
@@ -23,8 +26,9 @@ export const GroupHead = memo(function GroupHead({ id, title, modified, open, as
   </>;
   const head = (
     <SectionHeading level="sub" className="optgroup-title">
-      <button type="button" className={`optgroup-head ${modified ? 'modified' : ''}`} aria-expanded={open} onClick={() => setGroupOpen(id, !open)}>{content}</button>
+      <button type="button" className={`optgroup-head ${modified ? `modified ${modified}` : ''}`} aria-expanded={open} onClick={() => setGroupOpen(id, !open)}>{content}</button>
     </SectionHeading>
   );
-  return aside ? <div className="optgroup-headrow">{head}<div className="optgroup-aside">{aside}</div></div> : head;
+  const reset = modified === 'unsaved' && onReset && <button type="button" className="reset-icon section-reset" title="Reset section" aria-label={`Reset ${title}`} onClick={onReset}><Glyph name="undo" size={14}/></button>;
+  return aside || reset ? <div className="optgroup-headrow">{head}{reset}{aside && <div className="optgroup-aside">{aside}</div>}</div> : head;
 });

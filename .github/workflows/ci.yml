@@ -57,7 +57,7 @@ jobs:
               - 'engine/**'
               - '!**/*.md'
             pipeline:
-              - '{.github/workflows/release.yml,.github/scripts/build/**,desktop/scripts/stage-ci.py,deploy/Dockerfile,deploy/test.sh,server/Dockerfile}'
+              - '{.github/workflows/release*.yml,.github/scripts/build/**,desktop/scripts/stage-ci.py,deploy/Dockerfile,deploy/test.sh,server/Dockerfile}'
 
   web:
     name: Web (tsc + build)

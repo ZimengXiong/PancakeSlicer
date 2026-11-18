@@ -46,7 +46,7 @@ export class PlateGrid {
   }
 
   sync(s: State, bed: THREE.Group | null, area: THREE.Vector2[]) {
-    const key = [s.projectPlates, s.plateIndex, s.objects.length, bed, s.slotColours, s.filamentSlots, s.project, s.features.mesh_plates, isDark(), s.job.state];
+    const key = [s.projectPlates, s.plateIndex, s.objects.length, bed, s.records, s.project, isDark(), s.job.state];
     if (key.length === this.key.length && key.every((k, i) => k === this.key[i])) return;
     this.key = key;
     this.area = area;

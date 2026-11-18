@@ -1,4 +1,5 @@
 #include "FieldTerm.hpp"
+#include "libslic3r/Nonplanar/Research.hpp"
 
 #include "FieldObjective.hpp"
 #include "ClearanceTerms.hpp"
@@ -72,7 +73,7 @@ void register_field_term(const std::string &name, FieldTermFactory factory)
 const std::vector<ActiveFieldTerm> &active_field_terms(const ObjectiveGeometry &g)
 {
     static const std::vector<ActiveFieldTerm> none;
-    const char                               *spec = std::getenv("NP_FIELD_TERMS");
+    const char                               *spec = research_switch("NP_FIELD_TERMS");
     if (spec == nullptr || *spec == 0)
         return none;
     using Key = std::tuple<const void *, size_t, double, double, double>;

@@ -1374,7 +1374,7 @@ void GCodeProcessor::run_post_process()
                     warning += "Generated M104 lines may be incorrect.";
                     BOOST_LOG_TRIVIAL(error) << warning;
                     if (m_print != nullptr)
-                        m_print->active_step_add_warning(PrintStateBase::WarningLevel::CRITICAL, warning);
+                        m_print->active_step_add_warning(PrintStateBase::WarningLevel::CRITICAL, WarningCode{ "temperature_lines_suspect" }, warning);
                 }
                 export_line.insert_lines(
                     backtrace, cmd,

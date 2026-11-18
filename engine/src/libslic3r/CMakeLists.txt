@@ -130,6 +130,8 @@ set(lisbslic3r_sources
     Nonplanar/RegionDetect.cpp
     Nonplanar/RegionDetect.hpp
     Nonplanar/RegionMask.cpp
+    Nonplanar/Research.cpp
+    Nonplanar/Research.hpp
     Nonplanar/RegionMask.hpp
     Nonplanar/AutoOrient.cpp
     Nonplanar/AutoOrient.hpp
@@ -574,6 +576,7 @@ set(lisbslic3r_sources
     PrintApply.cpp
     PrintBase.cpp
     PrintBase.hpp
+    WarningCode.hpp
     MaterialType.cpp
     MaterialType.hpp
     PrintConfig.cpp

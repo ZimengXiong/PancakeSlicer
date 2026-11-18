@@ -1,4 +1,5 @@
 #include "FieldOrder.hpp"
+#include "libslic3r/Nonplanar/Research.hpp"
 #include <cstdlib>
 
 #include "Nonplanar/HeadEnvelope.hpp"
@@ -868,7 +869,7 @@ FieldOrder layer_order_field_roads(std::vector<FieldRoad> &roads, const FieldOrd
                                 params.layer_top.begin());
         return std::min(k, layers - 1);
     };
-    static const bool support_first = std::getenv("NP_NATIVE_SUPPORT_FIRST") != nullptr;
+    static const bool support_first = research_switch("NP_NATIVE_SUPPORT_FIRST") != nullptr;
     std::vector<size_t> moved(roads.size(), std::numeric_limits<size_t>::max());
     std::vector<ExtrusionEntitiesPtr> early(layers);
     if (support_first && layers > 0) {
@@ -983,7 +984,7 @@ FieldOrder layer_order_field_roads(std::vector<FieldRoad> &roads, const FieldOrd
                         lo = std::min(lo, p.z()), hi = std::max(hi, p.z());
                     level[i] = unscale<double>(hi - lo) < 0.1 && role != erTopSolidInfill && role != erIroning;
                 }
-                static const double order_axis = [] { const char *v = std::getenv("NP_NATIVE_ORDER_AXIS"); return v ? std::max(0., std::atof(v)) : 0.; }();
+                static const double order_axis = [] { const char *v = research_switch("NP_NATIVE_ORDER_AXIS"); return v ? std::max(0., std::atof(v)) : 0.; }();
                 const auto axis_at = [](const ExtrusionEntity *ee, bool last) {
                     const auto &a = static_cast<const ExtrusionPathConformal *>(ee)->tool_axis;
                     return a.empty() ? Vec3d(Vec3d::UnitZ()) : Vec3d((last ? a.back() : a.front()).cast<double>().normalized());

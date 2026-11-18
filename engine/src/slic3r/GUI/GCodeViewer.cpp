@@ -2302,9 +2302,9 @@ void GCodeViewer::load_nonplanar_report(const GCodeProcessorResult &gcode_result
     Plater *plater = wxGetApp().plater();
     plater->sidebar().set_nonplanar_summary(&m_nonplanar_report);
     for (const Nonplanar::ReportObject &object : m_nonplanar_report.objects)
-        for (const std::string &warning : object.warnings)
+        for (const CodedWarning &warning : object.warnings)
             plater->get_notification_manager()->push_notification(NotificationType::NonplanarWarning,
-                NotificationManager::NotificationLevel::WarningNotificationLevel, warning);
+                NotificationManager::NotificationLevel::WarningNotificationLevel, warning.message);
 }
 
 void GCodeViewer::render_nonplanar_hatch()

@@ -1,20 +1,31 @@
 import { newSpeedModel, speedModelOf, SPEED_FEATURES, type SpeedModel } from './speed-rules';
 import type { Config, ConfigValue, PresetType } from '../api/types';
 import { switchPreset } from '../actions';
-import { selectChanges } from '../state/changes';
+import { authoredChanges } from '../state/changes';
 import { getState, presetEdits, resolvePreset, setState, toast, type State } from '../state/store';
-import type { UserPreset } from '../api/types';
-import { clampHeight, scaleValues, type ScaleRow } from './auto-rules';
-import { effectiveLayerHeight, effectiveProfileValues, printerOverrides } from './context';
-import { createProfileFromBase } from './catalog';
-import { findProfile, profileKey } from './identity';
-import { saveProfile } from './model';
-import { acknowledgeProjectProfileChanges, captureProjectProfileChanges } from './project-draft';
-import { archiveProfiles, commitProfileRecords, profileCreation } from './transactions';
-import { scalesOf } from './auto-rules';
+import { clampHeight, type ScaleRow } from './auto-rules';
+import { effectiveLayerHeight, printerOverrides } from './context';
+import { acknowledgeProfileSave, captureProfileSave, profileSaves } from './project-draft';
+import { LibraryWriteError } from './library-writes';
+import { commitRecords, removeRecords } from './transactions';
+import rules from '../../../server/profile_rules.json';
+import { calibrationFor, calibrationTarget, slotNozzle } from './context';
+import { ownValues, recordKind, recordOf, withOwnValues, type ProfileRecord } from './view';
+import { getRecord, recordKey, type AnyRecord, type CalibrationRecord, type PrinterRecord, type ProcessRecord, type RecordKind, NAME_MAX, nameLength } from './records';
+import { listProfiles } from './catalog';
+import { slotFilaments } from './slots';
 import { randomId } from '../random-id';
 
-const selectedKey = (s: State, type: PresetType, slot: number) => (type === 'machine' ? s.printer : type === 'process' ? s.process : s.filamentSlots[slot]) ?? '';
+function calibrationWith(s: State, filament: string, slot: number, values: Config): CalibrationRecord {
+  const row = calibrationFor(s, filament, slot), pid = s.printer;
+  if (!recordOf(s, 'machine', pid)) throw new Error('Pick a printer first!');
+  return row ? { ...row, revision: row.revision + 1, values: { ...row.values, ...values } } as CalibrationRecord
+    : { id: `calibration:${randomId()}`, revision: 0, filament, printer: pid, ...calibrationTarget(s, pid, slotNozzle(s, pid, slot)), values };
+}
+const scalesOfRecord = (r: ProfileRecord | undefined): ScaleRow[] => (r as ProcessRecord | undefined)?.scales ?? [];
+const speedModelOfRecord = (r: ProfileRecord | undefined) => (r as ProcessRecord | undefined)?.speedModel;
+
+const selectedKey = (s: State, type: PresetType, slot: number) => (type === 'machine' ? s.printer : type === 'process' ? s.process : slotFilaments(s)[slot]) ?? '';
 const message = (e: unknown) => e instanceof Error ? e.message : String(e);
 
 export function autoOf(source: unknown, scales: ScaleRow[], speedModel?: SpeedModel | null): { auto?: object } {
@@ -22,17 +33,24 @@ export function autoOf(source: unknown, scales: ScaleRow[], speedModel?: SpeedMo
   const model = speedModel === null ? undefined : speedModel ?? speedModelOf(source) ?? (scales.length ? newSpeedModel() : undefined);
   return scales.length || prior?.preferredHeight || prior?.heightRule || model ? { auto: { schema: 3, scales, ...(prior?.preferredHeight ? { preferredHeight: prior.preferredHeight } : {}), ...(prior?.heightRule ? { heightRule: prior.heightRule } : {}), ...(model ? {speedModel: model} : {}) } } : {};
 }
-export type ValueChoice = 'formula' | 'fix' | 'project' | 'printer';
-export interface ValueSource { source: 'formula' | 'printer'; row?: ScaleRow; printer?: string }
+export type ValueChoice = 'formula' | 'fix' | 'project' | 'printer' | 'calibration' | 'filament';
+export interface ValueSource { source: 'formula' | 'printer' | 'calibration' | 'filament'; row?: ScaleRow; printer?: string; filament?: string }
+export const CALIBRATION_KEYS = new Set<string>(rules.calibrationKeys);
+export const isCalibrationKey = (k: string) => CALIBRATION_KEYS.has(k) || rules.calibrationPrefixes.some((p) => k.startsWith(p));
 export const scaleContext = (s: State) => {
-  const nozzle = Number([effectiveProfileValues(s, 'machine', s.printer).nozzle_diameter].flat()[0]) || 0;
+  const nozzle = (s.records.printers.find((p) => p.id === s.printer)?.nozzles[0]?.diameter ?? 0);
   return { nozzle, layerHeight: effectiveLayerHeight(s) };
 };
 export function valueSources(s: State, type: PresetType, slot: number): Record<string, ValueSource> {
+  if (type === 'filament') {
+    const printer = recordOf(s, 'machine', s.printer)?.name ?? 'this printer', filament = recordOf(s, 'filament', selectedKey(s, type, slot))?.name ?? 'filament';
+    return Object.fromEntries(Object.keys(authoredChanges(s, type, slot)).map((key) =>
+      [key, { source: CALIBRATION_KEYS.has(key) ? 'calibration' as const : 'filament' as const, printer, filament }]));
+  }
   if (type !== 'process') return {};
-  const p = findProfile(s, type, selectedKey(s, type, slot)), own = p?.overlay ?? {}, printer = findProfile(s, 'machine', s.printer)?.name ?? 'printer';
-  const out: Record<string, ValueSource> = Object.fromEntries(scalesOf(p).map((row) => [row.key, { source: 'formula' as const, row }]));
-  for (const k of Object.keys(printerOverrides(s))) if (!(k in own) && !(speedModelOf(p) && SPEED_FEATURES.some(f => f.key === k))) out[k] = { source: 'printer', printer };
+  const p = recordOf(s, type, selectedKey(s, type, slot)), own = ownValues(type, p), printer = recordOf(s, 'machine', s.printer)?.name ?? 'printer';
+  const out: Record<string, ValueSource> = Object.fromEntries(scalesOfRecord(p).map((row) => [row.key, { source: 'formula' as const, row }]));
+  for (const k of Object.keys(printerOverrides(s))) if (!(k in own) && !(speedModelOfRecord(p) && SPEED_FEATURES.some(f => f.key === k))) out[k] = { source: 'printer', printer };
   return out;
 }
 const round = (v: number, d = 4) => Math.round(v * 10 ** d) / 10 ** d;
@@ -45,32 +63,32 @@ export function solveFactor(row: ScaleRow, value: ConfigValue, ctx: { nozzle: nu
   return n < 1 ? undefined : round(Math.floor((n - 1) * h * 100 + 1e-6) / 100 + 0.01, 2);
 }
 export const formulaText = (row: ScaleRow) => row.basis === 'nozzle' ? `${row.factor} × nozzle` : row.basis === 'layer' ? `${row.factor} × layer height` : `${row.factor} mm ÷ layer height`;
-export const defaultChoice = (v: ValueSource): ValueChoice => v.source === 'formula' ? 'formula' : 'printer';
+export const defaultChoice = (v: ValueSource): ValueChoice => v.source === 'formula' ? 'formula' : v.source === 'calibration' ? 'calibration' : v.source === 'filament' ? 'filament' : 'printer';
 
 function applyChoices(scales: ScaleRow[], deltas: Config, sources: Record<string, ValueSource>, choices: Record<string, ValueChoice>, ctx: { nozzle: number; layerHeight: number }) {
-  const own: Config = {}, toPrinter: Config = {}, kept: Config = {};
+  const own: Config = {}, toPrinter: Config = {}, kept: Config = {}, toCalibration: Config = {};
   let rows = scales;
   for (const [k, v] of Object.entries(deltas)) {
     const src = sources[k], choice = src ? choices[k] ?? defaultChoice(src) : undefined;
     if (!src) own[k] = v;
     else if (choice === 'project') kept[k] = v;
+    else if (choice === 'calibration') (isCalibrationKey(k) ? toCalibration : kept)[k] = v;
+    else if (choice === 'filament') own[k] = v;
     else if (src.source === 'printer') toPrinter[k] = v;
     else if (choice === 'fix') { rows = rows.filter((r) => r.key !== k); own[k] = v; }
     else { const factor = solveFactor(src.row!, v, ctx); if (factor === undefined) kept[k] = v; else rows = rows.map((r) => r.key === k ? { ...r, factor } : r); }
   }
-  return { rows, own, toPrinter, kept };
+  return { rows, own, toPrinter, kept, toCalibration };
 }
-function printerWith(s: State, values: Config): UserPreset | undefined {
-  const printer = findProfile(s, 'machine', s.printer);
+function printerWith(s: State, values: Config): PrinterRecord | undefined {
+  const printer = recordOf(s, 'machine', s.printer) as PrinterRecord | undefined;
   if (!printer || !Object.keys(values).length) return undefined;
-  const prior = (printer as { printOverrides?: Config }).printOverrides ?? {};
-  return { ...saveProfile(s, 'machine', printer.name, profileKey(printer), resolvePreset(s, 'machine', profileKey(printer)).config), id: profileKey(printer),
-    applicability: printer.applicability, printOverrides: { ...prior, ...values } } as UserPreset;
+  return { ...printer, printOverrides: { ...printer.printOverrides, ...values } };
 }
 
 export function savesInPlace(s: State, type: PresetType, slot: number): boolean {
-  const p = findProfile(s, type, selectedKey(s, type, slot));
-  return !!p && p.kind !== 'master';
+  const p = recordOf(s, type, selectedKey(s, type, slot));
+  return !!p && !p.archived;
 }
 
 function changesOf(s: State, type: PresetType, slot: number) {
@@ -88,41 +106,51 @@ function restoreChanges(type: PresetType, slot: number, key: string, c: ReturnTy
 export async function saveToProfile(type: PresetType, slot = 0, choices: Record<string, ValueChoice> = {}): Promise<void> {
   const s = getState();
   if (!s.api) throw new Error('Offline right now—your changes are safely kept in this tab.');
-  const stage = captureProjectProfileChanges(type, slot), source = findProfile(s, type, stage.key), resolved = resolvePreset(s, type, stage.key);
-  if (!source || !resolved.base || resolved.error) throw new Error(resolved.error ?? 'That profile isn\'t available right now, but your edits are safely kept here.');
-  const before = changesOf(s, type, slot), prior = structuredClone(source), printerBefore = structuredClone(findProfile(s, 'machine', s.printer));
-  const scales = scalesOf(source), { rows, own, toPrinter, kept } = applyChoices(scales, stage.deltas, valueSources(s, type, slot), choices, scaleContext(s));
-  if (Object.keys(kept).length === Object.keys(stage.deltas).length) throw new Error('Your edits apply to this project by default. Choose where you\'d like to save them permanently.');
-  const values = { ...resolved.config, ...own };
-  if (speedModelOf(source)) for (const f of SPEED_FEATURES) for (const key of [f.key, f.acceleration]) if (!(key in own)) {
-    const value = source.overlay?.[key] ?? resolved.base.config[key];
-    if (value === undefined) delete values[key]; else values[key] = value;
-  }
+  if (!profileSaves.can({ type: 'START', capture: '' })) throw new Error('A save is already in progress; your changes are kept.');
+  const save = captureProfileSave(type, slot), source = recordOf(s, type, save.key);
+  if (!source || source.archived) throw new Error('That profile isn\'t available right now, but your edits are safely kept here.');
+  const before = changesOf(s, type, slot), printerBefore = recordOf(s, 'machine', s.printer);
+  const scales = scalesOfRecord(source), { rows, own, toPrinter, kept, toCalibration } = applyChoices(scales, save.edits, valueSources(s, type, slot), choices, scaleContext(s));
+  if (Object.keys(kept).length === Object.keys(save.edits).length) throw new Error('Your edits apply to this project by default. Choose where you\'d like to save them permanently.');
+  const values: Config = { ...ownValues(type, source), ...own };
   for (const r of rows) delete values[r.key];
-  const saved = { ...values, ...stage.deltas };
+  const saved = { ...save.edits };
   for (const k of Object.keys(kept)) delete saved[k];
-  const record = { ...saveProfile(s, type, source.name, profileKey(source), values), id: profileKey(source), applicability: source.applicability,
-    ...(type === 'process' ? autoOf(source, rows) : {}) } as UserPreset;
-  for (const r of rows) { delete record.overlay?.[r.key]; delete record.overrides?.[r.key]; }
-  if (type === 'process' && !autoOf(source, rows).auto) delete (record as { auto?: unknown }).auto;
-  const printer = printerWith(s, toPrinter);
-  await commitProfileRecords([record, ...(printer ? [printer] : [])], { apply: (st) => acknowledgeProjectProfileChanges(st, stage, saved) });
-  toast(`Saved to ${source.name}${printer ? ` and ${printer.name}` : ''}`, { label: 'Undo', run: () => {
-    const now = getState(), back = [{ ...prior, revision: findProfile(now, type, stage.key)?.revision }];
-    if (printer && printerBefore) back.push({ ...printerBefore, revision: findProfile(now, 'machine', profileKey(printerBefore))?.revision });
-    void commitProfileRecords(back).then(() => restoreChanges(type, slot, stage.key, before), (e) => toast(message(e)));
-  } });
+  let record: ProfileRecord = withOwnValues(type, source, values);
+  if (type === 'process') record = { ...record, scales: rows.length ? rows : undefined } as ProcessRecord;
+  const printer = printerWith(s, toPrinter), calibration = Object.keys(toCalibration).length ? calibrationWith(s, source.id, slot, toCalibration) : undefined;
+  const libraryChanged = Object.keys(own).length > 0 || type !== 'filament';
+  profileSaves.send({ type: 'START', capture: save.id });
+  try {
+    const library = await commitRecords([...(libraryChanged ? [{ kind: recordKind(type), record, base: source }] : []), ...(printer ? [{ kind: 'printer' as const, record: printer }] : []),
+      ...(calibration ? [{ kind: 'calibration' as const, record: calibration }] : [])], { label: 'Save to profile', apply: (st) => acknowledgeProfileSave(st, save, saved) });
+    profileSaves.send({ type: 'ACKED', capture: save.id, revision: library.revision });
+  } catch (e) {
+    profileSaves.send({ type: 'FAILED', capture: save.id, code: e instanceof LibraryWriteError ? e.code : 'unavailable' });
+    throw e;
+  }
+  const targets = [...(libraryChanged ? [source.name] : []), ...(printer ? [printer.name] : []), ...(calibration ? [`${printerBefore?.name ?? 'printer'} calibration`] : [])];
+  const priorCalibration = calibration ? calibrationFor(s, source.id, slot) : undefined;
+  toast('saved_4', { value: targets.join(' and ') }, { action: { label: 'Undo', run: () => {
+    const now = getState(), back: { kind: RecordKind; record: AnyRecord }[] = [];
+    const at = (kind: RecordKind, r: AnyRecord) => ({ kind, record: { ...r, revision: (getRecord(now.records, recordKey(kind, r.id))?.revision ?? r.revision) } as AnyRecord });
+    if (libraryChanged) back.push(at(recordKind(type), source));
+    if (printer && printerBefore) back.push(at('printer', printerBefore));
+    if (calibration) back.push(at('calibration', priorCalibration ? priorCalibration as CalibrationRecord : { ...calibration, values: {} }));
+    void commitRecords(back, { label: 'Undo save' }).then(() => restoreChanges(type, slot, save.key, before), (e) => toast('undo_save_failed', { detail: message(e) }));
+  } } });
 }
 
 export const newProfileName = (s: State, type: PresetType, slot: number) => {
-  const r = resolvePreset(s, type, selectedKey(s, type, slot)), name = r.source?.name ?? r.base?.name ?? '';
+  const r = resolvePreset(s, type, selectedKey(s, type, slot)), name = r.record?.name ?? r.base?.name ?? '';
   return name.startsWith('My ') ? name : `My ${name}`;
 };
 
 export function newProfileNameError(s: State, type: PresetType, name: string): string | null {
   const n = name.trim();
   if (!n) return 'Enter a name';
-  return s.userPresets.some((p) => p.type === type && !p.archived && p.name === n) ? `“${n}” is already taken` : null;
+  if (nameLength(n) > NAME_MAX) return `Keep the name to ${NAME_MAX} characters`;
+  return listProfiles(s, type, { browseAll: true }).some((p) => p.name === n) ? `“${n}” is already taken` : null;
 }
 
 export type NewKind = 'same' | 'dynamic' | 'regular';
@@ -132,28 +160,28 @@ export async function saveAsNewProfile(type: PresetType, slot: number, name: str
   const error = newProfileNameError(s, type, name);
   if (error) throw new Error(error);
   const key = selectedKey(s, type, slot), resolved = resolvePreset(s, type, key);
-  if (!resolved.base || resolved.error) throw new Error(resolved.error ?? 'That profile isn\'t available right now, but your edits are safely kept here.');
-  const deltas = Object.fromEntries(selectChanges(s, type, slot).filter((c) => c.scope === 'project' && c.owner.plate === undefined).map((c) => [c.key, c.now]));
-  const before = changesOf(s, type, slot), source = findProfile(s, type, key), ctx = scaleContext(s);
-  const scales = scalesOf(source), dynamic = type === 'process' && kind === 'dynamic' && !!speedModelOf(source);
+  if (resolved.error) throw new Error(resolved.error);
+  const deltas = authoredChanges(s, type, slot);
+  const before = changesOf(s, type, slot), source = recordOf(s, type, key), ctx = scaleContext(s);
+  const scales = scalesOfRecord(source), dynamic = type === 'process' && kind === 'dynamic' && !!speedModelOfRecord(source);
   const chosen = dynamic ? applyChoices(scales, deltas, valueSources(s, type, slot), choices, ctx) : undefined;
-  const frozen = type === 'process' && kind === 'regular' ? { ...scaleValues(scales, ctx), ...(speedModelOf(source) ? Object.fromEntries(SPEED_FEATURES.flatMap(f => [f.key, f.acceleration]).filter(k => resolved.config[k] !== undefined).map(k => [k, resolved.config[k]])) : {}), layer_height: String(ctx.layerHeight) } : {};
+  const frozen = type === 'process' && kind === 'regular' ? { ...Object.fromEntries(scales.flatMap((r) => resolved.config[r.key] === undefined ? [] : [[r.key, resolved.config[r.key]!]])), ...(speedModelOfRecord(source) ? Object.fromEntries(SPEED_FEATURES.flatMap(f => [f.key, f.acceleration]).filter(k => resolved.config[k] !== undefined).map(k => [k, resolved.config[k]])) : {}), layer_height: String(ctx.layerHeight) } : {};
   const own = chosen ? chosen.own : { ...frozen, ...deltas };
-  const created = source ? await profileCreation(() => {
-    const { auto: _auto, ...copy } = structuredClone(source) as UserPreset & { auto?: object }, overlay = { ...source.overlay, ...own };
-    const auto = type !== 'process' ? {} : autoOf(source, chosen ? chosen.rows : kind === 'regular' ? [] : scales, kind === 'regular' ? null : undefined);
-    if (chosen) for (const r of chosen.rows) delete overlay[r.key];
-    return { ...copy, id: `profile:${randomId()}`, kind: 'profile', name: name.trim(), revision: 0, aliases: [], archived: undefined, overlay, overrides: overlay,
-      ...auto } as UserPreset;
-  }).commit()
-    : await createProfileFromBase(type, resolved.base.name, name.trim(), { ...resolved.config, ...deltas });
+  if (!source) throw new Error('Pick a profile from your library first!');
+  const copyValues: Config = { ...ownValues(type, source), ...own };
+  if (chosen) for (const r of chosen.rows) delete copyValues[r.key];
+  const { archived: _a, ...base } = structuredClone(source);
+  let copy: ProfileRecord = withOwnValues(type, { ...base, id: `profile:${randomId()}`, name: name.trim(), revision: 0 } as ProfileRecord, copyValues);
+  if (type === 'process') copy = { ...copy, scales: chosen ? chosen.rows : kind === 'regular' ? undefined : (copy as ProcessRecord).scales, speedModel: kind === 'regular' ? undefined : (copy as ProcessRecord).speedModel } as ProcessRecord;
+  await commitRecords([{ kind: recordKind(type), record: copy }], { label: 'Save as new profile' });
+  const created = copy.id;
   const printer = chosen && printerWith(getState(), chosen.toPrinter);
-  if (printer) await commitProfileRecords([printer]);
+  if (printer) await commitRecords([{ kind: 'printer', record: printer }], { label: 'Printer overrides' });
   switchPreset(type, slot, created, 'discard');
   if (chosen && Object.keys(chosen.kept).length) setState((st) => ({ dirty: { ...st.dirty, process: { ...st.dirty.process, ...chosen.kept } } }));
-  toast(`Saved as ${name.trim()}`, { label: 'Undo', run: () => {
+  toast('saved_as', { value: name.trim() }, { action: { label: 'Undo', run: () => {
     switchPreset(type, slot, key, 'discard');
     restoreChanges(type, slot, key, before);
-    void archiveProfiles(type, [created]).catch((e) => toast(message(e)));
-  } });
+    void removeRecords(type === 'machine' ? 'printer' : type, [created]).catch((e: unknown) => toast('undo_save_as_failed', { detail: message(e) }));
+  } } });
 }

@@ -1,6 +1,5 @@
 import { useSyncExternalStore } from 'react';
 import { jobRequest } from './actions';
-import { toolFeatures } from './api/client';
 import { getState, type State } from './state/store';
 
 type Answer = number | null | undefined;
@@ -38,7 +37,7 @@ async function plan(key: string, s: State, objectId: number) {
 
 export function smoothestShare(objectId: number | undefined): Answer {
   const s = getState();
-  if (objectId == null || toolFeatures.plan_tops !== true || !s.job.id) return null;
+  if (objectId == null || !s.job.id) return null;
   const key = `${s.job.id}:${objectId}`;
   if (!answers.has(key)) {
     answers.set(key, undefined);

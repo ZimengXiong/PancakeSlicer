@@ -155,6 +155,24 @@ def compare(reference,candidate):
             'per_role':per_role,'layer_volume_pct':volumes,'reference':left,'candidate':right}
 
 
+def failures(value):
+    """What broke the rule, one line each (empty when it passed)."""
+    pct = lambda x: 'n/a' if x is None else f'{x:.2f}%'
+    out = []
+    if not value['same_layer_z']:
+        out.append(f"layer Z differs ({value['reference_layer_count']} reference layers, {value['layer_count']} candidate)")
+    if value['reference']['filament_diameter_mm'] != value['candidate']['filament_diameter_mm']:
+        out.append('filament diameter differs')
+    for role,item in value['per_role'].items():
+        if not item['passed']:
+            out.append(f"{role} ({item['class']}): layer {item['worst_layer']} volume {pct(item['max_layer_volume_pct'])} (limit {item['layer_limit_pct']}%), total {pct(item['total_volume_pct'])}")
+    if value['path_length_pct'] is None or value['path_length_pct'] > 0.5:
+        out.append(f"path length {pct(value['path_length_pct'])} (limit 0.5%)")
+    if value['time_pct'] is None or value['time_pct'] > 1.0:
+        out.append(f"model printing time {pct(value['time_pct'])} (limit 1%)")
+    return out
+
+
 def summary(comparison):
     value = comparison['geometry']
     roles = value['per_role']

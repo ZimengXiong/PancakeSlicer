@@ -1,10 +1,12 @@
 import type { Config } from '../api/types';
-import { getState, markStale, resolvePreset, setState, type State } from '../state/store';
-import { undoable } from '../state/history';
-import { findProfile, profileKey } from './identity';
+import { getState, type State } from '../state/store';
+import { editSetup } from '../printers/device-slots';
 import { paletteName } from '../components/filament-palette';
 import { DEFAULT_FILAMENT_COLOUR as DEFAULT_COLOUR } from './metadata';
-import { randomId } from '../random-id';
+import { isExternalTray } from '../multinozzle/ams';
+import { mutation, responseError } from '../api/access';
+import { mixAt, slotAt, slotMixes } from './slots';
+import { blend } from '../plater/mixColour';
 
 const hex = (value: unknown): string | undefined => {
   const v = String(Array.isArray(value) ? value[0] ?? '' : value ?? '');
@@ -12,47 +14,42 @@ const hex = (value: unknown): string | undefined => {
 };
 export const configColour = (config: Config) => hex(config.filament_colour) ?? hex(config.default_filament_colour);
 
-export function profileSlotColour(s: State, slot: number): string {
-  const key = s.filamentSlots[slot] ?? s.filamentSlots[0];
-  return key ? configColour(resolvePreset(s, 'filament', key).config) ?? DEFAULT_COLOUR : DEFAULT_COLOUR;
+export const EMPTY_SLOT_COLOUR = '#7A7A7A';
+export function reportedTray(s: State, slot: number, printer = s.printer): { colour: string } | { empty: true } | undefined {
+  const tray = slotAt(s, printer, slot)?.tray, status = s.printerConnections.status[printer];
+  if (!tray?.startsWith('ams') || !status?.online || !status.trays) return undefined;
+  const t = status.trays.find((x) => !isExternalTray(x.id) && `ams${x.ams}.${x.slot}` === tray), colour = t?.type ? hex(t.color) : undefined;
+  return colour ? { colour } : { empty: true };
 }
-export function slotColourOverride(s: State, slot: number): string | undefined {
-  if (s.mixes[slot]) return undefined;
-  const key = s.filamentSlots[slot] ?? '';
-  const own = hex(s.slotColours[slot]) ?? configColour({ ...s.projectPresets?.filaments[slot], ...s.filamentEdits[key] });
-  return own && own !== profileSlotColour(s, slot) ? own : undefined;
-}
-const COLOUR_KEYS = ['filament_colour', 'default_filament_colour'];
-const withoutColour = (config: Config | undefined) => config && Object.fromEntries(Object.entries(config).filter(([k]) => !COLOUR_KEYS.includes(k)));
-function followProfile(st: State, slot: number): Partial<State> {
-  const key = st.filamentSlots[slot] ?? '', slotColours = [...st.slotColours]; slotColours[slot] = undefined;
-  const presets = st.projectPresets?.filaments[slot], edits = st.filamentEdits[key];
-  return { slotColours, job: markStale(st.job),
-    ...(presets && COLOUR_KEYS.some((k) => k in presets) ? { projectPresets: { ...st.projectPresets!, filaments: st.projectPresets!.filaments.map((f, i) => (i === slot ? withoutColour(f)! : f)) } } : {}),
-    ...(edits && COLOUR_KEYS.some((k) => k in edits) ? { filamentEdits: { ...st.filamentEdits, [key]: withoutColour(edits)! } } : {}) };
-}
-export function slotColour(s: State, slot: number): string {
-  return (s.mixes[slot] ? hex(s.slotColours[slot]) : slotColourOverride(s, slot)) ?? profileSlotColour(s, slot);
+export function slotColour(s: State, slot: number, printer = s.printer): string {
+  const mix = mixAt(s, printer, slot);
+  if (mix) return blend(mix.components.map((c) => c >= 1 && slotAt(s, printer, c - 1) ? slotColour(s, c - 1, printer) : '#808080'), mix.ratios);
+  const reported = reportedTray(s, slot, printer);
+  if (reported) return 'colour' in reported ? reported.colour : EMPTY_SLOT_COLOUR;
+  return hex(slotAt(s, printer, slot)?.colour) ?? DEFAULT_COLOUR;
 }
 
-export function useProfileColour(slot: number) {
-  undoable('Use profile colour', () => setState((st) => followProfile(st, slot)));
+export function setSlotColour(slot: number, colour: string, printer = getState().printer): Promise<void> {
+  const value = hex(colour), s = getState();
+  if (!value) throw new Error('Pick a color first.');
+  if (printer === s.printer && slotMixes(s)[slot]) throw new Error('A mixed slot gets its colour from the filaments it blends together.');
+  const id = slotAt(s, printer, slot)?.id;
+  if (!id) throw new Error('That slot is no longer on this printer.');
+  return editSetup(printer, (setup) => ({ ...setup, slots: setup.slots.map((x) => (x.id === id ? { ...x, colour: value } : x)) }));
 }
 
-const ownedSource = (s: State, slot: number) => {
-  const p = findProfile(s, 'filament', s.filamentSlots[slot] ?? '');
-  if (!p || p.archived) throw new Error('Pick a saved filament for this slot first.');
-  return p;
-};
-const withColour = (config: Config, colour: string): Config =>
-  ({ ...config, filament_colour: Array.isArray(config.filament_colour) ? [colour] : colour });
-
-export async function changeFilamentColour(slot: number, colour: string): Promise<void> {
-  const value = hex(colour); if (!value) throw new Error('Pick a color first.');
-  const s = getState(), source = ownedSource(s, slot), key = profileKey(source);
-  const [{ saveProfile }, { commitProfileRecords }] = await Promise.all([import('./model'), import('./transactions')]);
-  const record = { ...saveProfile(s, 'filament', source.name, key, withColour(resolvePreset(s, 'filament', key).config, value)), id: key };
-  await commitProfileRecords([record], { apply: (st) => (st.filamentSlots[slot] === key ? followProfile(st, slot) : {}) });
+export async function applySlotColour(slot: number, colour: string, printer = getState().printer): Promise<string | undefined> {
+  const s = getState(), value = hex(colour), target = slotAt(s, printer, slot), connection = s.printerConnections.connections.find((c) => c.printer === printer);
+  if (!value) throw new Error('Pick a color first.');
+  if (connection?.kind === 'bambu-lan' && reportedTray(s, slot, printer)) {
+    const r = await mutation(`/api/printer-connections/${encodeURIComponent(printer)}/tray`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slot: target?.tray, colour: value, filament: target?.filament ?? '' }) });
+    if (!r.ok) throw await responseError(r);
+    return undefined;
+  }
+  await setSlotColour(slot, value, printer);
+  const online = connection && s.printerConnections.status[printer]?.online;
+  return online && connection.kind !== 'bambu-lan' ? 'Saved here; this printer doesn\'t store slot colours' : undefined;
 }
 
 const COLOUR_NAMES: [number, string][] = [[15, 'Red'], [40, 'Orange'], [65, 'Yellow'], [165, 'Green'], [195, 'Cyan'], [255, 'Blue'], [290, 'Purple'], [335, 'Pink'], [360, 'Red']];
@@ -68,19 +65,4 @@ export function colourName(colour: string): string {
   const h = d === 0 ? 0 : max === r ? 60 * (((g - b) / d) % 6) : max === g ? 60 * ((b - r) / d + 2) : 60 * ((r - g) / d + 4);
   const hue = (h + 360) % 360, name = COLOUR_NAMES.find(([limit]) => hue < limit)![1];
   return (name === 'Orange' || name === 'Red') && l < 0.35 ? 'Brown' : name;
-}
-
-export async function saveFilamentAsColour(slot: number, colour: string): Promise<string> {
-  const value = hex(colour); if (!value) throw new Error('Pick a color first.');
-  const s = getState(), source = ownedSource(s, slot), key = profileKey(source);
-  const stem = `${source.name.replace(new RegExp(` ${colourName(configColour(resolvePreset(s, 'filament', key).config) ?? '')}$`), '')} ${colourName(value)}`;
-  const [{ saveProfile }, { profileCreation }] = await Promise.all([import('./model'), import('./transactions')]);
-  const id = await profileCreation((st) => {
-    const taken = (name: string) => st.userPresets.some((p) => p.type === 'filament' && p.name === name && !p.archived);
-    let name = stem; for (let n = 2; taken(name); n++) name = `${stem} ${n}`;
-    return { ...saveProfile(st, 'filament', name, key, withColour(resolvePreset(st, 'filament', key).config, value)), id: `profile:${randomId()}`, revision: 0 };
-  }).commit();
-  (await import('../components/PresetCombo')).requestPreset('filament', slot, id);
-  setState((st) => (st.filamentSlots[slot] === id ? followProfile(st, slot) : {}));
-  return id;
 }

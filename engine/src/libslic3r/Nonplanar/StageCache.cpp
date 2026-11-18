@@ -86,7 +86,7 @@ struct SettledRepairs
     std::set<int>            planar_surfaces;
     bool                     fallback_off = false;
     std::vector<std::string> access_warnings;
-    std::vector<std::string> guard_warnings;
+    std::vector<CodedWarning> guard_warnings;
 };
 
 class Writer
@@ -156,7 +156,12 @@ std::string settled_bytes(const SettledRepairs &r)
     w.put_count(r.access_warnings.size());
     for (const std::string &warning : r.access_warnings) w.put_string(warning);
     w.put_count(r.guard_warnings.size());
-    for (const std::string &warning : r.guard_warnings) w.put_string(warning);
+    for (const CodedWarning &warning : r.guard_warnings) {
+        w.put_string(warning.code.code);
+        w.put_string(warning.code.object);
+        w.put_string(warning.code.params);
+        w.put_string(warning.message);
+    }
     return std::move(w.out);
 }
 
@@ -190,15 +195,20 @@ bool settled_from_bytes(const std::string &in, SettledRepairs &r)
     r.access_warnings.resize(rd.count(sizeof(uint64_t)));
     for (std::string &warning : r.access_warnings) rd.get_string(warning);
     r.guard_warnings.resize(rd.count(sizeof(uint64_t)));
-    for (std::string &warning : r.guard_warnings) rd.get_string(warning);
+    for (CodedWarning &warning : r.guard_warnings) {
+        rd.get_string(warning.code.code);
+        rd.get_string(warning.code.object);
+        rd.get_string(warning.code.params);
+        rd.get_string(warning.message);
+    }
     return rd.done();
 }
 
 std::mutex                                         settled_mutex;
-struct ExportNote { bool converged = false; std::map<size_t, std::vector<std::string>> access_warnings; std::vector<std::string> guard_warnings; };
+struct ExportNote { bool converged = false; std::map<size_t, std::vector<std::string>> access_warnings; std::vector<CodedWarning> guard_warnings; };
 std::map<const Print *, ExportNote>                export_notes;
 std::map<size_t, std::vector<std::string>>         primed_access_warnings;
-std::map<size_t, std::vector<std::string>>         primed_guard_warnings;
+std::map<size_t, std::vector<CodedWarning>>        primed_guard_warnings;
 
 }
 
@@ -388,16 +398,16 @@ void stage_cache_converged(const Print &print, bool converged, const std::map<si
     export_notes[&print].access_warnings = access_warnings;
 }
 
-void stage_cache_note_guard_warnings(const Print &print, const std::vector<std::string> &warnings)
+void stage_cache_note_guard_warnings(const Print &print, const std::vector<CodedWarning> &warnings)
 {
     std::lock_guard<std::mutex> lock(settled_mutex);
     export_notes[&print].guard_warnings = warnings;
 }
 
-std::vector<std::string> stage_cache_guard_warnings(const Print &print)
+std::vector<CodedWarning> stage_cache_guard_warnings(const Print &print)
 {
     std::lock_guard<std::mutex> lock(settled_mutex);
-    std::vector<std::string> out;
+    std::vector<CodedWarning> out;
     for (const PrintObject *object : print.objects())
         if (const auto it = primed_guard_warnings.find(object->id().id); it != primed_guard_warnings.end())
             out.insert(out.end(), it->second.begin(), it->second.end());
@@ -429,9 +439,9 @@ void stage_cache_record(const Print &print)
             settled.fallback_off    = object->m_curved_fallback_off;
             if (const auto it = note.access_warnings.find(object->id().id); it != note.access_warnings.end())
                 settled.access_warnings = it->second;
-            const std::string prefix = object->model_object()->name + ": ";
-            for (const std::string &warning : note.guard_warnings)
-                if (warning.compare(0, prefix.size(), prefix) == 0)
+            const std::string name = warning_object(object->model_object()->name);
+            for (const CodedWarning &warning : note.guard_warnings)
+                if (warning.code.object == name)
                     settled.guard_warnings.push_back(warning);
             const RepairHints &h = settled.hints;
             const bool repaired = !h.surface_caps.empty() || !h.ironing_drops.empty() || !h.order_bands.empty() || !h.uniform_beads.empty() ||

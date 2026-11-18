@@ -9,6 +9,7 @@
 
 :where(.orca-parity) button.pf-changes-trigger, :where(.orca-parity) .rail-head button.pf-changes-trigger { flex: none; white-space: nowrap; color: var(--changed); }
 :where(.orca-parity) .pf-changes-trigger[aria-expanded='true'] { text-decoration: underline; text-underline-offset: 2px; }
+:where(.orca-parity) .pf-changes-trigger.compact { min-width: 16px; padding: 0 2px; text-decoration: underline; text-underline-offset: 2px; font-variant-numeric: tabular-nums; }
 :where(.orca-parity) .orca-menu.pf-changes-pop { width: min(360px, calc(100vw - 24px)); max-height: min(560px, var(--radix-popover-content-available-height, calc(100dvh - 24px))); overflow: hidden; display: flex; flex-direction: column; padding: 0; border-color: var(--border-control); }
 :where(.orca-parity) .pf-change-scroll { min-height: 0; flex: 0 1 auto; overflow: auto; display: grid; grid-template-columns: minmax(0, auto) minmax(0, auto) auto minmax(0, 1fr) auto; align-content: start; padding: var(--s-1) var(--s-1) var(--s-2); }
 :where(.orca-parity) .pf-change { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center; min-height: 28px; border-radius: var(--r-1); }
@@ -16,6 +17,8 @@
 :where(.orca-parity) .pf-change-line { grid-column: 1 / 5; display: grid; grid-template-columns: subgrid; align-items: baseline; column-gap: var(--s-2); min-width: 0; min-height: 28px; padding: 6px var(--s-2); border: 0; border-radius: var(--r-1); background: none; color: var(--ink); font: 400 13px/16px var(--font-ui); font-variant-numeric: tabular-nums; text-align: left; white-space: nowrap; cursor: pointer; }
 :where(.orca-parity) .pf-change-line > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 :where(.orca-parity) .pf-change-name { padding-right: var(--s-3); }
+:where(.orca-parity) .pf-change-line { cursor: pointer; }
+:where(.orca-parity) .pf-change-line:is(:hover, :focus-visible) .pf-change-name { text-decoration: underline; text-underline-offset: 2px; }
 :where(.orca-parity) :is(.pf-change-was, .pf-change-to, .pf-change-scope) { color: var(--ink-3); }
 :where(.orca-parity) :is(.pf-change-was, .pf-change-now) { font-variant-numeric: tabular-nums; }
 :where(.orca-parity) .pf-change-was { text-align: right; }
@@ -55,19 +58,12 @@
 :where(.orca-parity) .pf-scope-switch button[aria-pressed='true'] { color: var(--ink); border-color: var(--ink-3); }
 :where(.orca-parity) .pf-scope-switch button:disabled { opacity: .5; cursor: default; }
 
-:where(.orca-parity) .pf-pop { position: fixed; z-index: 60; min-width: 260px; max-width: min(340px, calc(100vw - 32px)); padding: var(--s-4); background: var(--panel); border: 1px solid var(--frame); border-radius: var(--r-section); box-shadow: var(--shadow-pop); }
-:where(.orca-parity) .pf-pop-title { margin-bottom: 4px; font: var(--t-small); }
 :where(.orca-parity) .settings-tab .opt-undo { justify-content: flex-start; gap: 2px; }
 
-:where(.orca-parity) .pf-add { width: 560px; }
-:where(.orca-parity) .pf-add .np-dialog-body { display: flex; flex-direction: column; gap: var(--s-3); }
-:where(.orca-parity) .pf-radios { display: flex; flex-wrap: wrap; gap: var(--s-4); font: var(--t-body); }
-:where(.orca-parity) .pf-radios label { display: flex; align-items: center; gap: var(--s-2); }
 :where(.orca-parity) .pf-scroll { max-height: 360px; overflow-y: auto; border: 1px solid var(--line); }
 :where(.orca-parity) .pf-scroll .pf-table { border-style: hidden; }
 :where(.orca-parity) .pf-scroll thead th { position: sticky; top: 0; }
 :where(.orca-parity) .pf-scroll tbody tr { cursor: default; }
-:where(.orca-parity) .pf-sw { display: inline-block; width: 14px; height: 14px; border: 1px solid var(--ink-3); vertical-align: -3px; }
 
 :where(.orca-parity) .pf-box { border: 1px solid var(--frame); border-radius: var(--r-section); margin: 0; padding: var(--s-3) var(--pad-panel) var(--pad-panel); min-width: 0; }
 :where(.orca-parity) .pf-box > legend { padding: 0 var(--s-2); font: var(--t-section); color: var(--ink-3); }
@@ -81,48 +77,9 @@
 
 :where(.orca-parity) .dialog-fields { padding: 0 var(--s-3); }
 
-:where(.orca-parity) .pf-conflict { display: flex; align-items: baseline; gap: var(--s-4); padding: var(--s-2) var(--s-5); font: var(--t-small); color: var(--ink-2); }
-:where(.orca-parity) .pf-conflict-text { flex: 1; min-width: 0; overflow: hidden; overflow-wrap: anywhere; white-space: normal; }
-:where(.orca-parity) .pf-conflict .pf-name { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
-
-:where(.orca-parity) .works-with { display: flex; flex-direction: column; gap: var(--s-4); }
-:where(.orca-parity) .ww-rule { display: grid; grid-template-columns: max-content minmax(0, 320px); gap: var(--s-2) var(--s-6, 24px); align-items: center; }
-:where(.orca-parity) .ww-condition { display: contents; }
-:where(.orca-parity) .ww-condition > :not(.ww-trigger) { display: flex; align-items: center; min-height: var(--h-control); }
-:where(.orca-parity) .ww-label { font: var(--t-body); color: var(--ink); }
-:where(.orca-parity) .ww-trigger { width: 100%; min-width: 0; }
-:where(.orca-parity) .ww-value { color: var(--ink-2); font: var(--t-body); }
-:where(.orca-parity) .ww-pop { display: flex; flex-direction: column; gap: var(--s-4); width: min(400px, calc(100vw - 24px)); padding: var(--s-4); }
-:where(.orca-parity) .ww-modes { display: grid; max-height: 280px; overflow-y: auto; }
-:where(.orca-parity) .ww-mode { grid-area: 1 / 1; min-width: 0; }
-:where(.orca-parity) .ww-mode:not([data-on]) { visibility: hidden; }
-:where(.orca-parity) .ww-pop > .choice { align-self: flex-start; }
-:where(.orca-parity) .ww-chips { display: flex; flex-wrap: wrap; gap: var(--s-2); }
-:where(.orca-parity) .ww-chips .chip { min-height: 24px; cursor: pointer; background: none; }
-:where(.orca-parity) .ww-chips .chip[aria-pressed=true] { border-color: var(--line-strong); color: var(--selected-foreground); background: var(--selection-fill); }
-:where(.orca-parity) .ww-chips .chip[aria-disabled=true] { cursor: default; }
-:where(.orca-parity) .ww-chip-grid { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--s-2) var(--s-4); align-items: baseline; }
-:where(.orca-parity) .ww-brand { color: var(--muted); font: var(--t-small); line-height: 24px; }
-:where(.orca-parity) .ww-range { display: flex; align-items: center; gap: var(--s-2); }
-:where(.orca-parity) .ww-range > .text { width: 72px; }
-:where(.orca-parity) .ww-unit { color: var(--muted); font: var(--t-small); }
-:where(.orca-parity) .ww-matched { border-top: 1px solid var(--line); padding-top: var(--s-3); }
-:where(.orca-parity) .ww-matched-head { min-height: var(--h-compact); display: flex; align-items: center; white-space: pre-wrap; color: var(--ink-3); font: var(--t-small); }
-:where(.orca-parity) .ww-printers { margin: 0; padding: 0; list-style: none; }
-:where(.orca-parity) .ww-printers > li { display: flex; align-items: center; gap: var(--s-3); min-height: 32px; }
-:where(.orca-parity) .ww-printer-name { min-width: 0; overflow-wrap: anywhere; }
-:where(.orca-parity) .ww-printer-detail { flex: 1; min-width: 0; color: var(--muted); font: var(--t-small); }
-:where(.orca-parity) .ww-printers > li.is-excluded :is(.ww-printer-name, .ww-printer-detail) { color: var(--ink-3); text-decoration: line-through; }
-:where(.orca-parity) .ww-exclude { flex: none; margin-left: auto; color: var(--muted); opacity: 0; }
-:where(.orca-parity) .ww-printers > li:is(:hover, :focus-within) .ww-exclude, :where(.orca-parity) .ww-printers > li.is-excluded .ww-exclude { opacity: 1; }
-@media (pointer: coarse), (hover: none) { :where(.orca-parity) .ww-exclude { opacity: 1; } }
-:where(.orca-parity) .works-with-used { flex: none; font: var(--t-small); color: var(--muted); }
-:where(.orca-parity) .works-with-none { color: var(--warn); }
 
 :where(.orca-parity) .color-trigger[data-ink] { display: inline-grid; place-items: center; color: #fff; font: var(--t-small); font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
 :where(.orca-parity) .color-trigger[data-ink=dark] { color: #1a1a1a; }
-:where(.orca-parity) .color-trigger[data-modified] { position: relative; }
-:where(.orca-parity) .color-trigger[data-modified] { outline: 2px solid var(--modified); outline-offset: 1px; }
 :where(.orca-parity) .filament-colour-actions { flex-wrap: wrap; }
 :where(.orca-parity) .pk-skel-name { width: 9em; max-width: 100%; height: 12px; }
 :where(.orca-parity) .pk-skel-sub { width: 6em; max-width: 70%; height: 10px; margin-top: var(--s-2); }
@@ -130,7 +87,7 @@
 :where(.orca-parity) .dyn-rows { display: grid; grid-template-columns: minmax(0, max-content) auto max-content 1fr auto; column-gap: var(--s-3); row-gap: var(--s-5); }
 :where(.orca-parity) .dyn-formulas { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; row-gap: var(--s-2); margin: 0; padding: 0; list-style: none; }
 :where(.orca-parity) .dyn-formula { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: center; min-height: var(--row-h); font: var(--t-body); }
-:where(.orca-parity) :is(.dyn-factor, .print-overrides .text.num) { height: 26px; min-height: 26px; background: var(--selector-bg); font: var(--t-num); font-variant-numeric: tabular-nums; }
+:where(.orca-parity) .dyn-factor { height: 26px; min-height: 26px; background: var(--selector-bg); font: var(--t-num); font-variant-numeric: tabular-nums; }
 :where(.orca-parity) .dyn-ceil[data-hidden] { visibility: hidden; }
 :where(.orca-parity) .dyn-eq { color: var(--muted); }
 :where(.orca-parity) .dyn-expr { display: flex; align-items: center; gap: var(--s-2); color: var(--muted); white-space: nowrap; }
@@ -157,22 +114,20 @@
 :where(.orca-parity) .dyn-group { font: var(--t-small); font-weight: 600; color: var(--ink-3); }
 :where(.orca-parity) .dyn-printer .dyn-expr { color: var(--ink); }
 :where(.orca-parity) .print-overrides { display: grid; justify-items: start; gap: var(--s-4); padding: var(--s-4) 0; }
-:where(.orca-parity) .print-overrides table { border-collapse: collapse; font: var(--t-body); }
-:where(.orca-parity) .print-overrides td { height: var(--row-h); padding: 0 var(--s-3) 0 0; border-bottom: 1px solid var(--line); }
-:where(.orca-parity) .print-overrides td:first-child { padding-right: var(--s-5); white-space: nowrap; }
-:where(.orca-parity) .print-overrides .text.num { width: 96px; text-align: right; }
-:where(.orca-parity) .print-overrides .po-unit { display: inline-block; min-width: 44px; margin-left: var(--s-2); font: var(--t-small); color: var(--muted); }
-:where(.orca-parity) .print-overrides .combo { justify-self: start; min-width: 220px; }
-:where(.orca-parity) :is(.dyn-formula, .print-overrides tr) .row-remove { opacity: 0; }
-:where(.orca-parity) :is(.dyn-formula, .print-overrides tr):is(:hover, :focus-within) .row-remove { opacity: 1; }
-@media (pointer: coarse), (hover: none) { :where(.orca-parity) :is(.dyn-formula, .print-overrides tr) .row-remove { opacity: 1; } }
-:where(.orca-parity) .print-overrides .po-remove { width: 1%; text-align: right; }
+:where(.orca-parity) .print-overrides .po-rows { justify-self: stretch; max-width: 640px; }
+:where(.orca-parity) .print-overrides .po-row { border-bottom: 1px solid var(--line); }
+:where(.orca-parity) .print-overrides .opt-line, :where(.orca-parity) .print-overrides .option-row { --row-inset: 0; }
+:where(.orca-parity) .print-overrides > .combo { justify-self: start; min-width: 220px; }
+:where(.orca-parity) .dyn-formula .row-remove { opacity: 0; }
+:where(.orca-parity) .dyn-formula:is(:hover, :focus-within) .row-remove { opacity: 1; }
+@media (pointer: coarse), (hover: none) { :where(.orca-parity) .dyn-formula .row-remove { opacity: 1; } }
+:where(.orca-parity) .print-overrides .po-fixed { font: var(--t-small); white-space: nowrap; }
 
-:where(.orca-parity) .fits { display: grid; grid-template-columns: max-content minmax(0, 336px); gap: var(--s-2) var(--s-5); padding: var(--s-4) 0; }
-:where(.orca-parity) .fits-row { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: baseline; min-height: var(--row-h); font: var(--t-body); }
+:where(.orca-parity) .fits { display: grid; grid-template-columns: max-content minmax(0, 420px); gap: var(--s-2) var(--s-5); padding: var(--s-4) 0; }
+:where(.orca-parity) .fits-row { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: center; min-height: var(--row-h); font: var(--t-body); }
 :where(.orca-parity) .fits .combo { height: 26px; min-height: 26px; }
-:where(.orca-parity) .fits .chips { display: flex; flex-wrap: wrap; gap: var(--s-2); }
-:where(.orca-parity) .fits .chip { min-height: 26px; }
+:where(.orca-parity) .fits-checks { display: flex; flex-wrap: wrap; gap: 0 var(--s-4); }
+:where(.orca-parity) .fits-checks > .modal-check { min-height: 26px; white-space: nowrap; }
 
 :where(.orca-parity) .pf-add-body { padding: 0 16px; }
 :where(.orca-parity) .pf-add-cover { display: block; width: 240px; height: 240px; object-fit: contain; margin: var(--s-4) 0; }
@@ -188,12 +143,36 @@
 :where(.orca-parity) .dyn-speed-table :is(td, th) { padding-block: var(--s-2); }
 :where(.orca-parity) .dyn-speed-override { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); color: var(--ink-3); font-size: var(--t-small); }
 
-:where(.orca-parity) .extruder-rows { display: flex; flex-direction: column; gap: var(--s-2); padding-inline: var(--s-5); }
-:where(.orca-parity) .pf-full-editor .extruder-rows, :where(.orca-parity) .settings-tab .extruder-rows { padding-inline: 0; }
-:where(.orca-parity) .extruder-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2) var(--s-3); min-height: var(--h-control); }
-:where(.orca-parity) .extruder-name { flex: none; min-width: 48px; color: var(--ink-2); font: var(--t-body); }
-:where(.orca-parity) .extruder-row > .combo { flex: 1 1 180px; min-width: 0; }
-:where(.orca-parity) .extruder-variant { flex: 1 1 auto; font: var(--t-body); }
-:where(.orca-parity) .extruder-nozzle { flex: none; color: var(--ink-3); font: var(--t-small); font-variant-numeric: tabular-nums; }
 
 :where(.orca-parity) :is(.pf-results-heading, .pf-results-actions) > .btn.slant[aria-pressed=true] { --slant-bg: var(--slant-fill-selected); }
+
+.pf-conflict-actions { display: flex; flex-wrap: wrap; gap: var(--s-2); margin-top: var(--s-2); }
+:where(.orca-parity) .pf-change-groups { min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+:where(.orca-parity) .pf-change-group + .pf-change-group { border-top: 1px solid var(--line); }
+:where(.orca-parity) .pf-change-group-title { margin: 0; padding: var(--s-2) var(--s-3) 0; color: var(--ink-3); font: var(--t-small); font-weight: 600; }
+:where(.orca-parity) .pf-changes-foot { flex-wrap: wrap; }
+:where(.orca-parity) .pf-changes-foot > :is(.btn, .btn-ghost, .pf-revert-all) { white-space: nowrap; }
+:where(.orca-parity) .extruder-rows.grid { display: contents; }
+:where(.orca-parity) .opt-field > .extruder-switch, :where(.orca-parity) .optgroup-aside .extruder-switch { width: auto; min-width: 88px; }
+
+:where(.orca-parity) .pf-save-menu { display: inline-flex; align-items: center; gap: var(--s-2); }
+:where(.orca-parity) .pf-save-as { display: inline-flex; align-items: center; gap: var(--s-2); }
+:where(.orca-parity) .pf-save-as > .text { width: 200px; }
+:where(.orca-parity) .pf-save-kind { margin: 0 var(--s-2) var(--s-2); }
+
+:where(.orca-parity) .color-note { margin: 0; color: var(--ink-3); font: var(--t-small); }
+
+:where(.orca-parity) .filament-printers { display: grid; gap: var(--s-3); max-width: 560px; padding: var(--s-2) 0 var(--s-5); }
+:where(.orca-parity) .fp-rows { margin: 0; padding: 0; list-style: none; }
+:where(.orca-parity) .fp-row { display: flex; align-items: center; gap: var(--s-3); width: 100%; min-height: var(--h-field); padding: var(--s-1) 0; border: 0; border-top: 1px solid var(--line); background: none; font: var(--t-body); color: var(--ink); text-align: left; cursor: pointer; }
+:where(.orca-parity) .fp-row:hover:not(:disabled) .fp-name { text-decoration: underline; text-underline-offset: 2px; }
+:where(.orca-parity) .fp-row:disabled { cursor: default; }
+:where(.orca-parity) .fp-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+:where(.orca-parity) .fp-summary { color: var(--muted); font: var(--t-small); white-space: nowrap; }
+:where(.orca-parity) .fp-changed { color: var(--changed); font: var(--t-small); white-space: nowrap; }
+
+:where(.orca-parity) .nozzle-sizes { display: grid; gap: var(--s-2); }
+:where(.orca-parity) .nozzle-row { display: flex; align-items: center; gap: var(--s-3); }
+:where(.orca-parity) .nozzle-other { display: flex; align-items: center; gap: var(--s-2); min-width: 0; }
+:where(.orca-parity) .nozzle-other > .text { width: 72px; }
+:where(.orca-parity) .nozzle-other > :is(.text, .btn) { height: var(--field-h, var(--h-control)); min-height: 0; }

@@ -1,4 +1,5 @@
 #include "NativePrint.hpp"
+#include "libslic3r/Nonplanar/Research.hpp"
 #include "ConformalLayers.hpp"
 #include "libslic3r/GCode/ClearanceRepair.hpp"
 
@@ -128,13 +129,13 @@ void flatten(const ExtrusionEntity *ee, std::vector<const ExtrusionPath *> &out,
 
 bool native_requested()
 {
-    const char *v = std::getenv("NP_NATIVE");
+    const char *v = research_switch("NP_NATIVE");
     return v != nullptr && *v != 0 && *v != '0';
 }
 
 double native_axis_key(const char *name, double rotary_default, bool rotary)
 {
-    if (const char *v = std::getenv(name))
+    if (const char *v = research_switch(name))
         return std::max(0., std::atof(v));
     return rotary ? rotary_default : 0.;
 }
@@ -187,7 +188,7 @@ const std::vector<ExPolygons> *NativeSliceOverride::find(const std::string &name
 double adaptive_level_ratio()
 {
     static const double r = [] {
-        const char *v = std::getenv("NP_NATIVE_ADAPTIVE");
+        const char *v = research_switch("NP_NATIVE_ADAPTIVE");
         return v == nullptr ? 0. : std::clamp(std::atof(v), 1., 2.);
     }();
     return r;
@@ -245,7 +246,7 @@ std::vector<double> adaptive_levels(const indexed_triangle_set &mesh, const Laye
 
 bool native_planar_support()
 {
-    static const bool on = [] { const char *v = std::getenv("NP_NATIVE_PLANAR_SUPPORT"); return v == nullptr || std::atoi(v) != 0; }();
+    static const bool on = [] { const char *v = research_switch("NP_NATIVE_PLANAR_SUPPORT"); return v == nullptr || std::atoi(v) != 0; }();
     return on;
 }
 
@@ -301,7 +302,7 @@ std::vector<FieldRoad> native_planar_support_roads(const PrintObject &object, co
                 part_at[key(ix, iy)].emplace_back(t, r.layer);
         });
     std::unordered_map<int64_t, std::vector<double>> under;
-    static const char *bead_env = std::getenv("NP_PSUP_BEAD");
+    static const char *bead_env = research_switch("NP_PSUP_BEAD");
     bead_columns = bead_env != nullptr && *bead_env != 0 ? std::atoi(bead_env) != 0 : bead_columns;
     struct BeadBottom { double x, y, bottom, w; };
     std::vector<BeadBottom> bead_bottoms;
@@ -339,7 +340,7 @@ std::vector<FieldRoad> native_planar_support_roads(const PrintObject &object, co
             }
     }
     struct Column { int x, y; double base, top; Polygon foot; };
-    std::FILE *dump = std::getenv("NP_NATIVE_PSUP_DUMP") ? std::fopen(std::getenv("NP_NATIVE_PSUP_DUMP"), "w") : nullptr;
+    std::FILE *dump = research_switch("NP_NATIVE_PSUP_DUMP") ? std::fopen(research_switch("NP_NATIVE_PSUP_DUMP"), "w") : nullptr;
     std::vector<Column> columns;
     for (auto &[k, cell_tops] : tops_of) {
         const int x = int(k >> 32), y = int(int32_t(uint32_t(k)));
@@ -732,8 +733,8 @@ bool generate_planar_native_support(PrintObject &object)
         Vec3d gradient(const Vec3d &) const override { return Vec3d::UnitZ(); }
     } field;
     Vec2d phase = Vec2d::Zero();
-    const char *phase_x = std::getenv("NP_PLANAR_NATIVE_SUPPORT_PHASE_X");
-    const char *phase_y = std::getenv("NP_PLANAR_NATIVE_SUPPORT_PHASE_Y");
+    const char *phase_x = research_switch("NP_PLANAR_NATIVE_SUPPORT_PHASE_X");
+    const char *phase_y = research_switch("NP_PLANAR_NATIVE_SUPPORT_PHASE_Y");
     if (phase_x)
         phase.x() = std::atof(phase_x);
     if (phase_y)
@@ -1012,7 +1013,7 @@ void build_native_patch(PrintObject &object, const std::shared_ptr<const LayerFi
             std::vector<float> heights(m), widths(m);
             std::vector<Vec3f> axes(m);
             Polyline3          polyline;
-            static const bool  upright_support = [] { const char *v = std::getenv("NP_NATIVE_SUPPORT_UPRIGHT"); return !v || std::atoi(v) != 0; }();
+            static const bool  upright_support = [] { const char *v = research_switch("NP_NATIVE_SUPPORT_UPRIGHT"); return !v || std::atoi(v) != 0; }();
             const bool         upright         = upright_support && is_support(path->role());
             for (size_t i = 0; i < m; ++i) {
                 const Vec3d a = upright ? Vec3d::UnitZ() : Native::tool_axis(*field, tips[i], tilt_cap);
@@ -1087,7 +1088,7 @@ void build_native_patch(PrintObject &object, const std::shared_ptr<const LayerFi
     op.layer_height.resize(n - 1);
     for (size_t k = 1; k < n; ++k)
         op.layer_height[k - 1] = tops[k] - tops[k - 1];
-    const char *road_ids_env = std::getenv("NP_NATIVE_ROAD_IDS");
+    const char *road_ids_env = research_switch("NP_NATIVE_ROAD_IDS");
     const bool road_ids = road_ids_env != nullptr && *road_ids_env != '\0' && std::string(road_ids_env) != "0";
     if (road_ids) {
         static std::atomic<uint64_t> next_road_id{0};
@@ -1099,7 +1100,7 @@ void build_native_patch(PrintObject &object, const std::shared_ptr<const LayerFi
                 road.path->native_road_id = uint32_t(id);
         }
     }
-    const char *dump_prefix = std::getenv("NP_NATIVE_DUMP_ROADS");
+    const char *dump_prefix = research_switch("NP_NATIVE_DUMP_ROADS");
     auto dump = [&](const char *stage, const auto &visit) {
         if (dump_prefix == nullptr || *dump_prefix == '\0')
             return;

@@ -1,9 +1,11 @@
+import { recordOf } from '../profiles/view';
+import type { PrinterRecord } from '../profiles/records';
 import { Check } from './Check';
 import { MODE_LABELS } from '../nonplanar-mode';
 import { Dropdown } from './Dropdown';
 import { Caret } from './Caret';
 import { memo, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { effectiveConfig, getState } from '../state/store';
+import { effectiveConfig, getState, useStore } from '../state/store';
 import {
   CURVED_COLOR, EXTENDED_VIEWS, clearanceColor, NONPLANAR_COLORS, NONPLANAR_HUES, NONPLANAR_PLANAR_COLOR, OPTION_COLORS, RANGE_PALETTE, ROLE_COLORS, VIEW_TYPES, hexToRgb,
   nonplanarIndexColor, type ColorRange, type RGB, type Ranges, type ViewType,
@@ -16,12 +18,14 @@ import { clearanceScale } from '../preview/clearance';
 import { BP } from '../breakpoints';
 import { phoneSheetQuery } from '../workspace-sheet';
 import { Sep } from '../separator';
+import { slotFilaments } from '../profiles/slots';
 
 const css = (c: RGB) => `rgb(${c[0]},${c[1]},${c[2]})`;
 
 const SHOW_STATS = new URLSearchParams(location.search).has('stats');
 
 const spacedWeight = (g: number) => g >= 1000 ? `${(g / 1000).toFixed(2)} kg` : `${g.toFixed(1)} g`;
+
 function compactWeight(g: number): string {
   const a = Math.abs(g);
   const [v, unit] = a >= 1e6 ? [a / 1e6, 't'] : a >= 1e3 ? [a / 1e3, 'kg'] : [a, 'g'];
@@ -72,7 +76,7 @@ function filamentInfo(d: PreviewData, statistics?: PrintStatistics) {
     const native = statistics?.per_extruder.find((f) => f.extruder_id === i);
     if (native && native.used_filament_mm > 0)
       return { mm: mm ?? 0, grams: (mm ?? 0) * native.used_filament_g / native.used_filament_mm };
-    const cfg = effectiveConfig(s, 'filament', Math.min(i, Math.max(0, s.filamentSlots.length - 1)));
+    const cfg = effectiveConfig(s, 'filament', Math.min(i, Math.max(0, slotFilaments(s).length - 1)));
     const num = (v: unknown, def: number) => {
       const x = Number(Array.isArray(v) ? v[0] : v);
       return Number.isFinite(x) && x > 0 ? x : def;
@@ -132,6 +136,7 @@ export const Legend = memo(function Legend(props: {
   const record = d.sourceUrl && state.job.id && d.sourceUrl === state.api?.movesUrl(state.job.id)
     ? state.job.status?.record : undefined;
   const printStats = d.statistics(record);
+  const manualSwap = useStore((s) => (recordOf(s, 'machine', s.printer) as PrinterRecord | undefined)?.swap === 'manual');
   const fil = filamentInfo(d, printStats);
   const totalsByExtruder = printStats
     ? [...printStats.per_extruder].sort((a, b) => a.extruder_id - b.extruder_id)
@@ -192,7 +197,7 @@ export const Legend = memo(function Legend(props: {
       case 'filament': {
         const s = getState();
         const cols = (d.meta.extruder_colors?.length ? d.meta.extruder_colors : []).map(hexToRgb);
-        const names = d.meta.filament_names?.length ? d.meta.filament_names : s.filamentSlots;
+        const names = d.meta.filament_names?.length ? d.meta.filament_names : slotFilaments(s);
         return (
           <table className="lg-table">
             <tbody>
@@ -225,12 +230,13 @@ export const Legend = memo(function Legend(props: {
       <div className="lg-head">
         <Dropdown className="lg-view" aria-label="Color scheme" value={ui.view} onValueChange={(next) => setUi((u) => ({ ...u, view: next as ViewType }))} options={[...VIEW_TYPES.filter((v) => d.header?.extended || canExtend(d) || !EXTENDED_VIEWS.has(v.key)).map((v) => ({ value: v.key, label: v.label }))]} />
         {props.headAction}
-        <button type="button" className="lg-collapse" aria-expanded={open} aria-label={open ? 'Fold legend' : 'Open legend'} onClick={() => setOpen(!open)}><Caret dir={open ? 'up' : 'down'} /></button>
+        <button type="button" className="lg-collapse" aria-expanded={open} aria-label={open ? 'Fold legend' : 'Open legend'} onClick={() => setOpen(!open)}> {open ? <Caret dir="up" /> : 'Show'}</button>
       </div>
       {props.summary ?? (
         <div className="lg-summary">
           <div className="lg-stat"><span className="lg-stat-v">{spacedTime(total)}</span><span className="lg-stat-k">Print time</span></div>
           <div className="lg-stat"><span className="lg-stat-v">{spacedWeight(totalG)}</span><span className="lg-stat-k">Filament{totalMm > 0 && <><Sep/>{(totalMm / 1000).toFixed(2)} m</>}</span></div>
+          {!!printStats?.total_toolchanges && <div className="lg-stat"><span className="lg-stat-v">{printStats.total_toolchanges}</span><span className="lg-stat-k">{manualSwap ? 'Pauses' : 'Filament changes'}</span></div>}
         </div>
       )}
       {open && (
@@ -299,24 +305,8 @@ function NonplanarKey({ d, ui, setUi, ranges, mode }: { d: PreviewData; ui: Prev
   else if (ui.nonplanar === 'curved') rows = [{ c: CURVED_COLOR, label: (mode && MODE_LABELS[mode]) || 'Curved' }];
   return (
     <div>
-      <div className="seg lg-seg" role="radiogroup" aria-label="Colour curved passes by"
-        onKeyDown={(e) => {
-          const i = NONPLANAR_COLORS.findIndex((c) => c.key === ui.nonplanar);
-          const d = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
-          if (!d) return;
-          e.preventDefault();
-          const next = NONPLANAR_COLORS[(i + d + NONPLANAR_COLORS.length) % NONPLANAR_COLORS.length].key;
-          setUi((u) => ({ ...u, nonplanar: next }));
-          (e.currentTarget.querySelector(`[data-key="${next}"]`) as HTMLElement | null)?.focus();
-        }}>
-        {NONPLANAR_COLORS.map((c) => (
-          <button key={c.key} type="button" role="radio" data-key={c.key} aria-checked={ui.nonplanar === c.key}
-            tabIndex={ui.nonplanar === c.key || (c.key === 'shell' && !NONPLANAR_COLORS.some((x) => x.key === ui.nonplanar)) ? 0 : -1} aria-label={c.label}
-            onClick={() => setUi((u) => ({ ...u, nonplanar: c.key }))}>
-            {c.key === 'bead_height' ? 'Bead' : c.label}
-          </button>
-        ))}
-      </div>
+      <Dropdown className="lg-np-by" aria-label="Colour curved passes by" value={NONPLANAR_COLORS.some((c) => c.key === ui.nonplanar) ? ui.nonplanar : 'shell'}
+        onValueChange={(next) => setUi((u) => ({ ...u, nonplanar: next as typeof u.nonplanar }))} options={NONPLANAR_COLORS.map((c) => ({ value: c.key, label: c.label }))} />
       {shellCount === 0 && <div className="lg-row lg-dim">No curved passes</div>}
       {shellCount > 0 && rows.map((r, i) => (
         <div className="lg-row" key={i}><Swatch c={r.c} /><span>{r.label}</span></div>

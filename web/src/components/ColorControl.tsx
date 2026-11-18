@@ -4,6 +4,7 @@ import { Popover } from 'radix-ui';
 import { Range } from './Range';
 import { FILAMENT_PALETTE, paletteName } from './filament-palette';
 import './controls.css';
+import { InLayer } from './PageLayer';
 const KEY = 'orca.web.recent-colors';
 const PALETTE = FILAMENT_PALETTE.map((c) => c.hex);
 const normalize = (s: string) => /^#?[\da-f]{6}$/i.test(s) ? `#${s.replace('#', '').toUpperCase()}` : null;
@@ -25,7 +26,7 @@ export default function ColorControl({value, onCommit, label = 'Color', disabled
   const swatches = (colors: string[], group: string) => <div className="color-palette" role="group" aria-label={group}>{colors.map(c => <button key={c} type="button" className="color-swatch" style={{backgroundColor: c}} aria-label={paletteName(c) ?? c} aria-pressed={color === c} onClick={() => setDraft(c)} />)}</div>;
   return <Popover.Root open={open} onOpenChange={next => { setOpen(next); if (next) setDraft(normalize(value) ?? '#000000'); }}>
     <Popover.Trigger asChild><button {...named} type="button" className="color-trigger" style={{backgroundColor:normalize(value) ?? undefined}} data-unknown={!normalize(value)} aria-label={`${label}: ${normalize(value) ?? 'Not set'}`} disabled={disabled}/></Popover.Trigger>
-    <Popover.Portal><Popover.Content className="orca-menu color-popover" aria-label={label} side="bottom" align="start" sideOffset={6} collisionPadding={12} onKeyDown={e => e.stopPropagation()}>
+    <InLayer portal={Popover.Portal}><Popover.Content className="orca-menu color-popover" aria-label={label} side="bottom" align="start" sideOffset={6} collisionPadding={12} onKeyDown={e => e.stopPropagation()}>
       <form onSubmit={e => {e.preventDefault(); apply();}}>
         <div className="color-heading"><span>{label}</span><span className="color-preview" style={{backgroundColor: color}}/></div>
         {swatches(PALETTE, 'Palette')}
@@ -35,6 +36,6 @@ export default function ColorControl({value, onCommit, label = 'Color', disabled
         <div className="color-channels">{['R','G','B'].map((key,i) => <div key={key} className="color-channel"><label htmlFor={`${id}-${key}`}>{key}</label><Range min={0} max={255} value={rgb[i]} onValueChange={n => setChannel(i,n)} aria-label={`${key} channel`}/><input id={`${id}-${key}`} className="text num" aria-label={`${key} value`} inputMode="numeric" type="number" min={0} max={255} value={rgb[i]} onChange={e => { if(e.target.value !== '') setChannel(i, Number(e.target.value)); }}/></div>)}</div>
         <div className="color-actions"><Popover.Close asChild><button type="button" className="btn-ghost">Cancel</button></Popover.Close><button type="submit" className="btn" disabled={!valid}>Apply</button></div>
       </form>
-    </Popover.Content></Popover.Portal>
+    </Popover.Content></InLayer>
   </Popover.Root>;
 }

@@ -30,20 +30,12 @@
 :where(.orca-parity) .send-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-1) var(--s-6); }
 :where(.orca-parity) .send-options .modal-check { align-items: center; white-space: nowrap; min-height: var(--h-control); font: var(--t-body); }
 :where(.orca-parity) .send-options .control-check { flex: none; }
-:where(.orca-parity) .ams-map { display: grid; gap: var(--s-2); }
-:where(.orca-parity) .send-map-row { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.2fr); align-items: center; gap: var(--s-4); }
-:where(.orca-parity) .send-project-filament { display: flex; align-items: center; gap: var(--s-3); min-width: 0; font: var(--t-small); }
-:where(.orca-parity) .send-project-filament > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-:where(.orca-parity) .send-tray-select { position: relative; min-width: 0; }
-:where(.orca-parity) .send-tray-select .combo { width: 100%; min-width: 0; }
-:where(.orca-parity) .send-tray-select[data-colour] .combo { padding-left: calc(var(--s-3) + 14px + var(--s-3)); }
-:where(.orca-parity) .send-tray-select > .ams-swatch { position: absolute; left: var(--s-3); top: 50%; transform: translateY(-50%); pointer-events: none; }
+:where(.orca-parity) .send-filaments { display: grid; gap: var(--s-2); margin: 0; padding: 0; list-style: none; }
+:where(.orca-parity) .send-filaments > li { display: flex; align-items: center; gap: var(--s-2); min-width: 0; font: var(--t-body); }
+:where(.orca-parity) .send-filament-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:where(.orca-parity) .send-arrow { color: var(--ink-3); }
 :where(.orca-parity) .ams-swatch { display: inline-block; width: 14px; height: 14px; border-radius: 50%; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 40%, transparent); flex: none; }
 :where(.orca-parity) .send-note { margin: 0; color: var(--ink-2); font: var(--t-small); }
-:where(.orca-parity) .send-tray-select[data-missing] .combo { border-color: var(--danger); }
-@media (max-width: 399px) { :where(.orca-parity) .send-map-row { grid-template-columns: minmax(0,1fr) minmax(0,1.3fr); gap: var(--s-3); } }
-
-:where(.orca-parity) .printer-live-action { color: var(--accent-text); text-decoration: underline; text-underline-offset: 2px; }
 
 :where(.orca-parity) .connection-editor { display: grid; gap: var(--s-2); }
 :where(.orca-parity) .connection-hint { padding-left: calc(11rem + var(--s-4)); }
@@ -64,8 +56,8 @@
 :where(.orca-parity) .found-acts .btn-ghost { min-height: var(--h-compact); padding: 0 var(--s-3); font: var(--t-small); color: var(--accent-text); }
 @media (hover: hover) { :where(.orca-parity) .found-table tr:not(:hover):not(:focus-within) .found-acts > * { visibility: hidden; } }
 @media (max-width: 599px) { :where(.orca-parity) .found-kind { display: none; } }
-:where(.orca-parity) .printer-live { display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; column-gap: var(--s-2); row-gap: var(--s-1); width: calc(100% - 2 * var(--space-section) - 40px - var(--s-3)); margin: var(--s-1) var(--space-section) 0 calc(var(--space-section) + 40px + var(--s-3)); padding: var(--s-1) 0; border: 0; background: none; color: var(--ink-3); font: var(--t-small); text-align: left; cursor: pointer; }
-:where(.orca-parity) .printer-live:hover .printer-live-text { color: var(--ink); }
+:where(.orca-parity) .printer-live { display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; column-gap: var(--s-2); row-gap: var(--s-1); width: calc(100% - 2 * var(--space-section) - var(--rail-lead, 40px) - var(--s-3)); margin: var(--s-1) var(--space-section) 0 calc(var(--space-section) + var(--rail-lead, 40px) + var(--s-3)); padding: var(--s-1) 0; border: 0; background: none; color: var(--ink-3); font: var(--t-small); text-align: left; cursor: pointer; }
+:where(.orca-parity) .printer-live:hover .printer-live-text { text-decoration: underline; }
 :where(.orca-parity) .printer-live-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 :where(.orca-parity) .print-rings { display: inline-flex; flex: none; align-items: center; gap: var(--s-1); }

@@ -1,6 +1,7 @@
 #pragma once
 #include "libslic3r/Nonplanar/Repair.hpp"
 #include "libslic3r/Point.hpp"
+#include "libslic3r/WarningCode.hpp"
 #include <cstddef>
 #include <map>
 #include <memory>
@@ -92,7 +93,7 @@ private:
     std::map<const PrintObject *, int> m_repicks;
     std::map<const PrintObject *, bool> m_band_tried;
     int                      m_guard_passes = 0;
-    std::vector<std::string> m_guard_warnings;
+    std::vector<CodedWarning> m_guard_warnings;
     std::vector<std::string> m_actions;
 };
 

@@ -1,6 +1,6 @@
+import type { EngineWarning } from './engine-warnings';
 import { useSyncExternalStore } from 'react';
 import { jobRequest } from './actions';
-import { canForcePlanar } from './api/client';
 import type { JobStatus } from './api/types';
 import type { PreviewData } from './preview/data';
 import { jobValue } from './options';
@@ -68,7 +68,7 @@ export function useCompareWanted(): CompareSource | null {
   return useSyncExternalStore(subscribe, () => wanted);
 }
 
-export interface Baseline { id: string; status: JobStatus; signature: string; warnings: string[] }
+export interface Baseline { id: string; status: JobStatus; signature: string; warnings: EngineWarning[] }
 let baseline: Baseline | null = null;
 export function useBaseline(): Baseline | null {
   return useSyncExternalStore(subscribe, () => baseline);
@@ -100,13 +100,13 @@ async function standardRequest() {
   const flat = { nonplanar_mode: jobValue('nonplanar_mode', 'off'), zaa_enabled: false };
   return {
     ...req,
-    overrides: { ...req.overrides, ...flat },
+    project: { ...req.project, process: { ...req.project.process, ...flat } },
     plate: req.plate && { objects: req.plate.objects.map((o) => {
       const { nonplanar_mode: _, ...rest } = o.settings ?? {};
-      return { ...o, settings: canForcePlanar() ? { ...rest, zaa_enabled: '0' } : { ...rest, nonplanar_mode: 'off', zaa_enabled: '0' } };
+      return { ...o, settings: { ...rest, zaa_enabled: '0' } };
     }) },
-    project_settings: req.plate ? undefined : canForcePlanar() ? { zaa_enabled: false } : flat,
-    force_planar: canForcePlanar() || undefined,
+    project_settings: req.plate ? undefined : { zaa_enabled: false },
+    force_planar: true,
     output: 'gcode' as const,
     priority: 'low' as const,
   };

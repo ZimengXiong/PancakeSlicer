@@ -1,3 +1,4 @@
+import { documentText } from '../persist/wire';
 import { openingBusy } from '../state/busy';
 import { newKey, type ProjectMeta, type ProjectStore, type ProjectCommandStatus, type StoredDocBase } from '../persist/backend';
 import { changeForSave, savedVersionBase } from '../projects/versions';
@@ -6,56 +7,55 @@ import type { StoredDoc } from '../persist/session';
 import { clearPlate } from '../actions';
 import { documentGeneration, leaveDocument, newDocument, snapshot, type Doc } from '../state/history';
 import { clearPlateJobs } from '../plater/plates';
-import { getState, setState, toast } from '../state/store';
-import { ensureCompatibleSelection } from '../profiles/material-library';
+import { IDLE_JOB, setState } from '../state/store';
 import { project, projectList, flushProject, writeProjectRoute, type ProjectDraftInventory } from './project';
 import { writeRoute } from './routes';
-import { checkpointCommitted, conflictFailure, failureError, projectFailure, recoveryDocument, type DraftCheckpoint, type ProjectFailure, type CheckpointDocument } from './project-recovery';
+import { checkpointCommitted, conflictFailure, draftConflictFailure, failureError, projectFailure, TRASHED, recoveryDocument, type DraftCheckpoint, type ProjectFailure, type CheckpointDocument, RECOVERED_MESSAGE } from './project-recovery';
 export interface RecoveryRuntime {
-  ensureCatalogs(document: StoredDoc, isCurrent: () => boolean): Promise<void>;
   storage(): ProjectStore | null; removed: Set<string>;
   checkpoint(): { checkpoint: DraftCheckpoint; durable: Promise<ProjectDraft> };
-  preserveSnapshot(): Promise<void>; hasUnsaved(): boolean; waitForWrites(): Promise<void>;
+  hasUnsaved(): boolean; waitForWrites(): Promise<void>;
   beginOpen(): number; invalidateWrites(): void; isCurrent(mine: number): boolean; adopt(action: () => void): void;
   previous(id: string): void; restored(): ProjectDraftMeta | null; setRestored(draft: ProjectDraftMeta | null): void; resetCaptured(): void;
-  checkpointRecovered(id: string, revision: number, failure: ProjectFailure | null): unknown;
+  restoreEditedAt(at: number): void;
+  checkpointRecovered(id: string, revision: number, failure: ProjectFailure): unknown;
   activeWrite(id: string, gen: number, epoch: number): boolean;
-  known: Set<string>; session: { owner: string; previousOwners: readonly string[]; tab: readonly string[] };
+  known: Set<string>; session: { owner: string };
   publish(type: 'saved' | 'deleted', id: string): void; refreshList(): void;
   drafts(): Promise<ProjectDraftStore>; refreshDrafts(): Promise<ProjectDraftInventory>;
 }
 const codec = () => import('../persist/session');
-function keepCompatible() {
-  const fixed = ensureCompatibleSelection(getState());
-  if (!fixed) return;
-  setState(fixed.patch);
-  if (fixed.notice) toast(fixed.notice, null, undefined, 'warning');
+const editedOf = (d: ProjectDraftMeta) => d.editedAt ?? d.updatedAt;
+async function documentOffer(document: StoredDoc): Promise<() => void> {
+  const m = await import('./project-slots');
+  const offer = await m.documentOffer(document as Parameters<typeof m.documentOffer>[0]);
+  return () => m.settleOffer(offer);
 }
 export async function adoptProjectDraft(runtime: RecoveryRuntime, draft: ProjectDraft, canonical: ProjectMeta | null, mine: number, { offer = false } = {}) {
   const document = recoveryDocument(draft.doc) as StoredDoc;
-  await runtime.ensureCatalogs(document, () => runtime.isCurrent(mine));
   if (!runtime.isCurrent(mine)) return;
+  const offered = documentOffer(document);
   const storage = await runtime.drafts();
   const fields = await (await codec()).decode(document, async (key) => draft.blobs[key] ?? await storage.asset(key));
+  const settleOffer = await offered;
   if (!runtime.isCurrent(mine)) return;
   const meta: ProjectMeta = canonical ?? { id: draft.projectId, name: draft.name, revision: draft.baseRevision,
     savedAt: 0, objects: draft.objects, thumbnail: null };
-  const failure = runtime.removed.has(draft.projectId) ? projectFailure({ name: 'ProjectDeletedError', message: 'Heads up: this project was deleted elsewhere. You can save your current draft as a new copy!' }, draft.projectId, draft.baseRevision)
-    : canonical && (canonical.revision ?? 0) !== draft.baseRevision ? conflictFailure(draft.projectId, draft.baseRevision)
-    : draft.failure?.kind === 'conflict' ? draft.failure
-    : runtime.session.tab.includes(draft.owner) && (canonical ? canonical.revision ?? 0 : 0) === draft.baseRevision ? null
+  const failure = runtime.removed.has(draft.projectId) ? projectFailure({ name: 'ProjectDeletedError', message: TRASHED }, draft.projectId, draft.baseRevision)
+    : canonical && (canonical.revision ?? 0) !== draft.baseRevision ? draftConflictFailure(draft.projectId, draft.baseRevision)
+    : draft.failure?.kind === 'conflict' && (canonical || draft.baseRevision > 0) ? draftConflictFailure(draft.projectId, draft.baseRevision)
     : { kind: 'interrupted', name: 'ProjectInterruptedError', projectId: draft.projectId, expectedRevision: draft.baseRevision,
-      message: 'We recovered your unsaved changes! Click Retry to save them, or reload the last saved version.' } satisfies ProjectFailure;
+      message: RECOVERED_MESSAGE } satisfies ProjectFailure;
   runtime.previous(project.get().context.id);
   runtime.adopt(() => {
     leaveDocument(); clearPlateJobs();
     setState({ ...fields, projectName: draft.name, tab: 'prepare', gizmo: 'none', dialog: null,
-      job: { state: 'idle', pct: 0, stage: '' } });
+      job: IDLE_JOB });
     newDocument(false);
+    settleOffer();
   });
-  runtime.setRestored(draft); runtime.resetCaptured();
+  runtime.setRestored(draft); runtime.resetCaptured(); runtime.restoreEditedAt(editedOf(draft));
   project.send({ type: 'RECOVERED', meta, draft, failure, baseObjects: canonical ? canonical.objects ?? -1 : draft.baseRevision > 0 ? -1 : 0 });
-  keepCompatible();
   if (!offer) runtime.checkpointRecovered(draft.projectId, draft.baseRevision, failure);
   writeProjectRoute(true);
 }
@@ -65,14 +65,24 @@ export async function resumeUnsavedProject(runtime: RecoveryRuntime, id: string)
     runtime.drafts().then((storage) => storage.listMetadata(id)).catch(() => [] as ProjectDraftMeta[])]);
   if (!runtime.isCurrent(mine)) return true;
   if (rec) { await openProject(runtime, id, { history: false }); return true; }
-  const newest = drafts.filter((d) => d.kind === 'dirty' && d.baseRevision === 0 && runtime.session.tab.includes(d.owner))
-    .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+  const newest = drafts.filter((d) => d.kind === 'dirty' && d.baseRevision === 0)
+    .sort((a, b) => editedOf(b) - editedOf(a))[0];
   const draft = newest && await (await runtime.drafts()).load(newest.id);
   if (!draft || !runtime.isCurrent(mine)) return !!draft;
   project.send({ type: 'OPEN' });
   await adoptProjectDraft(runtime, draft, null, mine);
   if (runtime.isCurrent(mine) && project.get().context.id === id) project.send({ type: 'RETRY' });
   return true;
+}
+export async function resumeOrphanedProject(runtime: RecoveryRuntime): Promise<boolean> {
+  const mine = `${runtime.session.owner}.`;
+  const orphans = (await (await runtime.drafts()).listMetadata())
+    .filter((d) => d.kind === 'dirty' && d.baseRevision === 0 && !d.id.startsWith(mine)).sort((a, b) => editedOf(b) - editedOf(a));
+  for (const draft of orphans) {
+    if (await runtime.storage()?.load(draft.projectId)) continue;
+    return resumeUnsavedProject(runtime, draft.projectId);
+  }
+  return false;
 }
 export async function dropDuplicateDrafts(runtime: RecoveryRuntime) {
   const source = runtime.restored();
@@ -81,7 +91,7 @@ export async function dropDuplicateDrafts(runtime: RecoveryRuntime) {
   if (!offered) return;
   const body = JSON.stringify(offered.doc);
   const siblings = (await storage.listMetadata(source.projectId))
-    .filter((d) => d.id !== source.id && d.kind === 'dirty' && d.baseRevision === source.baseRevision && d.updatedAt <= source.updatedAt);
+    .filter((d) => d.id !== source.id && d.kind === 'dirty' && d.baseRevision === source.baseRevision && editedOf(d) <= editedOf(source));
   for (const meta of siblings) {
     const draft = await storage.load(meta.id);
     if (draft && JSON.stringify(draft.doc) === body) await storage.remove(draft.id, draft.sequence);
@@ -109,7 +119,7 @@ export async function reloadProject(runtime: RecoveryRuntime) {
   await dropDuplicateDrafts(runtime);
   const id = project.get().context.id, gen = documentGeneration();
   const receipt = runtime.hasUnsaved() ? runtime.checkpoint() : null, source = runtime.restored();
-  await runtime.preserveSnapshot();
+  await receipt?.durable.catch(() => null);
   if (id !== project.get().context.id || gen !== documentGeneration()) return;
   await openProject(runtime, id, { reload: true });
   const opened = project.get();
@@ -119,27 +129,6 @@ export async function reloadProject(runtime: RecoveryRuntime) {
     void runtime.refreshDrafts();
   }
 }
-export async function recoverProjectDraft(runtime: RecoveryRuntime, draftId: string, options: { asCopy?: boolean } = {}) {
-  await runtime.preserveSnapshot();
-  const draft = await (await runtime.drafts()).load(draftId);
-  if (!draft) throw new Error('Couldn\'t find that project draft.');
-  const mine = runtime.beginOpen(); runtime.invalidateWrites(); await runtime.waitForWrites();
-  if (!runtime.isCurrent(mine)) return;
-  const recovered = options.asCopy ? { ...draft, projectId: newKey(), baseRevision: 0, failure: null, kind: 'snapshot' as const } : draft;
-  const canonical = options.asCopy ? null : await runtime.storage()?.load(draft.projectId);
-  if (!runtime.isCurrent(mine)) return;
-  project.send({ type: 'OPEN' });
-  await adoptProjectDraft(runtime, recovered, canonical?.meta ?? null, mine);
-}
-export async function discardProjectDraft(runtime: RecoveryRuntime, draftId: string) {
-  const c = project.get().context;
-  if (runtime.hasUnsaved() && (c.draft.state !== 'none' && c.draft.checkpoint.id === draftId || runtime.restored()?.id === draftId))
-    throw new Error('Please save or reload your project before discarding the recovery draft.');
-  const storage = await runtime.drafts(), draft = await storage.load(draftId);
-  if (draft) await storage.remove(draft.id, draft.sequence);
-  await runtime.refreshDrafts();
-}
-
 export async function openProject(runtime: RecoveryRuntime, id: string, options: { history?: boolean; reload?: boolean } = {}) {
   if (!options.reload && project.get().context.id === id && project.get().value !== 'missing' && project.get().value !== 'opening' && !project.get().context.loadError) {
     setState({ tab: 'prepare' }); if (options.history !== false) writeRoute(`/p/${id}`); return;
@@ -156,21 +145,25 @@ export async function openProject(runtime: RecoveryRuntime, id: string, options:
     let loadError: unknown;
     let rec: Awaited<ReturnType<ProjectStore['load']>> = null;
     try { const store = runtime.storage(); if (!store) throw new Error('Oops! Project storage isn\'t available right now.'); rec = await store.load(id); } catch (error) { loadError = error; }
-    const drafts = await runtime.drafts().then((storage) => storage.listMetadata(rec?.meta.id ?? id)).catch(() => [] as ProjectDraftMeta[]);
+    const drafts: ProjectDraftMeta[] = await runtime.drafts().then((storage) => storage.listMetadata(rec?.meta.id ?? id)).catch((error: unknown) => {
+      throw new Error(`Couldn't check this project for unsaved changes, so it wasn't opened: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    });
     if (!runtime.isCurrent(mine)) return;
-    const draft = !options.reload ? drafts.filter((d) => d.kind === 'dirty' && (runtime.session.previousOwners.includes(d.owner) || d.owner === runtime.session.owner))
-      .sort((a, b) => b.updatedAt - a.updatedAt)[0] : undefined;
+    const draft = !options.reload ? drafts.filter((d) => d.kind === 'dirty')
+      .sort((a, b) => editedOf(b) - editedOf(a))[0] : undefined;
     if (draft && (!rec || !checkpointCommitted(draft, rec.doc))) {
       const restored = await (await runtime.drafts()).load(draft.id);
       if (!runtime.isCurrent(mine)) return;
-      if (restored) { await adoptProjectDraft(runtime, restored, rec?.meta ?? null, mine, { offer: true }); return; }
+      if (restored && rec && documentText(recoveryDocument(restored.doc)) === documentText(recoveryDocument(rec.doc))) await (await runtime.drafts()).remove(draft.id, draft.sequence).catch(() => {});
+      else if (restored) { await adoptProjectDraft(runtime, restored, rec?.meta ?? null, mine, { offer: true }); return; }
     }
     if (loadError) throw loadError;
     if (!rec || runtime.removed.has(rec.meta.id)) { project.send({ type: 'MISSING', id }); return; }
     const document = recoveryDocument(rec.doc) as StoredDoc;
-    await runtime.ensureCatalogs(document, () => runtime.isCurrent(mine));
     if (!runtime.isCurrent(mine)) return;
+    const offered = documentOffer(document);
     const fields = await (await codec()).decode(document, (k) => runtime.storage()!.getBlob(rec.meta.id, k));
+    const settleOffer = await offered;
     if (!runtime.isCurrent(mine)) return;
     if (runtime.removed.has(rec.meta.id)) { project.send({ type: 'MISSING', id }); return; }
     for (const k of Object.keys(rec.doc.files ?? {})) runtime.known.add(`${rec.meta.id}/${k}`);
@@ -178,13 +171,13 @@ export async function openProject(runtime: RecoveryRuntime, id: string, options:
       runtime.adopt(() => {
       leaveDocument(); clearPlateJobs();
       setState({ ...fields, projectName: rec.meta.name, tab: 'prepare', gizmo: 'none', dialog: null,
-        job: { state: 'idle', pct: 0, stage: '' } });
+        job: IDLE_JOB });
       newDocument(true);
+      settleOffer();
     });
     runtime.setRestored(null); runtime.resetCaptured(); savedVersionBase(rec.meta.id, snapshot());
     project.send({ type: 'OPENED', meta: rec.meta });
-    keepCompatible();
-    writeRoute(`/p/${rec.meta.id}`, true);
+      writeRoute(`/p/${rec.meta.id}`, true);
   } catch (error) {
     if (!runtime.isCurrent(mine)) return;
     const failure = projectFailure(error, id, project.get().context.revision, true);
@@ -198,16 +191,18 @@ export async function viewProjectVersion(runtime: RecoveryRuntime, id: string, r
   await flushProject();
   if (!runtime.isCurrent(mine) || project.get().context.id !== id) return false;
   const document = recoveryDocument(record.doc) as StoredDoc;
-  await runtime.ensureCatalogs(document, () => runtime.isCurrent(mine));
   if (!runtime.isCurrent(mine)) return false;
+  const offered = documentOffer(document);
   const fields = await (await codec()).decode(document, (k) => runtime.storage()!.getBlob(id, k));
+  const settleOffer = await offered;
   if (!runtime.isCurrent(mine)) return false;
   if (!enter()) return false;
   runtime.invalidateWrites();
   runtime.adopt(() => {
     leaveDocument(); clearPlateJobs();
-    setState({ ...fields, projectName: record.meta.name, gizmo: 'none', dialog: null, job: { state: 'idle', pct: 0, stage: '' } });
+    setState({ ...fields, projectName: record.meta.name, gizmo: 'none', dialog: null, job: IDLE_JOB });
     newDocument(true);
+    settleOffer();
   });
   return true;
 }
@@ -310,7 +305,7 @@ export async function deleteProject(runtime: RecoveryRuntime, id: string): Promi
       if (current && id === project.get().context.id && gen === documentGeneration()) {
         runtime.invalidateWrites(); runtime.beginOpen(); project.send({ type: 'DELETED' });
         runtime.adopt(() => { clearPlateJobs(); clearPlate(); newDocument(true); });
-        setState({ tab: 'projects' }); writeRoute('/projects');
+        setState({ tab: 'prepare' }); writeRoute('/');
       }
       runtime.publish('deleted', id); runtime.refreshList(); return undo;
     } };
@@ -321,10 +316,13 @@ export async function restoreArchivedProject(runtime: RecoveryRuntime, id: strin
   const storage = runtime.storage();
   if (!storage) throw new Error('Oops! Project storage isn\'t available right now.');
   const owner = removalOwners.get(runtime)?.get(id), removed = runtime.removed.has(id);
-  await storage.restore(id, expectedRevision);
+  const ack = await storage.restore(id, expectedRevision);
   if (removed && removalOwners.get(runtime)?.get(id) === owner) { removalOwners.get(runtime)?.delete(id); runtime.removed.delete(id); }
   runtime.publish('saved', id); runtime.refreshList();
+  return ack;
 }
+
+const trashed = (id: string, revision: number) => failureError(projectFailure({ name: 'ProjectDeletedError', message: TRASHED }, id, revision));
 
 export async function saveProjectSnapshot(runtime: RecoveryRuntime, capture: {
   id: string; document: Doc; gen: number; version: number; revision: number; storage: ProjectStore | null;
@@ -333,7 +331,7 @@ export async function saveProjectSnapshot(runtime: RecoveryRuntime, capture: {
   const { id, document, gen, version, revision, storage, receipt } = capture;
     if (revision > 0) await receipt.durable.catch(() => null);
     if (!storage) throw new Error('Oops! Project storage isn\'t available right now.');
-    if (runtime.removed.has(id)) return;
+    if (runtime.removed.has(id)) { if (runtime.activeWrite(id, gen, version)) throw trashed(id, revision); return; }
     if (runtime.activeWrite(id, gen, version) && project.get().value === 'conflict') throw failureError(project.get().context.failure ?? conflictFailure(id, revision));
     const { encode, nameOf, plateCount, thumbnail } = await codec();
     const { stored, blobs } = encode(document);
@@ -342,7 +340,7 @@ export async function saveProjectSnapshot(runtime: RecoveryRuntime, capture: {
       await storage.putBlob(id, k, b);
       runtime.known.add(`${id}/${k}`);
     }
-    if (runtime.removed.has(id)) return;
+    if (runtime.removed.has(id)) { if (runtime.activeWrite(id, gen, version)) throw trashed(id, revision); return; }
     const meta = { name: nameOf(document), savedAt: Date.now(), objects: plateCount(document), revision, change: changeForSave(id, document, revision) };
     const committed: CheckpointDocument = { ...stored, recoveryCheckpoint: receipt.checkpoint };
     const acknowledgement = await storage.save(id, meta, committed, meta.objects === 0 ? null : runtime.activeWrite(id, gen, version) ? thumbnail() ?? undefined : undefined);

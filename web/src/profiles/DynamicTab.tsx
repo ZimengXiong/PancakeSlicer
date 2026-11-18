@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react';
-import { Choice } from '../components/kit';
+import { Dropdown } from '../components/Dropdown';
 import { OPTIONS, splitKey, TABS } from '../options';
 import { useTabLoaded } from '../components/PresetDialogs';
 import { Glyph } from '../components/Glyph';
 import { effectiveShells, heightsFor, scaledValue, type ScaleBasis, type ScaleRow } from './auto-rules';
 import type { Config } from '../api/types';
 import { SPEED_FEATURES, SPEED_KEYS, type SpeedModel, type SpeedDetail } from './speed-rules';
-import { labelOf } from './PrintOverrides';
+import { labelOf, overrideText } from './PrintOverrides';
+import type { PrinterRecord } from './records';
 import { SEP } from '../separator';
 
 const GROUPS: { name: string; basis: ScaleBasis; keys: string[] }[] = [
@@ -78,13 +79,14 @@ function FormulaLine({ f, nozzle, height, readOnly, onFactor, onRemove }: { f: F
   </li>;
 }
 
-export function DynamicTab({ speedModel, speeds = {}, onSpeedModel, onUseMultiplier, rows, nozzle, height, minHeight, maxHeight, readOnly, onChange, fromPrinter, config = {} }: {
-  speedModel?: SpeedModel; speeds?: Record<string, SpeedDetail>; onSpeedModel?(model: SpeedModel): void; onUseMultiplier?(key: string): void;
+export function DynamicTab({ speedModel, speeds: firstSpeeds = {}, nozzleSpeeds, missingReference, slowerNote, onSpeedModel, onUseMultiplier, rows, nozzle, height, minHeight, maxHeight, readOnly, onChange, fromPrinter, config = {} }: {
+  speedModel?: SpeedModel; speeds?: Record<string, SpeedDetail>;  nozzleSpeeds?: { label: string; speeds: Record<string, SpeedDetail> }[]; missingReference?: boolean;  slowerNote?: boolean; onSpeedModel?(model: SpeedModel): void; onUseMultiplier?(key: string): void;
   rows: ScaleRow[]; nozzle: number; height: number; minHeight?: number; maxHeight?: number; readOnly?: boolean; onChange(rows: ScaleRow[]): void;
    config?: Config;
-   fromPrinter?: { name: string; values: Record<string, unknown> };
+   fromPrinter?: { name: string; values: Config; printer?: PrinterRecord };
 }) {
   const [split, setSplit] = useState<ReadonlySet<string>>(() => new Set());
+  const [side, setSide] = useState(0), speeds = nozzleSpeeds?.[side]?.speeds ?? firstSpeeds;
   const [adding, setAdding] = useState<{ key: string; basis: ScaleBasis } | null>(null);
   const [folded, setFolded] = useState<ReadonlySet<number>>(() => new Set());
   const formulas = formulasOf(rows.filter(r => !SPEED_KEYS.has(r.key)), split);
@@ -113,9 +115,12 @@ export function DynamicTab({ speedModel, speeds = {}, onSpeedModel, onUseMultipl
       <div className="dyn-speed-controls">
         <label>Outer-wall ceiling <span><input className="text num" type="number" min="1" max="2000" step="5" aria-label="Outer-wall ceiling" value={speedModel.outerWallCeiling} disabled={readOnly}
           onChange={e => {const n = Number(e.target.value); if (n > 0 && n <= 2000) onSpeedModel?.({...speedModel, outerWallCeiling: n});}}/> mm/s</span></label>
+        {nozzleSpeeds && nozzleSpeeds.length > 1 && <label>Values for <Dropdown className="combo" aria-label="Speeds for nozzle" value={String(Math.min(side, nozzleSpeeds.length - 1))}
+          options={nozzleSpeeds.map((n, i) => ({ value: String(i), label: n.label }))} onValueChange={(v) => setSide(Number(v))}/></label>}
       </div>
-      <p className="hint-text">Speed = printer base speed × multiplier (automatically capped by your hotend's max flow rate and printer speed limits). Adjust any multiplier to tune print speed.</p>
-      <div className="dyn-speed-scroll"><table className="dyn-table dyn-speed-table">
+      {!missingReference && slowerNote && <p className="hint-text">Slower filaments will cruise at their own flow limit.</p>}
+      {!missingReference && <p className="hint-text">Speed = printer base speed × multiplier (automatically capped by your hotend's max flow rate and printer speed limits). Adjust any multiplier to tune print speed.</p>}
+      {missingReference ? <p role="status">This printer doesn't have base speed values for dynamic profiles yet—pick a regular print profile instead.</p> : <div className="dyn-speed-scroll"><table className="dyn-table dyn-speed-table">
         <thead><tr><th>Feature</th>{SPEED_HEADS.map(([label, tip, n]) => <th key={label} className={n ? 'n' : undefined} data-truncated="true" data-full-text={tip}>{label}</th>)}</tr></thead>
         <tbody>{SPEED_FEATURES.map(f => {const d = speeds[f.key]; if (!d) return null; return <tr key={f.key}>
           <th scope="row">{f.label}</th><td className="n">{Math.round(d.base)}</td>
@@ -124,7 +129,7 @@ export function DynamicTab({ speedModel, speeds = {}, onSpeedModel, onUseMultipl
           {d.limit ? <td className="n" data-capped data-truncated="true" data-full-text={`Capped from ${Math.round(d.requested)} by ${d.limit.toLowerCase()}`}>↓ {Math.round(d.speed)}</td> : <td className="n">{Math.round(d.speed)}</td>}<td><span>{d.limit || 'None'}</span>{d.override && <span className="dyn-speed-override">Absolute override ({Math.round(d.requested)} mm/s){!readOnly && onUseMultiplier && <button type="button" className="btn-ghost" onClick={() => onUseMultiplier(f.key)}>Use multiplier</button>}</span>}</td>
           <td className="n">{mm(d.acceleration)}</td>
         </tr>;})}</tbody>
-      </table></div>
+      </table></div>}
     </section>}
 
     <div className="dyn-rows"><ul className="dyn-formulas">
@@ -132,13 +137,13 @@ export function DynamicTab({ speedModel, speeds = {}, onSpeedModel, onUseMultipl
       {!readOnly && <li className="dyn-formula dyn-add">{adding
         ? !adding.key ? <SettingFinder exclude={own} onPick={(key) => setAdding({ key, basis: rows.find((r) => r.key === key)?.basis ?? (isWidth(key) ? 'nozzle' : 'layer') })} onCancel={() => setAdding(null)}/>
           : <><span className="dyn-name">{nameOf(adding.key)}</span>
-          <Choice label="Basis" value={adding.basis} options={BASES} onChange={(basis) => setAdding({ ...adding, basis: basis as ScaleBasis })}/>
+          <Dropdown className="combo" aria-label="Basis" value={adding.basis} options={BASES.map((b) => ({ value: b.id, label: b.label }))} onValueChange={(basis) => setAdding({ ...adding, basis: basis as ScaleBasis })}/>
           <button type="button" className="btn" onClick={add}>Add</button><button type="button" className="btn-ghost" onClick={() => setAdding(null)}>Cancel</button></>
         : <button type="button" className="link" onClick={() => setAdding({ key: '', basis: 'nozzle' })}>+ Add formula</button>}</li>}
     </ul>
     {fromPrinter && Object.keys(fromPrinter.values).length > 0 && <ul className="dyn-formulas dyn-printer" aria-label={`From ${fromPrinter.name}`}>
       <li className="dyn-group">From {fromPrinter.name}</li>
-      {Object.entries(fromPrinter.values).filter(([k]) => !speedModel || !SPEED_KEYS.has(k) && !SPEED_FEATURES.some(f => f.acceleration === k)).map(([k, v]) => <li key={k} className="dyn-formula"><span className="dyn-name">{labelOf(k)}</span><span className="dyn-eq">=</span><span className="dyn-expr"><span className="dyn-ceil" data-hidden>⌈</span>{String(Array.isArray(v) ? v[0] : v)}{OPTIONS[k]?.sidetext ? ` ${OPTIONS[k]?.sidetext}` : ''}</span></li>)}
+      {Object.entries(fromPrinter.values).filter(([k]) => !speedModel || !SPEED_KEYS.has(k) && !SPEED_FEATURES.some(f => f.acceleration === k)).map(([k, v]) => <li key={k} className="dyn-formula"><span className="dyn-name">{labelOf(k)}</span><span className="dyn-eq">=</span><span className="dyn-expr"><span className="dyn-ceil" data-hidden>⌈</span>{overrideText(k, v, config, fromPrinter.printer)}{OPTIONS[k]?.sidetext ? ` ${OPTIONS[k]?.sidetext}` : ''}</span></li>)}
     </ul>}</div>
     <div className="dyn-table-scroll"><table className="dyn-table">
       <thead><tr><th>Layer</th>{formulas.map((f) => <th key={f.keys.join()} className="n">{f.name}</th>)}<th className="n">Top shells</th></tr></thead>

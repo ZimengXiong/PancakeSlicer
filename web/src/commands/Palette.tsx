@@ -8,6 +8,7 @@ import { allCommands, allProviders, closePalette, commandsVersion, paletteQuery,
 import { registerCore } from './core';
 import { fuzzy, loadSettings, settingCommands } from './settings';
 import { SEP } from '../separator';
+import { slotFilaments } from '../profiles/slots';
 
 registerCore();
 
@@ -26,12 +27,13 @@ registerProvider('presets', (q) => {
     id: `preset.${type}.${slot}.${name}`, title: name, group, detail: name === current ? 'Current' : undefined,
     keywords: type === 'machine' ? 'printer machine' : type, run: () => requestPreset(type, slot, name),
   });
-  const users = (t: string) => s.userPresets.filter((u) => u.type === t).map((u) => u.name);
+  const lists = { machine: s.records.printers, process: s.records.processes, filament: s.records.filaments } as const;
+  const users = (t: string) => (lists[t as keyof typeof lists] ?? []).filter((u) => !u.archived).map((u) => u.name);
   return [
     ...users('machine').map((n) => row('machine', 'Printer', n, s.printer)),
     ...users('process').map((n) => row('process', 'Process', n, s.process)),
-    ...s.filamentSlots.flatMap((cur, slot) => users('filament')
-      .map((n) => row('filament', s.filamentSlots.length > 1 ? `Filament ${slot + 1}` : 'Filament', n, cur, slot))),
+    ...slotFilaments(s).flatMap((cur, slot) => users('filament')
+      .map((n) => row('filament', slotFilaments(s).length > 1 ? `Filament ${slot + 1}` : 'Filament', n, cur, slot))),
   ];
 });
 

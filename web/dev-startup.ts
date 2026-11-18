@@ -4,11 +4,11 @@ import type { DevEnvironment, HtmlTagDescriptor, Plugin } from 'vite';
 import { parseAst } from 'vite';
 
 const STARTUP_MODULES = [
-  '/@vite/client', '/src/bootstrap.ts', '/src/main.tsx', '/src/persist/preferences.ts', '/src/flush.ts', '/src/components/SavedPreferencesNotice.tsx',
+  '/@vite/client', '/src/bootstrap.ts', '/src/main.tsx', '/src/persist/preferences.ts',
   '/src/plater/Plater3D.tsx', '/src/components/WorkspaceRail.tsx', '/src/components/Navigator.tsx', '/src/projects/ProjectStatus.tsx',
-  '/src/components/ControlHints.tsx', '/src/plater/orientPrompt.ts', '/src/profiles/catalog-startup.ts', '/src/preflight/marks.ts',
-  '/src/profiles/library-hydration.ts', '/src/profiles/printer-setups.ts', '/src/components/FirstRun.tsx', '/src/components/SettingsTab.tsx',
-  '/src/flow/project-recovery.ts', '/src/persist/drafts.ts', '/src/flow/project-journal.ts', '/src/persist/project-service.ts',
+  '/src/plater/orientPrompt.ts', '/src/profiles/catalog-startup.ts', '/src/preflight/marks.ts',
+  '/src/profiles/library-hydration.ts', '/src/profiles/printer-setups.ts', '/src/flow/project-recovery.ts',
+  '/src/persist/drafts.ts', '/src/flow/project-journal.ts', '/src/persist/project-service.ts',
   '/src/persist/wire-worker.ts', '/src/flow/boot.ts',
 ];
 
@@ -75,7 +75,15 @@ async function flatWorker(env: DevEnvironment, url: string) {
 }
 
 export function devStartup(): Plugin {
-  let env: DevEnvironment | undefined;
+  let env: DevEnvironment | undefined, api: string | undefined;
+  const bootShape = async (page: string) => {
+    if (!api) return null;
+    try {
+      const r = await fetch(`${api}/api/boot?page=${encodeURIComponent(page)}`, { signal: AbortSignal.timeout(1000) });
+      const text = r.ok ? await r.text() : '';
+      return text && text.trim() !== 'null' && !text.includes('<') ? text.trim() : null;
+    } catch { return null; }
+  };
   return {
     name: 'orca-dev-startup',
     apply: 'serve',
@@ -99,14 +107,20 @@ export function devStartup(): Plugin {
         if (env?.depsOptimizer?.isOptimizedDepFile(id)) return { code: `${code}\n`, map: { mappings: '' } };
       },
     },
-    async transformIndexHtml() {
+    configResolved(config) {
+      const target = config.server.proxy?.['/api'];
+      api = typeof target === 'string' ? target : typeof target?.target === 'string' ? target.target : undefined;
+    },
+    async transformIndexHtml(_html, ctx) {
       if (!env) return [];
-      const urls = await staticGraph(env, STARTUP_MODULES.map((url) => served(env!, url)));
-      return urls.map((href): HtmlTagDescriptor => ({ tag: 'link', attrs: { rel: 'modulepreload', href }, injectTo: 'head' }));
+      const [urls, boot] = await Promise.all([staticGraph(env, STARTUP_MODULES.map((url) => served(env!, url))), bootShape(ctx.originalUrl ? new URL(ctx.originalUrl, 'http://page').pathname : ctx.path)]);
+      return [...urls.map((href): HtmlTagDescriptor => ({ tag: 'link', attrs: { rel: 'modulepreload', href }, injectTo: 'head' })),
+        ...(boot ? [{ tag: 'script', attrs: { id: 'pancake-boot', type: 'application/json' }, children: boot, injectTo: 'head' } as HtmlTagDescriptor] : [])];
     },
   };
 }
 
+const DEFERRED_PACKAGES = /[\\/]@radix-ui[\\/]react-(tooltip|hover-card)[\\/]/;
 const bootIds = new Set<string>(), startupIds = new Set<string>(), lateIds = new Set<string>();
 export const startupGroups = [
   { name: 'boot', test: (id: string) => bootIds.has(id) || id.startsWith('\0'), includeDependenciesRecursively: false },
@@ -125,7 +139,7 @@ export function buildStartup(): Plugin {
         const seen = new Set<string>(), todo = [...from];
         while (todo.length) {
           const id = todo.pop()!;
-          if (seen.has(id)) continue;
+          if (seen.has(id) || DEFERRED_PACKAGES.test(id)) continue;
           const info = this.getModuleInfo(id);
           if (!info) continue;
           seen.add(id);
@@ -143,6 +157,7 @@ export function buildStartup(): Plugin {
       const renderer = (id: string) => /[\\/]three[\\/]build[\\/]three\.module\.js$/.test(id);
       for (const id of closure(ids.filter(isLate))) if (!entry.has(id) && (!early.has(id) || renderer(id))) lateIds.add(id);
       for (const id of lateIds) startupIds.delete(id);
+      startupIds.delete(path.join(root, 'src/main.tsx'));
     },
     transformIndexHtml: {
       order: 'post',
@@ -157,22 +172,20 @@ export function buildStartup(): Plugin {
           if (name) chunks.get(name)?.imports.forEach(vite);
         };
         vite(entry?.fileName);
-        const files: string[] = [], late = new Set<string>(), styles = new Set<string>();
-        const visit = (name: string, low: boolean) => {
+        const files: string[] = [], styles = new Set<string>();
+        const visit = (name: string) => {
           const c = chunks.get(name);
           if (!c || seen.has(name)) return;
           seen.add(name);
           files.push(name);
-          if (low) late.add(name);
           c.viteMetadata?.importedCss.forEach((css) => styles.add(css));
-          c.imports.forEach((i) => visit(i, low));
+          c.imports.forEach(visit);
         };
         const startupChunks = [...chunks.values()].filter((c) => c.moduleIds.some((id) => startup.has(id)));
         const deferred = (c: { moduleIds: string[] }) => c.moduleIds.some((id) => LATE_STARTUP.has(path.relative(root, id).replaceAll(path.sep, '/')));
-        for (const c of startupChunks) if (!deferred(c)) visit(c.fileName, false);
-        for (const c of startupChunks) if (deferred(c)) visit(c.fileName, true);
+        for (const c of startupChunks) if (!deferred(c)) visit(c.fileName);
         return [
-          ...files.map((file): HtmlTagDescriptor => ({ tag: 'link', attrs: { rel: 'modulepreload', crossorigin: true, href: base + file, ...(late.has(file) ? { fetchpriority: 'low' } : {}) }, injectTo: 'head' })),
+          ...files.map((file): HtmlTagDescriptor => ({ tag: 'link', attrs: { rel: 'modulepreload', crossorigin: true, href: base + file }, injectTo: 'head' })),
           ...[...styles].map((file): HtmlTagDescriptor => ({ tag: 'link', attrs: { rel: 'preload', as: 'style', crossorigin: true, href: base + file }, injectTo: 'head' })),
         ];
       },

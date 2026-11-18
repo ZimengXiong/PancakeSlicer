@@ -1,3 +1,5 @@
+import { warningKey, type EngineWarning } from '../engine-warnings';
+import { warningText } from '../engine-warning-text';
 import { setCompareWanted, useBaseline, useStandardData } from '../compare';
 import { editedOf, resolvedOf, settingChanges } from '../compare-settings';
 import type { PreviewData } from '../preview/data';
@@ -42,7 +44,9 @@ export function SliceDiff({ data, record }: { data: PreviewData; record: Config 
     ['Top', top(before), top(after)],
   ];
   const now = warnings ?? [], was = baseline.warnings;
-  const added = now.filter((w) => !was.includes(w)), gone = was.filter((w) => !now.includes(w));
+  const keys = (ws: EngineWarning[]) => new Set(ws.map(warningKey));
+  const wasKeys = keys(was), nowKeys = keys(now);
+  const added = now.filter((w) => !wasKeys.has(warningKey(w)) && warningText(w)), gone = was.filter((w) => !nowKeys.has(warningKey(w)) && warningText(w));
   const settings = settingChanges(resolvedOf(baseline.signature), resolvedOf(signature), new Set([...editedOf(baseline.signature), ...editedOf(signature)]));
   return (
     <section className="lg-section slice-diff" aria-label="Before and after">
@@ -50,8 +54,8 @@ export function SliceDiff({ data, record }: { data: PreviewData; record: Config 
       <ul className="sd-rows">
         {figures.map(([label, a, b]) => <li key={label} data-same={a === b || undefined}><span>{label}</span><span>{a === b ? b : `${a} → ${b}`}</span></li>)}
       </ul>
-      {added.map((w) => <p key={`+${w}`} className="sd-warning">New warning: {w}</p>)}
-      {gone.map((w) => <p key={`-${w}`} className="sd-note">Resolved warnings: {w}</p>)}
+      {added.map((w) => <p key={`+${warningKey(w)}`} className="sd-warning">New warning: {warningText(w)}</p>)}
+      {gone.map((w) => <p key={`-${warningKey(w)}`} className="sd-note">Resolved warnings: {warningText(w)}</p>)}
       <div className="lg-sec">Settings changed</div>
       {settings.length ? <ul className="sd-rows">
         {settings.slice(0, SHOWN).map((c) => <li key={c.label}><span>{c.label}</span><span>{c.from} → {c.to}</span></li>)}

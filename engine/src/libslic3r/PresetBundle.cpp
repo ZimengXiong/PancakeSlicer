@@ -6117,6 +6117,9 @@ size_t PresetBundle::install_vendor(const std::string& path, const std::string& 
         VendorInstall install { path, vendor_name, vendor_profile, base_bundle, flags, presets, is_from_lib, &substitutions };
         install_vendor_entries(install, list, list_parsed);
         count += install.count;
+        if (flags.has(LoadConfigBundleAttribute::KeepBases))
+            for (const auto &[name, config] : install.config_maps)
+                base_configs.emplace(std::make_pair(presets->type(), name), config);
         return install;
     };
     install_collection(entries.process_entries, parsed ? &parsed->process_entries : nullptr, &this->prints, false);

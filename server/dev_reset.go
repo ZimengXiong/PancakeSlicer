@@ -37,7 +37,7 @@ func (s *Server) devReset(w http.ResponseWriter, r *http.Request) {
 	rand.Read(token[:])
 	epoch := hex.EncodeToString(token[:])
 	if err := s.resetAll(epoch); err != nil {
-		fail(w, 500, "Oops! Reset failed: " + err.Error())
+		fail(w, 500, "reset_failed", err.Error())
 		return
 	}
 	audit(map[string]any{"event": "dev_reset", "client": s.clientIP(r), "epoch": epoch})
@@ -97,7 +97,7 @@ func (s *Server) resetAll(epoch string) error {
 			return err
 		}
 	}
-	if err := s.libraryV4.reset(epoch); err != nil {
+	if err := s.library.reset(epoch); err != nil {
 		return err
 	}
 	s.reconcileStoredConnections("profile reset")

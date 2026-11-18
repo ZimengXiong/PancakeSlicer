@@ -47,9 +47,9 @@ func sendHTTP(ctx context.Context, u *upload) (string, error) {
 			}
 			return req, nil
 		case "octoprint":
-			return multipartUpload(ctx, base.JoinPath("api/files/local").String(), u, body, [][2]string{{"print", fmt.Sprint(u.start)}})
+			return multipartUpload(ctx, base.JoinPath("api/files/local").String(), "file", u.filename, u.size, body, [][2]string{{"print", fmt.Sprint(u.start)}})
 		default:
-			return multipartUpload(ctx, base.JoinPath("server/files/upload").String(), u, body, [][2]string{{"root", "gcodes"}, {"print", fmt.Sprint(u.start)}})
+			return multipartUpload(ctx, base.JoinPath("server/files/upload").String(), "file", u.filename, u.size, body, [][2]string{{"root", "gcodes"}, {"print", fmt.Sprint(u.start)}})
 		}
 	}
 	var resp *http.Response
@@ -66,7 +66,7 @@ func sendHTTP(ctx context.Context, u *upload) (string, error) {
 		}
 		resp.Body.Close()
 		if h.digest = parseDigest(resp.Header.Get("WWW-Authenticate")); h.digest == nil {
-			return "", errors.New("The printer requested an unsupported login method—try switching authorization to API key.")
+			return "", &connError{"access_code", "The printer requested an unsupported login method—try switching authorization to API key."}
 		}
 		if _, err := u.file.Seek(0, io.SeekStart); err != nil {
 			return "", err
@@ -79,9 +79,9 @@ func sendHTTP(ctx context.Context, u *upload) (string, error) {
 	case resp.StatusCode == 401 || resp.StatusCode == 403:
 		return "", credentialsRejected(p)
 	case resp.StatusCode == 409:
-		return "", fmt.Errorf("The printer couldn't accept the file because it's currently busy printing or the file is locked%s.", answer)
+		return "", &connError{"busy", fmt.Sprintf("The printer couldn't accept the file because it's currently busy printing or the file is locked%s.", answer)}
 	case resp.StatusCode == 413:
-		return "", errors.New("Oops! The print file is too large for the printer's onboard storage.")
+		return "", &connError{"storage", "Oops! The print file is too large for the printer's onboard storage."}
 	case resp.StatusCode < 200 || resp.StatusCode > 299:
 		return "", fmt.Errorf("The printer returned HTTP %d%s", resp.StatusCode, answer)
 	}
@@ -92,7 +92,7 @@ func sendHTTP(ctx context.Context, u *upload) (string, error) {
 }
 
 func credentialsRejected(*PrinterConfig) error {
-	return errors.New("The printer rejected your login—double-check your API key or password in Connection settings.")
+	return &connError{"access_code", "The printer rejected your login—double-check your API key or password in Connection settings."}
 }
 
 func hostClient(ctx context.Context, p *PrinterConfig, base *url.URL) (*http.Client, error) {
@@ -132,11 +132,7 @@ func limitSendBuffer(conn net.Conn) {
 	}
 }
 
-func multipartUpload(ctx context.Context, target string, u *upload, file io.Reader, fields [][2]string) (*http.Request, error) {
-	return multipartFile(ctx, target, "file", u.filename, u.size, file, fields)
-}
-
-func multipartFile(ctx context.Context, target, field, filename string, size int64, file io.Reader, fields [][2]string) (*http.Request, error) {
+func multipartUpload(ctx context.Context, target, field, filename string, size int64, file io.Reader, fields [][2]string) (*http.Request, error) {
 	var head strings.Builder
 	w := multipart.NewWriter(&head)
 	for _, f := range fields {
@@ -305,7 +301,7 @@ func (h *hostSession) preflight(ctx context.Context, target string) error {
 		resp.Body.Close()
 		if resp.StatusCode == 401 && h.printer.Auth == "digest" && attempt == 0 {
 			if h.digest = parseDigest(resp.Header.Get("WWW-Authenticate")); h.digest == nil {
-				return errors.New("The printer requested an unsupported login method—try switching authorization to API key.")
+				return &connError{"access_code", "The printer requested an unsupported login method—try switching authorization to API key."}
 			}
 			continue
 		}

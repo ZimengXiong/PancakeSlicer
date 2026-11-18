@@ -1,6 +1,7 @@
+import { warningKey, type EngineWarning } from '../engine-warnings';
 import { plateSignature } from '../slice-input';
 import { documentGeneration, subscribeHistory } from '../state/history';
-import { getState, setState, subscribeStore, type JobView, type State } from '../state/store';
+import { IDLE_JOB, getState, setState, subscribeStore, type JobView, type State } from '../state/store';
 import { createMachine, useMachine, type Snapshot } from './fsm';
 
 export interface SliceSummary {
@@ -8,7 +9,7 @@ export interface SliceSummary {
   grams: number | null;
   supportG: number | null;
   layers: number | null;
-  warnings: string[];
+  warnings: EngineWarning[];
 }
 
 export interface SliceResult {
@@ -25,8 +26,8 @@ export interface SliceDiff {
   layers: number | null;
   supportGone: boolean;
   supportAdded: boolean;
-  warningsAdded: string[];
-  warningsCleared: string[];
+  warningsAdded: EngineWarning[];
+  warningsCleared: EngineWarning[];
 }
 
 export type SliceStateName = 'editing' | 'slicing' | 'sliced' | 'stale' | 'failed';
@@ -77,8 +78,8 @@ function keep(r: SliceResult) {
   }
 }
 
-const ALWAYS: (keyof State)[] = ['objects', 'projectPlates', 'plateIndex', 'project', 'events', 'filamentSlots', 'slotColours', 'flush',
-  'printer', 'process', 'filamentEdits', 'bedType', 'wipeTowerPos', 'mixes'];
+const ALWAYS: (keyof State)[] = ['objects', 'projectPlates', 'plateIndex', 'project', 'events', 'records',
+  'printer', 'process', 'filamentEdits', 'wipeTowerPos'];
 const NEVER = new Set<keyof State>(['job', 'tab', 'selected', 'toast', 'toastSeq', 'toastAction', 'toastMs']);
 let watched: (keyof State)[] = ALWAYS;
 let seen: State = getState();
@@ -163,7 +164,10 @@ export function startSliceTracking() {
     }
     if (watched.some((k) => s[k] !== was[k])) {
       const sig = signature(s);
-      if (sig !== lastSignature) { lastSignature = sig; slice.send({ type: 'CHANGE' }); }
+      if (sig !== lastSignature) {
+        lastSignature = sig; slice.send({ type: 'CHANGE' });
+        if (s.job.state === 'failed' && !s.job.id) setState({ job: IDLE_JOB });
+      }
     }
   });
   slice.subscribe((snap) => { if (snap.context.result && snap.value === 'sliced') keep(snap.context.result); });
@@ -188,6 +192,8 @@ export const isFresh = (s: SliceSnapshot = slice.get()) => s.value === 'sliced';
 
 const minus = (a: number | null, b: number | null) => (a == null || b == null ? null : a - b);
 let memo: { a: SliceResult; b: SliceResult; d: SliceDiff } | null = null;
+const without = (a: EngineWarning[], b: EngineWarning[]) => { const keys = new Set(b.map(warningKey)); return a.filter((w) => !keys.has(warningKey(w))); };
+
 export function sliceDiff(ctx: SliceContext = slice.get().context): SliceDiff | null {
   const { result: a, previous: b } = ctx;
   if (!a || !b) return null;
@@ -196,7 +202,7 @@ export function sliceDiff(ctx: SliceContext = slice.get().context): SliceDiff | 
   const d: SliceDiff = {
     timeS: minus(x.timeS, y.timeS), grams: minus(x.grams, y.grams), supportG: minus(x.supportG, y.supportG), layers: minus(x.layers, y.layers),
     supportGone: !!y.supportG && x.supportG === 0, supportAdded: y.supportG === 0 && !!x.supportG,
-    warningsAdded: x.warnings.filter((w) => !y.warnings.includes(w)), warningsCleared: y.warnings.filter((w) => !x.warnings.includes(w)),
+    warningsAdded: without(x.warnings, y.warnings), warningsCleared: without(y.warnings, x.warnings),
   };
   memo = { a, b, d };
   return d;

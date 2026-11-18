@@ -1,5 +1,6 @@
 // Curved tops port of fich-l / OrcaSlicer-Nonplanar v0.1 (AGPL-3.0).
 #include "CurvedTopsSchedule.hpp"
+#include "libslic3r/Nonplanar/Research.hpp"
 #include "CurvedTopsAccess.hpp"
 
 #include "libslic3r/ClipperUtils.hpp"
@@ -666,7 +667,7 @@ NonplanarDeferral plan_nonplanar_deferral(const PrintObject &object, const Nonpl
         }
     };
     make_spans();
-    const bool verify_dependents = std::getenv("NONPLANAR_PLAN_VERIFY") != nullptr;
+    const bool verify_dependents = research_switch("NONPLANAR_PLAN_VERIFY") != nullptr;
     std::vector<int> unit_of(all.size());
     std::vector<double> unit_zmin, unit_zmax;
     std::vector<std::vector<int>> members;
@@ -1439,7 +1440,7 @@ NonplanarDeferral plan_nonplanar_deferral(const PrintObject &object, const Nonpl
     for (size_t i = 0; i < all.size(); ++ i)
         all[i].slot = unit_slot[size_t(unit_of[i])];
 
-    if (const char *debug = std::getenv("NONPLANAR_PLAN_DEBUG")) {
+    if (const char *debug = research_switch("NONPLANAR_PLAN_DEBUG")) {
         double dx = 0, dy = 0, dr = 0;
         if (std::sscanf(debug, "%lf,%lf,%lf", &dx, &dy, &dr) == 3) {
             for (size_t i = 0; i < all.size(); ++ i)
@@ -1468,8 +1469,8 @@ NonplanarDeferral plan_nonplanar_deferral(const PrintObject &object, const Nonpl
             const Sample &a = all[size_t(conflict_a)];
             const std::string ka = kind(conflict_a), kb = kind(conflict_b);
             message += nonplanar_location(a.z, size_t(std::max(0, a.layer))) + ": no print order avoids a hotend collision there. " +
-                (ka == kb ? "Print order conflict in " + ka + ": " + ka + " and " + kb : ka + " and " + kb) +
-                " each need the other to be printed first so the print head can clear.";
+                (ka == kb ? "Oops, print order conflict in " + ka + ": " + ka + " and " + kb : ka + " and " + kb) +
+                " all need to go first so the print head can clear!";
         } else
             message += ": no print order avoids a hotend collision.";
         char hint[160];

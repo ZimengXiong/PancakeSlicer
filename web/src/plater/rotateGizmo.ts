@@ -198,6 +198,12 @@ export class RotateGizmo {
     this.finish();
   };
 
+  cancel() {
+    if (!this.drag) return;
+    if (this.dom.hasPointerCapture(this.drag.pointer)) this.dom.releasePointerCapture(this.drag.pointer);
+    this.finish();
+  }
+
   private finish() {
     this.drag = null;
     this.readout.hidden = true;

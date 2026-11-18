@@ -2,7 +2,6 @@ import { loadServiceSession, patchServiceSession, sessionDocument } from '../per
 import { requireWorkspaceService } from '../persist/service';
 export interface Recovery {
   version: 1;
-  projectId?: string;
   job?: { id: string; stage: string; seq: number; signature: string; projectId: string };
   send?: { jobId: string; target: string };
 }
@@ -12,14 +11,14 @@ export function readRecovery(): Recovery {
   try {
     const r = sessionDocument().fsmRecovery as Recovery | undefined;
     if (r?.version !== 1) return { version: 1 };
-    return { version: 1, ...(identifier(r.projectId) ? { projectId: r.projectId } : {}),
+    return { version: 1,
       ...(identifier(r.job?.id) && identifier(r.job?.projectId) && typeof r.job.signature === 'string' && r.job.signature.length <= 32
         && typeof r.job.stage === 'string' && r.job.stage.length < 80 && Number.isSafeInteger(r.job.seq) && r.job.seq >= -1 ? { job: r.job } : {}),
       ...(identifier(r.send?.jobId) && typeof r.send.target === 'string' && r.send.target.length <= 160 ? { send: r.send } : {}) };
   } catch { return { version: 1 }; }
 }
 export function rememberRecovery(patch: Partial<Omit<Recovery, 'version'>>) {
-  void requireWorkspaceService().then(() => patchServiceSession({ fsmRecovery: { ...readRecovery(), ...patch, version: 1 } })).catch(() => {});
+  patchServiceSession({ fsmRecovery: { ...readRecovery(), ...patch, version: 1 } });
 }
 
 export function recoverySignature(signature: string): string {

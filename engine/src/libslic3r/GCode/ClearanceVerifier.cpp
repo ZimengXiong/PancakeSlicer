@@ -1,4 +1,5 @@
 #include "ClearanceVerifier.hpp"
+#include "libslic3r/Nonplanar/Research.hpp"
 #include "libslic3r.h"
 #include <math.h>
 #include <memory>
@@ -14,6 +15,8 @@
 #include "libslic3r/Nonplanar/HeadEnvelope.hpp"
 #include "libslic3r/Point.hpp"
 #include "libslic3r/Print.hpp"
+#include "libslic3r/Nonplanar/CurvedTopsSurface.hpp"
+#include "libslic3r/Nonplanar/Wave.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/PrintBase.hpp"
 #include "libslic3r/format.hpp"
@@ -28,8 +31,9 @@
 #include <cmath>
 #include <atomic>
 #include <cstdint>
-#include <cstdlib>
 #include <cstring>
+#include <typeinfo>
+#include <cstdlib>
 #include <exception>
 #include <mutex>
 #include <fstream>
@@ -281,9 +285,6 @@ Corners bead_corners(const ToolPose &a, const ToolPose &b, double width, double 
     }
     return corners;
 }
-// The bead's 15 separating axes, unit length, or zero where the axis is degenerate. A sweep touches the box only if
-// every axis keeps [enter, leave] open, so the order only decides how soon a miss is found: the side normal and the
-// top normal reject most misses and go first.
 using BeadAxes = std::array<Vec3d, 15>;
 BeadAxes bead_axes(const Corners &bead)
 {
@@ -348,7 +349,6 @@ class BeadGrid
 {
 public:
     BeadGrid(const GCodeProcessorResult &result, bool rotary) : m_result(result), m_rotary(rotary) {}
-    void set_exact_depth(bool exact) { m_exact_depth = exact; }
     size_t size() const { return m_upright.size(); }
     void reserve(size_t beads) { m_upright.reserve(beads); }
     void deposit_upright(size_t move, size_t last, size_t run, int piece = 0, int pieces = 1)
@@ -394,7 +394,6 @@ public:
         }
     }
     struct PreparedBox { Nonplanar::HeadBox box; bool ring; };
-    // Head-relative bounds over the finite boxes outside the tip ring; a leaf lists boxes[order[first, last)].
     struct FloorNode { Vec3d min, max; uint32_t first, last, right; };
     struct PreparedHead
     {
@@ -456,7 +455,6 @@ public:
         double best = Inf;
         size_t best_q = queries.size();
         t_last_struck = uint32_t(-1);
-        // The bead last measured: the same bead meets many head boxes in a row.
         struct { uint32_t id = uint32_t(-1); Corners corners; BeadAxes axes; } bead;
         auto measure = [&](size_t qi, uint32_t id) {
             const Query &q = queries[qi];
@@ -480,7 +478,7 @@ public:
                 }
                 if (!swept_bead_contact(bead.corners, bead.axes, a, b, box))
                     gap = 0.;
-                else if (m_exact_depth)
+                else
                     gap = std::max(gap, -swept_bead_lift(bead.corners, bead.axes, a, b, box, std::max(0., bh.z() - q.lo.z())));
             }
             if (ring && gap < -ContactTolerance && gap >= -SameLayerTolerance && m_result.moves[m_upright[id].move].layer_id == layer) {
@@ -517,8 +515,6 @@ public:
             if (best_q < queries.size()) component = queries[best_q].prepared->box.name;
             return best;
         }
-        // A bead's state change is the least (gap, box) over the pairs it meets, whatever order they are measured in,
-        // and a pair gapped wider than the best so far changes nothing: descend the box hierarchy past such subtrees.
         const double floor = any_lo.z();
         const Vec3d  ab_lo = a.cwiseMin(b), ab_hi = a.cwiseMax(b);
         visit(any_lo, any_hi, [&](uint64_t key) {
@@ -564,7 +560,6 @@ private:
         return bead_corners({ a + (double(bead.piece) / bead.pieces) * (b - a), Vec3d::UnitZ() },
                             { a + (double(bead.piece + 1) / bead.pieces) * (b - a), Vec3d::UnitZ() }, move.width, move.height);
     }
-    // The first position from i on, before end, holding a bead laid before limit; the cell order is kept.
     uint32_t next_laid(uint32_t i, uint32_t end, size_t limit) const
     {
         while (i < end) {
@@ -590,14 +585,12 @@ private:
     }
     const GCodeProcessorResult                                      &m_result;
     bool                                                             m_rotary;
-    bool                                                             m_exact_depth = false;
     std::vector<UprightBead>                                         m_upright;
     std::vector<std::pair<Vec3d, Vec3d>>                             m_bounds;
     struct Cell { uint32_t begin, end; double top; };
     std::unordered_map<uint64_t, Cell>                               m_cells;
     std::vector<std::array<int, 6>>                                  m_bead_cells;
     std::vector<uint32_t>                                            m_ids;
-    // The least bead id in each 32 and 1024 positions of m_ids.
     std::vector<uint32_t>                                            m_min32, m_min1024;
 };
 
@@ -1491,11 +1484,10 @@ ClearanceReport verify_clearance(const GCodeProcessorResult &result, const Clear
         }
     }
     std::atomic<size_t> unswept { 0 };
-    const char *explain_env = std::getenv("NP_EXPLAIN_MOVE");
+    const char *explain_env = research_switch("NP_EXPLAIN_MOVE");
     const size_t explain_move = explain_env != nullptr ? size_t(std::strtoull(explain_env, nullptr, 10)) : size_t(-1);
-    const bool measure_planar = bar && std::getenv("NP_VERIFY_UPRIGHT_PLANAR") != nullptr && std::string(std::getenv("NP_VERIFY_UPRIGHT_PLANAR")) == "1";
+    const bool measure_planar = bar && research_switch("NP_VERIFY_UPRIGHT_PLANAR") != nullptr && std::string(research_switch("NP_VERIFY_UPRIGHT_PLANAR")) == "1";
     BeadGrid beads(result, rotary);
-    beads.set_exact_depth(bar);
     struct Hits { std::vector<ClearanceHit> hits; double min_clearance = Inf, max_contact = 0.; size_t tolerated = 0, land_strict = 0, cone_grazes = 0; };
     const double tolerance = params.head.contact_tolerance;
     std::set<std::string> duct_boxes;
@@ -1505,7 +1497,7 @@ ClearanceReport verify_clearance(const GCodeProcessorResult &result, const Clear
     if (bar) tilted_head.tip_allowance = { land_r, LandContactMax };
     if (measure_planar) tilted_head.tip_allowance = {};
     TiltedBeads::NozzleSolid nozzle_solid;
-    if (bar && rotary && std::getenv("NP_VERIFY_EXACT_NOZZLE") != nullptr && std::string(std::getenv("NP_VERIFY_EXACT_NOZZLE")) == "1") {
+    if (bar && rotary && research_switch("NP_VERIFY_EXACT_NOZZLE") != nullptr && std::string(research_switch("NP_VERIFY_EXACT_NOZZLE")) == "1") {
         try {
             const auto cone = nlohmann::json::parse(params.head.extensions).at("coverage").at("nozzle_cone");
             nozzle_solid.land_r   = cone.at("tip_radius").get<double>();
@@ -1627,7 +1619,7 @@ ClearanceReport verify_clearance(const GCodeProcessorResult &result, const Clear
                                 line << " | " << v.transpose();
                         BOOST_LOG_TRIVIAL(warning) << line.str();
                     }
-                    static const bool log_struck = std::getenv("NP_VERIFY_STRUCK") != nullptr;
+                    static const bool log_struck = research_switch("NP_VERIFY_STRUCK") != nullptr;
                     if (log_struck && bead_gap < best && std::isfinite(bead_gap)) {
                         Vec3d centre = Vec3d::Zero();
                         for (const Vec3d &v : tilted.bead(scratch->best_bead))
@@ -1652,9 +1644,17 @@ ClearanceReport verify_clearance(const GCodeProcessorResult &result, const Clear
                         if (index < 0) continue;
                         hint = index;
                         component = (strict ? contact_strict : contact_allowed).boxes[contact_boxes.boxes[size_t(index)].index].name;
-                        if (nozzle_gap < -ContactTolerance && nozzle_gap >= -params.pitch)
+                        if (nozzle_gap < -ContactTolerance)
                             nozzle_gap = std::max(nozzle_gap, bead_grid.clearance(p0, p1, strict ? strict_prisms : allowed_prisms, c.run, extruding,
                                                                                   component, bead_limit, move.layer_id, tolerated));
+                        if (nozzle_gap < -ContactTolerance &&
+                            std::any_of(cone_head.boxes.begin(), cone_head.boxes.end(), [&](const Nonplanar::HeadBox &b) { return b.name == component; })) {
+                            std::string  fine_component;
+                            bool         fine_tolerated = false;
+                            const double fine = bead_grid.clearance(p0, p1, fine_prisms, c.run, extruding, fine_component, bead_limit, move.layer_id, fine_tolerated);
+                            if (fine > nozzle_gap)
+                                nozzle_gap = fine, component = fine_component;
+                        }
                         record(nozzle_gap, component, p1, ClearanceHitClass::Cone);
                         continue;
                     }
@@ -1708,7 +1708,7 @@ ClearanceReport verify_clearance(const GCodeProcessorResult &result, const Clear
                     exact_frames.push_back(kinematics.head_frame(q));
                 }
                 tilted.exact_nozzle(laid, exact_poses, exact_frames, nozzle_solid, face, flank, struck);
-                if (struck != uint32_t(-1) && std::getenv("NP_VERIFY_STRUCK") != nullptr) {
+                if (struck != uint32_t(-1) && research_switch("NP_VERIFY_STRUCK") != nullptr) {
                     Vec3d centre = Vec3d::Zero();
                     for (const Vec3d &v : tilted.bead(struck)) centre += v / 8.;
                     hit_bead = "bead " + std::to_string(tilted.bead_layer(struck)) + " " + std::to_string(centre.x()) + " " +
@@ -1733,7 +1733,7 @@ ClearanceReport verify_clearance(const GCodeProcessorResult &result, const Clear
                 hit.duct        = duct_boxes.count(hit.component) != 0;
                 const uint32_t s = land_hit && best_land + land_allow < best + tolerance ? best_land_struck : hit_struck;
                 hit.struck_move  = s;
-                if (static const char *path = std::getenv("NP_VERIFY_STRUCK"); path != nullptr) {
+                if (static const char *path = research_switch("NP_VERIFY_STRUCK"); path != nullptr) {
                     static std::mutex struck_mutex;
                     const std::lock_guard<std::mutex> lock(struck_mutex);
                     std::ofstream out(path, std::ios::app);
@@ -1742,7 +1742,7 @@ ClearanceReport verify_clearance(const GCodeProcessorResult &result, const Clear
                         << (hit.cls == ClearanceHitClass::Land ? "land" : hit.cls == ClearanceHitClass::Cone ? "cone" : "body") << ' '
                         << hit.penetration << ' ' << hit.component << ' ' << hit.tip.x() << ' ' << hit.tip.y() << ' ' << hit.tip.z() << ' '
                         << (hit_bead.empty() ? "-" : hit_bead);
-                    const char *road_ids = std::getenv("NP_NATIVE_ROAD_IDS");
+                    const char *road_ids = research_switch("NP_NATIVE_ROAD_IDS");
                     if (road_ids != nullptr && *road_ids != '\0' && std::string(road_ids) != "0")
                         out << ' ' << result.state(move).native_road_id;
                     out << '\n';
@@ -1912,17 +1912,15 @@ bool same_params(const ClearanceParams &a, const ClearanceParams &b)
 }
 }
 
-void ClearanceMemo::fingerprint(const GCodeProcessorResult &result, std::vector<std::array<uint32_t, 8>> &moves,
-                                std::vector<std::array<uint64_t, 5>> &joints)
+void ClearanceMemo::fingerprint(const GCodeProcessorResult &result, std::vector<MoveKey> &moves, std::vector<std::array<uint64_t, 5>> &joints)
 {
     moves.clear();
     moves.reserve(result.moves.size());
     for (const auto &move : result.moves)
         moves.push_back({ bits32(move.position.x()), bits32(move.position.y()), bits32(move.position.z()), bits32(move.width),
-                          bits32(move.height), move.gcode_id, move.layer_id,
-                          uint32_t(uint8_t(move.type)) | uint32_t(uint8_t(move.extrusion_role)) << 8 |
-                              uint32_t(result.state(move).nonplanar_patch_shell) << 16 | uint32_t(move.timing_only) << 24 |
-                              uint32_t(move.clearance_pose_known) << 25 | uint32_t(move.clearance_from_unknown) << 26 });
+                          bits32(move.height), move.gcode_id, move.layer_id, move.state,
+                          uint32_t(uint8_t(move.type)) | uint32_t(uint8_t(move.extrusion_role)) << 8 | uint32_t(move.timing_only) << 16 |
+                              uint32_t(move.clearance_pose_known) << 17 | uint32_t(move.clearance_from_unknown) << 18 });
     joints.clear();
     joints.reserve(result.joints.size());
     for (const JointPose &pose : result.joints) {
@@ -1935,17 +1933,24 @@ void ClearanceMemo::fingerprint(const GCodeProcessorResult &result, std::vector<
 ClearanceReport ClearanceMemo::verify(const GCodeProcessorResult &result, const ClearanceParams &params, const ToolKinematics &kinematics,
                                       const std::function<void()> &throw_if_canceled)
 {
-    static const bool struck_log = std::getenv("NP_VERIFY_STRUCK") != nullptr;
-    if (kinematics.rotary_count() != 0 || struck_log)
+    static const bool diagnostics = research_switch("NP_VERIFY_STRUCK") != nullptr || research_switch("NP_EXPLAIN_MOVE") != nullptr ||
+                                    research_switch("NP_NATIVE_ROAD_IDS") != nullptr;
+    if (kinematics.rotary_count() != 0 || diagnostics)
         return verify_clearance(result, params, kinematics, throw_if_canceled);
     fingerprint(result, m_scratch_moves, m_scratch_joints);
-    if (m_valid && m_scratch_joints == m_joints && m_scratch_moves == m_moves && same_params(params, m_params))
+    const auto *states = reinterpret_cast<const unsigned char *>(result.move_states.data());
+    m_scratch_states.assign(states, states + result.move_states.size() * sizeof(result.move_states.front()));
+    const std::type_index kind = typeid(kinematics);
+    if (m_valid && kind == m_kinematics && m_scratch_states == m_states && m_scratch_joints == m_joints && m_scratch_moves == m_moves &&
+        same_params(params, m_params))
         return m_report;
-    m_valid = false;
-    m_report = verify_clearance(result, params, kinematics, throw_if_canceled);
-    m_params = params;
+    m_valid      = false;
+    m_report     = verify_clearance(result, params, kinematics, throw_if_canceled);
+    m_params     = params;
+    m_kinematics = kind;
     m_moves.swap(m_scratch_moves);
     m_joints.swap(m_scratch_joints);
+    m_states.swap(m_scratch_states);
     m_valid = true;
     return m_report;
 }
@@ -1955,14 +1960,41 @@ void mark_clearance_override(const Print &print, GCodeProcessorResult &result)
     result.clearance_report.clearance_override = Nonplanar::clearance_override_active(print.config());
 }
 
+NonplanarMode print_clearance_mode(const Print &print)
+{
+    if (Nonplanar::wave_enabled(print))
+        return NonplanarMode::Off;
+    const auto any = [&print](auto pred) {
+        return std::any_of(print.objects().begin(), print.objects().end(), [&pred](const PrintObject *o) { return pred(o->config().nonplanar_mode.value); });
+    };
+    if (any([](NonplanarMode m) { return curved_tops_mode(m); }))
+        return NonplanarMode::NonplanarTop;
+    for (const NonplanarMode m : { NonplanarMode::SmoothMorph, NonplanarMode::ConformalLayers, NonplanarMode::Slant, NonplanarMode::OneShot,
+                                   NonplanarMode::Auto })
+        if (any([m](NonplanarMode o) { return o == m; }))
+            return m;
+    for (const PrintObject *object : print.objects())
+        if (object->config().nonplanar_mode.value != NonplanarMode::Off)
+            return object->config().nonplanar_mode.value;
+    return NonplanarMode::Off;
+}
+
+ClearanceParams clearance_params(const PrintConfig &config, NonplanarMode mode, bool contact_bar)
+{
+    ClearanceParams params;
+    params.head           = Nonplanar::resolve_head_envelope(config);
+    params.contact_bar    = contact_bar;
+    params.cone_tolerance = curved_cone_tolerance(mode);
+    return params;
+}
+
 void check_export_clearance(Print &print, GCodeProcessorResult &result)
 {
     const auto mode = Nonplanar::effective_collision_check(print);
     const bool contoured_auto = std::any_of(print.objects().begin(), print.objects().end(),
         [](const PrintObject *object) { return object->auto_z_contouring(); });
     if ((!result.nonplanar && !contoured_auto) || mode == NonplanarCollisionCheck::Off) return;
-    ClearanceParams params;
-    params.head = Nonplanar::resolve_head_envelope(print.config());
+    const ClearanceParams params = clearance_params(print.config(), print_clearance_mode(print), false);
     auto kinematics = make_tool_kinematics(print.config());
     result.clearance_report = verify_clearance(result, params, *kinematics, [&print] { if (print.canceled()) throw CanceledException(); });
     result.clearance = result.clearance_report.per_move;
@@ -1972,7 +2004,7 @@ void check_export_clearance(Print &print, GCodeProcessorResult &result)
     const std::string message = Slic3r::format(_u8L("Moves that would hit printed material: %1% (worst %2$.3f mm, %3%, layer %4%, G-code line %5%)."),
                                                result.clearance_report.hit_moves, hit.penetration, Nonplanar::head_box_label(hit.component),
                                                hit.layer + 1, hit.gcode_line);
-    print.active_step_add_warning(PrintStateBase::WarningLevel::CRITICAL, message);
+    print.active_step_add_warning(PrintStateBase::WarningLevel::CRITICAL, WarningCode{ "clearance_hits", {}, nlohmann::json{ { "moves", result.clearance_report.hit_moves } }.dump() }, message);
     if (mode == NonplanarCollisionCheck::Block)
         throw RuntimeError(message + " " + _u8L("Export blocked by the head clearance check. Review the path or set the check to Warn to export it."));
 }

@@ -1,4 +1,5 @@
 #include "Seams.hpp"
+#include "libslic3r/Nonplanar/Research.hpp"
 #include "libslic3r/Point.hpp"
 #include "libslic3r/Polygon.hpp"
 #include "libslic3r/PrintConfig.hpp"
@@ -861,7 +862,7 @@ void order_band_pieces(ExtrusionEntitiesPtr &pieces, Point &cursor, RoadGrid &ba
     constexpr size_t SpliceLeft = 4;
 
     static const double climb = [] {
-        const char *v = std::getenv("NP_B2_CLIMB");
+        const char *v = research_switch("NP_B2_CLIMB");
         return v != nullptr && *v != 0 ? std::atof(v) : -1.;
     }();
     auto lowest_bead = [](const ExtrusionPathConformal &p) {

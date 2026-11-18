@@ -1,4 +1,5 @@
 #include "ConformalShells.hpp"
+#include "libslic3r/Nonplanar/Research.hpp"
 #include "libslic3r/Arachne/utils/ExtrusionJunction.hpp"
 #include "libslic3r/Nonplanar/FlowMod.hpp"
 #include "libslic3r/Point.hpp"
@@ -609,7 +610,7 @@ Polylines sparse_strip_fill(const HeightField &surface, const ExPolygons &area, 
 bool ct1_climb_requested()
 {
     static const bool on = [] {
-        const char *v = std::getenv("NP_CT1_CLIMB");
+        const char *v = research_switch("NP_CT1_CLIMB");
         return v != nullptr && *v != 0 && *v != '0';
     }();
     return on;
@@ -618,7 +619,7 @@ bool ct1_climb_requested()
 bool ct1_strips_climb()
 {
     static const bool on = [] {
-        const char *v = std::getenv("NP_CT1_CLIMB");
+        const char *v = research_switch("NP_CT1_CLIMB");
         return v != nullptr && std::atoi(v) >= 2;
     }();
     return on;
@@ -627,7 +628,7 @@ bool ct1_strips_climb()
 double ct1_rim_mm()
 {
     static const double rim = [] {
-        const char *v = std::getenv("NP_CT1_RIM");
+        const char *v = research_switch("NP_CT1_RIM");
         return v != nullptr ? std::max(0., std::atof(v)) : 0.;
     }();
     return rim;
@@ -636,7 +637,7 @@ double ct1_rim_mm()
 double ct1_base_gap_mm()
 {
     static const double gap = [] {
-        const char *v = std::getenv("NP_CT1_BASE_GAP");
+        const char *v = research_switch("NP_CT1_BASE_GAP");
         return v != nullptr ? std::max(0., std::atof(v)) : 0.;
     }();
     return gap;
@@ -664,7 +665,7 @@ std::vector<Polylines> climbing_lines(const HeightField &surface, const ExPolygo
     along.angle   = g.squaredNorm() > 0. ? std::atan2(g.y(), g.x()) + 0.5 * PI : 0.;
     along.outline = false;
     static const bool longwise = [] {
-        const char *v = std::getenv("NP_CT1_LONG");
+        const char *v = research_switch("NP_CT1_LONG");
         return v != nullptr && *v != 0 && *v != '0';
     }();
     if (longwise) {
@@ -690,12 +691,12 @@ std::vector<Polylines> climbing_lines(const HeightField &surface, const ExPolygo
         }
     }
     static const bool with_outline = [] {
-        const char *v = std::getenv("NP_CT1_OUTLINE");
+        const char *v = research_switch("NP_CT1_OUTLINE");
         return v != nullptr && *v != 0 && *v != '0';
     }();
     const ExPolygons inner = with_outline ? offset_ex(area, -float(scale_(flow.spacing()))) : area;
     static const bool snake = [] {
-        const char *v = std::getenv("NP_CT1_SNAKE");
+        const char *v = research_switch("NP_CT1_SNAKE");
         return v != nullptr && *v != 0 && *v != '0';
     }();
     std::vector<Polylines> out;
@@ -752,7 +753,7 @@ std::vector<Polylines> climbing_lines(const HeightField &surface, const ExPolygo
     for (auto &[h, pl] : keyed)
         out.push_back({ std::move(pl) });
     static const bool outline_first = [] {
-        const char *v = std::getenv("NP_CT1_OUTLINE_FIRST");
+        const char *v = research_switch("NP_CT1_OUTLINE_FIRST");
         return v != nullptr && *v != 0 && *v != '0';
     }();
     const size_t n_lines = out.size();
@@ -1384,7 +1385,7 @@ ExtrusionEntityCollection make_shell(const PrintObject &object, const ConformalP
     else if (!rest.empty())
         append(linked, shell_polylines(fill.spiral ? rest : off_voids(rest, flow.spacing()), rings, outer ? top_pattern : ipRectilinear, flow.spacing(), outer && monotonic_top, flow,
                                        host_z, start, MaxGlide, surface_spaced ? &patch.surface.get() : nullptr, &seam_line, &ramp));
-    if (std::getenv("NP_CT1_TRACE"))
+    if (research_switch("NP_CT1_TRACE"))
         BOOST_LOG_TRIVIAL(warning) << "ct1 shell patch " << patch.id << " k " << k << " outer " << outer << " sparse " << sparse << " plug " << plug
                                    << " banded " << (banded != nullptr) << " strips " << (banded != nullptr && banded->strips) << " spiral " << fill.spiral
                                    << " rest " << rest.size() << " falls " << fall_lines.size() << " linked " << linked.size();
@@ -1763,7 +1764,7 @@ static ConformalResult build_region_shells(PrintObject &object, const std::vecto
         U = undersides_within(U, S, closed_void, wall_width);
     ExPolygons         band_cand;
     static const bool no_band = [] {
-        const char *v = std::getenv("NP_CT1_NOBAND");
+        const char *v = research_switch("NP_CT1_NOBAND");
         return v != nullptr && *v != 0 && *v != '0';
     }();
     if (wall_width > 0. && !no_band) {
@@ -3086,7 +3087,7 @@ template<class Keep> void trim_entity(const ExtrusionEntity &e, const Keep &keep
 void trim_walls_above_shells(PrintObject &object, const ConformalResult &result)
 {
     static const bool on = [] {
-        const char *v = std::getenv("NP_CT1_TRIM_WALLS");
+        const char *v = research_switch("NP_CT1_TRIM_WALLS");
         return v != nullptr && *v != 0 && *v != '0';
     }();
     if (!on)

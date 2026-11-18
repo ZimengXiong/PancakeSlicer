@@ -5,7 +5,7 @@ export function parseStl(buf: ArrayBuffer): Float32Array {
   const dv = new DataView(buf);
   const tris = buf.byteLength >= 84 ? dv.getUint32(80, true) : -1;
   if (tris >= 0 && 84 + tris * 50 === buf.byteLength) {
-    if (!tris) throw new Error('it has no triangles.');
+    if (!tris) throw new Error('there are no triangles in it.');
     const out = new Float32Array(tris * 9);
     for (let t = 0, o = 0; t < tris; t++) {
       const base = 84 + t * 50 + 12;
@@ -17,7 +17,7 @@ export function parseStl(buf: ArrayBuffer): Float32Array {
   const out: number[] = [];
   const re = /vertex\s+(\S+)\s+(\S+)\s+(\S+)/g;
   for (let m; (m = re.exec(text)); ) out.push(+m[1], +m[2], +m[3]);
-  if (!out.length) throw new Error('it has no triangles.');
+  if (!out.length) throw new Error('there are no triangles in it.');
   return new Float32Array(out);
 }
 
@@ -38,7 +38,7 @@ export function parseObj(text: string): Float32Array {
       for (let k = 1; k + 1 < p.length; k++) push(p[0]), push(p[k]), push(p[k + 1]);
     }
   }
-  if (!out.length) throw new Error('it has no 3D mesh.');
+  if (!out.length) throw new Error('there\'s no 3D mesh in it.');
   return new Float32Array(out);
 }
 

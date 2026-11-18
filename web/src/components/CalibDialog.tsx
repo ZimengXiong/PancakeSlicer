@@ -191,7 +191,7 @@ export default function CalibDialog({ which }: { which: Exclude<CalibMenu, 'nonp
   const close = () => setState({ calibDialog: null });
   const ok = async () => {
     const result = c.run(v, p);
-    if (typeof result === 'string') return toast(result);
+    if (typeof result === 'string') return toast('calibration_values_invalid', { detail: result });
     await runCalibration(result.kind, Object.entries(result.params).map(([k, x]) => `${k}=${x}`).join(','));
   };
   return (
@@ -202,10 +202,7 @@ export default function CalibDialog({ which }: { which: Exclude<CalibMenu, 'nonp
           {c.groups?.map((g) => {
             const pick = (value: string) => setV({ ...v, [g.key]: value, ...g.preset?.(value, v) });
             return <div key={g.key} className="modal-fields">
-              <div className="form-row"><span>{g.legend.replace(/:\s*$/, '')}</span>{g.options.length <= 3
-                ? <span className="seg" role="radiogroup" aria-label={g.legend}>{g.options.map(([value, label]) =>
-                  <button key={value} type="button" role="radio" aria-checked={v[g.key] === value} onClick={() => pick(value)}>{label}</button>)}</span>
-                : <Dropdown className="combo" aria-label={g.legend} value={v[g.key]} onValueChange={pick} options={g.options.map(([value, label]) => ({ value, label }))} />}</div>
+              <div className="form-row"><span>{g.legend.replace(/:\s*$/, '')}</span>{<Dropdown className="combo" aria-label={g.legend} value={v[g.key]} onValueChange={pick} options={g.options.map(([value, label]) => ({ value, label }))} />}</div>
               {g.key === 'shaper' && <p className="flush-note">{firmwareNote(p.flavor)}</p>}
             </div>;
           })}

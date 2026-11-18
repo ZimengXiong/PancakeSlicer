@@ -1,7 +1,7 @@
 import type { Config } from '../api/types';
 import rules from '../../../server/profile_rules.json';
 export interface SpeedModel { schema: 2; multipliers: Record<string, number>; outerWallCeiling: number }
-export interface SpeedDetail { base: number; multiplier: number; requested: number; speed: number;  limit: string; override?: string; flowCap?: number; printerMax?: number; width: number; height: number; acceleration: number }
+export interface SpeedDetail { base: number; multiplier: number; requested: number; speed: number;  limit: string; override?: string;  unset?: number; flowCap?: number; printerMax?: number; width: number; height: number; acceleration: number }
 export const SPEED_FEATURES = rules.speedFeatures;
 export const SPEED_KEYS = new Set(SPEED_FEATURES.map(f => f.key));
 const seeds: Record<string, { multipliers: Record<string, number>; outerWallCeiling: number }> = rules.speedIntents;

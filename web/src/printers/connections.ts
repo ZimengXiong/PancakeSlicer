@@ -1,3 +1,4 @@
+import { onLiveEvent } from '../live-events';
 import { mutation, responseError } from '../api/access';
 import { getState, setState } from '../state/store';
 import { printerCapabilities, printerModel } from './capabilities';
@@ -13,11 +14,12 @@ export interface PrinterConnection {
 export interface Temp { actual: number; target: number }
 export interface NozzleStatus { id: number; extruder: number; diameter: number; type?: string; flow?: string; rack?: boolean; abnormal?: boolean; legacy?: boolean }
 export interface Tray { kind?: string; extruder?: number; id: number; ams: number; slot: number; type: string; color: string; name?: string; filament_id?: string; remaining?: number; active?: boolean }
+export type LinkState = 'connecting' | 'online' | 'retrying' | 'stopped';
 export interface PrinterStatus {
-  printer: string; online: boolean;
+  printer: string; link: LinkState; online: boolean;
   state: 'connecting' | 'idle' | 'printing' | 'paused' | 'finished' | 'failed' | 'busy' | 'error' | 'offline';
   job?: { id: string; plate: number; sent_at: string; thumbnail?: string }; started_at?: string; speed_mode?: number; light?: boolean; messages?: { code: string; message?: string }[];
-  detail?: string; file?: string; progress?: number; remaining_s?: number; layer?: number; layers?: number;
+  detail?: string; file?: string; progress?: number; elapsed_s?: number; file_estimate_s?: number; slicer_estimate_s?: number; remaining_s?: number; layer?: number; layers?: number;
   nozzle_temps?: (Temp & { id: number })[]; nozzle?: Temp; bed?: Temp; chamber?: Temp; nozzles?: NozzleStatus[]; fans?: Record<string, number>; trays?: Tray[]; at: string;
   controls?: { fans?: Record<string, { index: number; min: number; max: number; modern?: boolean }>; chamber?: { min: number; max: number } };
 }
@@ -38,23 +40,23 @@ export const connectionOutput = (kind: ConnectionKind) => (kind === 'bambu-lan' 
 export const connectionOf = (c: PrinterConnections, printer: string) => c.connections.find((x) => x.printer === printer);
 export const unassigned = (c: PrinterConnections) => c.connections.filter((x) => !x.printer);
 
-let source: EventSource | null = null;
+let following = false;
 export function followConnections() {
   if (import.meta.env.MODE === 'demo') {
     setState({ printerConnections: { enabled: true, live: true, connections: [], status: {}, transfers: [] } });
     return;
   }
-  if (source || getState().api?.mock) return;
-  source = new EventSource('/api/printer-connections/events');
-  source.addEventListener('state', (e) => {
-    const snap = JSON.parse((e as MessageEvent).data) as Omit<PrinterConnections, 'live' | 'status'> & { status: PrinterStatus[] };
+  if (following || getState().api?.mock) return;
+  following = true;
+  onLiveEvent('connections', (data) => {
+    const snap = JSON.parse(data) as Omit<PrinterConnections, 'live' | 'status'> & { status: PrinterStatus[] };
     setState({ printerConnections: { enabled: snap.enabled, live: true, connections: snap.connections, transfers: snap.transfers,
       status: Object.fromEntries(snap.status.map((s) => [s.printer, s])) } });
   });
-  source.onerror = () => {
+  onLiveEvent('down', () => {
     const c = getState().printerConnections;
     if (c.live) setState({ printerConnections: { ...c, live: false } });
-  };
+  });
 }
 
 const json = (method: string, body?: object): RequestInit => ({ method, headers: { 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
@@ -72,7 +74,7 @@ export interface ConnectionEdit {
 export interface ConnectionTest { ok: boolean; stage: string; message: string; model?: string }
 export interface Discovered {
   kind: ConnectionKind; host?: string; url?: string; serial?: string; name?: string; model?: string;
-  preset?: string; connection?: string; source: string; assigned?: string;
+  preset?: string; catalogModel?: string; connection?: string; source: string; assigned?: string;
 }
 
 export const saveConnection = (printer: string, edit: ConnectionEdit) => call<PrinterConnection>(path(printer), json('PUT', edit));
@@ -81,8 +83,18 @@ export const adoptConnection = (printer: string, id: string, name: string) => ca
 export const testConnection = (printer: string, edit: ConnectionEdit) => call<ConnectionTest>('/api/printer-connections/test', json('POST', { ...edit, printer }));
 export const discoverPrinters = () => call<{ printers: Discovered[]; notes: string[] }>('/api/printer-connections/discover', json('POST'));
 export const controlPrinter = (printer: string, action: 'stop' | 'pause' | 'resume') => call<void>(path(printer, '/control'), json('POST', { action }));
-export const controlDevice = (printer: string, command: { control: 'fan' | 'chamber' | 'nozzle' | 'bed' | 'speed' | 'light'; fan?: string; extruder?: number; value: number }) => call<void>(path(printer, '/device'), json('POST', command));
+export const controlDevice = (printer: string, command: { control: 'fan' | 'chamber' | 'nozzle' | 'bed' | 'speed' | 'light'; fan?: string; extruder?: number; value: number }) => call<void>(path(printer, '/device'), json('POST', command), true);
 export const readTrays = (printer: string) => call<{ trays: Tray[] }>(path(printer, '/ams'), json('POST'), true).then((r) => r.trays ?? []);
+
+export interface SendPlanSlot {
+  filament: number; slot: string; tray?: string; used: boolean; state?: 'unassigned' | 'assigned' | 'confirmed' | 'mismatch';
+  expected: { type?: string; color?: string }; reported?: { type?: string; color?: string };
+}
+export async function readSendPlan(job: string, printer: string): Promise<SendPlanSlot[]> {
+  const r = await fetch(`/api/jobs/${encodeURIComponent(job)}/send/plan?printer=${encodeURIComponent(printer)}`, { cache: 'no-store' });
+  if (!r.ok) throw await responseError(r);
+  return ((await r.json()) as { slots: SendPlanSlot[] }).slots;
+}
 
 export const LEGACY_HOST_KEYS = ['host_type', 'print_host', 'printhost_apikey', 'printhost_port', 'printhost_user', 'printhost_password', 'printhost_authorization_type', 'flashforge_serial_number'];
 export async function migrateLegacyHost(printer: string, name: string, config: Record<string, unknown>): Promise<string | null> {
@@ -95,7 +107,7 @@ export async function migrateLegacyHost(printer: string, name: string, config: R
 
 export function statusLine(st: PrinterStatus | undefined): string {
   if (!st) return '';
-  if (!st.online) return st.state === 'connecting' ? 'Connecting…' : 'Offline';
+  if (!st.online) return st.link === 'connecting' ? 'Connecting…' : 'Offline';
   const word = { idle: 'Connected', printing: 'Printing', paused: 'Paused', finished: 'Finished', failed: 'Last print failed', busy: 'Busy', error: 'Error', offline: 'Printer offline', connecting: 'Connecting…' }[st.state];
   const parts = [word + (st.progress != null && (st.state === 'printing' || st.state === 'paused') ? ` ${Math.round(st.progress * 100)}%` : '')];
   if (st.remaining_s && st.state === 'printing') {

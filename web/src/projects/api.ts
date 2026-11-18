@@ -30,7 +30,7 @@ export async function listTrash(): Promise<ListedProject[]> {
   return rows.map(clean).filter((p): p is ListedProject => !!p);
 }
 
-async function guard<T>(failed: string, f: () => Promise<T>, fallback: T): Promise<T> {
+async function guard<T>(failed: 'project_new_failed' | 'project_open_failed' | 'project_rename_failed' | 'project_duplicate_failed' | 'project_delete_failed', f: () => Promise<T>, fallback: T): Promise<T> {
   try {
     return await f();
   } catch (e) {
@@ -40,8 +40,8 @@ async function guard<T>(failed: string, f: () => Promise<T>, fallback: T): Promi
   }
 }
 
-export const newProject = () => guard('New project failed', async () => {const created=await project.newProject();if(created)setState({tab:'prepare'});return created;},false);
-export const openProject = (id: string) => guard('Open failed', async () => { await project.openProject(id); setState({ tab: 'prepare' }); }, undefined);
-export const renameProject = (id: string, name: string) => guard('Rename failed', () => project.renameProject(id, name), undefined);
-export const duplicateProject = (id: string) => guard('Duplicate failed', () => project.duplicateProject(id), null);
-export const deleteProject = (id: string) => guard('Delete failed', () => project.deleteProject(id), null);
+export const newProject = () => guard('project_new_failed', async () => {const created=await project.newProject();if(created)setState({tab:'prepare'});return created;},false);
+export const openProject = (id: string) => guard('project_open_failed', async () => { await project.openProject(id); setState({ tab: 'prepare' }); }, undefined);
+export const renameProject = (id: string, name: string) => guard('project_rename_failed', () => project.renameProject(id, name), undefined);
+export const duplicateProject = (id: string) => guard('project_duplicate_failed', () => project.duplicateProject(id), null);
+export const deleteProject = (id: string) => guard('project_delete_failed', () => project.deleteProject(id), null);

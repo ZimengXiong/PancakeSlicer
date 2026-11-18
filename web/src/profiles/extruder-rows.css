@@ -1,0 +1,12 @@
+:where(.orca-parity) .extruder-rows { display: flex; flex-direction: column; gap: var(--s-2); padding-inline: var(--s-5); }
+:where(.orca-parity) .pf-full-editor .extruder-rows, :where(.orca-parity) .settings-tab .extruder-rows { padding-inline: 0; }
+:where(.orca-parity) .extruder-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2) var(--s-3); min-height: var(--h-control); }
+:where(.orca-parity) .extruder-name { flex: none; min-width: 48px; color: var(--ink-2); font: var(--t-body); }
+:where(.orca-parity) .extruder-row > .combo { flex: 1 1 180px; min-width: 0; }
+:where(.orca-parity) .sidebar .extruder-rows { gap: var(--s-2); margin-top: var(--s-2); padding: 0 var(--s-3) 0 var(--space-section); }
+:where(.orca-parity) .sidebar .extruder-row { display: grid; grid-template-columns: var(--rail-media) minmax(0, 1fr); column-gap: var(--s-2); }
+:where(.orca-parity) .sidebar .extruder-name { min-width: 0; justify-self: center; }
+:where(.orca-parity) .extruder-variant { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; font: var(--t-body); }
+:where(.orca-parity) .sidebar .extruder-variant { flex-direction: row; align-items: center; box-sizing: border-box; min-height: 40px; padding: var(--s-1) 8px; border: 1px solid transparent; }
+:where(.orca-parity) .sidebar .extruder-variant > .dropdown-value { min-width: 0; }
+:where(.orca-parity) .extruder-nozzle { flex: none; color: var(--ink-3); font: var(--t-small); font-variant-numeric: tabular-nums; }

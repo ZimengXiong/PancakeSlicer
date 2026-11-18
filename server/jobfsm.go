@@ -23,6 +23,7 @@ const (
 	StateQueued      JobState = "queued"
 	StatePreparing   JobState = "preparing"
 	StateSlicing     JobState = "slicing"
+	StateRunning              = StateSlicing
 	StateStoring     JobState = "storing"
 	StateCanceling   JobState = "canceling"
 	StateDone        JobState = "done"
@@ -50,6 +51,21 @@ func (s JobState) Finished() bool {
 	return s == StateDone || s == StateFailed || s == StateCancelled || s == StateInterrupted || s == StateStale
 }
 
+func (s JobState) legacy() JobState {
+	switch s {
+	case StateIdle:
+		return StateQueued
+	case StatePreparing, StateSlicing, StateStoring, StateCanceling:
+		return "running"
+	case StateCancelled:
+		return "canceled"
+	case StateInterrupted, StateStale:
+		return StateFailed
+	default:
+		return s
+	}
+}
+
 type JobTransition struct {
 	Seq      uint64    `json:"seq"`
 	At       time.Time `json:"at"`
@@ -57,6 +73,7 @@ type JobTransition struct {
 	To       JobState  `json:"to"`
 	Accepted bool      `json:"accepted"`
 	Reason   string    `json:"reason,omitempty"`
+	Code     string    `json:"code,omitempty"`
 }
 
 const maxTransitions = 256
@@ -73,6 +90,13 @@ func (j *Job) setState(s JobState, reason string) bool {
 	return j.setStateLocked(s, reason)
 }
 
+func (j *Job) failWith(code, reason string) bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.failCode = code
+	return j.setStateLocked(StateFailed, reason)
+}
+
 func (j *Job) setStateLocked(s JobState, reason string) bool {
 	if s.Finished() && j.stopReason != "" {
 		if j.stopReason == "server shutting down" {
@@ -82,8 +106,13 @@ func (j *Job) setStateLocked(s JobState, reason string) bool {
 		}
 	}
 	j.transitionSeq++
+	code := ""
+	if s == StateFailed {
+		code = cmpOr(j.failCode, "slice_failed")
+	}
+	j.failCode = ""
 	t := JobTransition{Seq: j.transitionSeq, At: time.Now().UTC(), From: j.state, To: s,
-		Accepted: jobTransitions[j.state][s], Reason: reason}
+		Accepted: jobTransitions[j.state][s], Reason: reason, Code: code}
 	j.transitions = append(j.transitions, t)
 	if len(j.transitions) > maxTransitions {
 		j.transitions = j.transitions[len(j.transitions)-maxTransitions:]
@@ -100,7 +129,7 @@ func (j *Job) setStateLocked(s JobState, reason string) bool {
 		log.Printf("job %s illegal transition %s -> %s: %s", j.ID, t.From, t.To, reason)
 		return false
 	}
-	j.state, j.errMsg = s, reason
+	j.state, j.errMsg, j.errCode = s, reason, code
 	if s == StatePreparing {
 		j.started = t.At
 	}
@@ -128,7 +157,7 @@ func (j *Job) setStateLocked(s JobState, reason string) bool {
 	if s == StateDone {
 		pct = 100
 	}
-	e := Event{Type: eventType, State: s, Error: reason, QueuePosition: &pos, Stage: string(s), Pct: &pct}
+	e := Event{Type: eventType, State: s.legacy(), LifecycleState: s, Error: reason, ErrorCode: code, QueuePosition: &pos, Stage: string(s), Pct: &pct}
 	if !s.Finished() {
 		j.progressLocked(&e)
 	} else {
@@ -150,6 +179,7 @@ type jobRecord struct {
 	Started        time.Time          `json:"started"`
 	Finished       time.Time          `json:"finished"`
 	Error          string             `json:"error,omitempty"`
+	ErrorCode      string             `json:"error_code,omitempty"`
 	ExitCode       *int               `json:"exit_code,omitempty"`
 	Slice          json.RawMessage    `json:"record,omitempty"`
 	IdempotencyKey string             `json:"idempotency_key,omitempty"`
@@ -183,7 +213,7 @@ func atomicJobFile(name string, data []byte) error {
 
 func (j *Job) persistLocked() {
 	r := jobRecord{ID: j.ID, Client: j.Client, Request: j.Request, Created: j.Created, State: j.state,
-		Started: j.started, Finished: j.finished, Error: j.errMsg, ExitCode: j.exitCode, Slice: j.slice,
+		Started: j.started, Finished: j.finished, Error: j.errMsg, ErrorCode: j.errCode, ExitCode: j.exitCode, Slice: j.slice,
 		IdempotencyKey: j.IdempotencyKey, RetryOf: j.RetryOf, NextEvent: j.nextEvent, TransitionSeq: j.transitionSeq,
 		Stage: j.stage, Progress: j.progress, QueuePosition: j.queuePosition, StageDurations: j.stageDurations}
 	b, err := json.Marshal(r)
@@ -254,7 +284,7 @@ func (m *JobManager) restoreJobs() error {
 				if t.Seq > r.TransitionSeq {
 					r.TransitionSeq = t.Seq
 					if t.Accepted && t.From == r.State && jobTransitions[r.State][t.To] {
-						r.State, r.Error = t.To, t.Reason
+						r.State, r.Error, r.ErrorCode = t.To, t.Reason, t.Code
 						if t.To.Finished() {
 							r.Finished = t.At
 						}
@@ -271,7 +301,7 @@ func (m *JobManager) restoreJobs() error {
 			f.Close()
 		}
 		j := &Job{ID: r.ID, Client: r.Client, Dir: dir, Request: r.Request, Created: r.Created,
-			state: r.State, started: r.Started, finished: r.Finished, errMsg: r.Error, exitCode: r.ExitCode, slice: r.Slice,
+			state: r.State, started: r.Started, finished: r.Finished, errMsg: r.Error, errCode: r.ErrorCode, exitCode: r.ExitCode, slice: r.Slice,
 			IdempotencyKey: r.IdempotencyKey, RetryOf: r.RetryOf, nextEvent: r.NextEvent, transitionSeq: r.TransitionSeq,
 			stage: r.Stage, progress: r.Progress, queuePosition: 0, stageHistory: m.stages,
 			stageDurations: r.StageDurations, changed: make(chan struct{}), transitions: transitions}

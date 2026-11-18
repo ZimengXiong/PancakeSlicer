@@ -815,7 +815,7 @@ void PrintObject::slice()
     m_auto_support_need = NoNeedSupp;
     if (const std::string why = Nonplanar::auto_rotary_planar(*this); !why.empty()) {
         m_config.nonplanar_mode.value = NonplanarMode::Off;
-        this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, why);
+        this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, WarningCode{ "rotary_planar", warning_object(this->model_object()->name) }, why);
     }
     if (Nonplanar::wave_enabled(*this))
         m_config.nonplanar_mode.value = NonplanarMode::Off;
@@ -903,7 +903,7 @@ void PrintObject::slice()
     if (const RepairedMeshErrors repaired = this->model_object()->get_object_stl_stats().repaired_errors; repaired.repaired()) {
         const std::string message = (boost::format(_u8L("%1%: mesh repaired on load: %2%.")) % this->model_object()->name % repaired.summary()).str();
         BOOST_LOG_TRIVIAL(warning) << message;
-        this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, message);
+        this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, WarningCode{ "mesh_repaired", warning_object(this->model_object()->name) }, message);
     }
 
     if (std::abs(m_slicing_params.belt_floor_shear_factor) > EPSILON) {
@@ -938,7 +938,8 @@ void PrintObject::slice()
             }
         });
     if (m_layers.empty())
-        throw Slic3r::SlicingError(L("No layers were detected. You might want to repair your STL file(s) or check their size or thickness and retry.\n"));
+        throw Slic3r::SlicingError(L("No layers were detected. You might want to repair your STL file(s) or check their size or thickness and retry.\n"),
+                                   "no_printable_layers", warning_object(this->model_object()->name));
 
     {
         const auto &pcfg = this->print()->config();
@@ -1592,14 +1593,14 @@ void PrintObject::slice_volumes()
         m_native_field = Nonplanar::slant_field(*this, choice);
         m_slant        = choice;
         if (!choice.planar_limit.empty())
-            this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL,
+            this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, WarningCode{ "slant_flat", warning_object(this->model_object()->name) },
                                           (boost::format(_u8L("Slant prints %1% in flat layers: %2%.")) % m_model_object->name % choice.reason).str());
     } else
         m_native_field = !m_multiplanar && (Nonplanar::native_requested() || m_config.nonplanar_mode.value == NonplanarMode::ConformalLayers) ?
                              Nonplanar::native_field(*this) : nullptr;
     m_field        = m_multiplanar || m_native_field ? nullptr : Nonplanar::clip_field_slices(*this);
     if (m_multiplanar && !m_multiplanar->auto_reason.empty())
-        this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, m_multiplanar->auto_reason);
+        this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, WarningCode{ "multiplanar_auto", warning_object(this->model_object()->name) }, m_multiplanar->auto_reason);
 
     BOOST_LOG_TRIVIAL(debug) << "Slicing volumes - removing top empty layers";
     const bool grounded = m_multiplanar != nullptr && !Nonplanar::grounded_route_slices(*this).empty();
@@ -1622,7 +1623,7 @@ void PrintObject::slice_volumes()
 
         if (m_config.xy_hole_compensation.value != 0.f || m_config.xy_contour_compensation.value != 0.f) {
             this->active_step_add_warning(
-                PrintStateBase::WarningLevel::CRITICAL,
+                PrintStateBase::WarningLevel::CRITICAL, WarningCode{ "xy_compensation_ignored_color", warning_object(this->model_object()->name) },
                 L("An object's XY size compensation will not be used because it is also color-painted.\nXY Size "
                   "compensation cannot be combined with color-painting."));
             BOOST_LOG_TRIVIAL(info) << "xy compensation will not work for object " << this->model_object()->name << " for multi filament.";
@@ -1635,7 +1636,7 @@ void PrintObject::slice_volumes()
     if (this->model_object()->is_fuzzy_skin_painted()) {
         if (m_config.xy_hole_compensation.value != 0.f || m_config.xy_contour_compensation.value != 0.f) {
             this->active_step_add_warning(
-                PrintStateBase::WarningLevel::CRITICAL,
+                PrintStateBase::WarningLevel::CRITICAL, WarningCode{ "xy_compensation_ignored_fuzzy", warning_object(this->model_object()->name) },
                 _u8L("An object has enabled XY Size compensation which will not be used because it is also fuzzy skin painted.\nXY Size "
                      "compensation cannot be combined with fuzzy skin painting.") +
                     "\n" + (_u8L("Object name")) + ": " + this->model_object()->name);

@@ -4,8 +4,11 @@ import (
 	"archive/zip"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -103,13 +106,77 @@ func (s *Server) bambuJobMapping(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if j.Request.Output != "gcode.3mf" || j.AwaitFinished(r.Context()) != StateDone {
-		fail(w, 409, "No finished Bambu .gcode.3mf package was found for this job.")
+		fail(w, 409, "no_finished_bambu_gcode")
 		return
 	}
 	mapping, err := readBambuJobMapping(j.OutputPath("gcode.3mf"))
 	if err != nil {
-		fail(w, 422, "Couldn't read the nozzle assignment from the sliced file: " + err.Error())
+		fail(w, 422, "couldnt_read_nozzle_assignment", err.Error())
 		return
 	}
 	writeJSON(w, 200, mapping)
+}
+
+func checkSendTopology(sliced *BambuJobMapping, submitted []int, status PrinterStatus, trays []int, printer string) error {
+	if submitted != nil && !slices.Equal(submitted, sliced.Filaments) {
+		return fmt.Errorf("Oops! This sliced file puts the filaments on nozzles %v, not the %v this job asked for. Give it another slice!", sliced.Filaments, submitted)
+	}
+	dual := slices.ContainsFunc(status.Nozzles, func(n NozzleStatus) bool { return n.Extruder > 0 })
+	side := func(e int) string {
+		if dual {
+			return []string{"left", "right"}[min(e, 1)] + " nozzle"
+		}
+		return "nozzle"
+	}
+	for _, m := range sliced.Materials {
+		if !m.Object && !m.Support || m.Slot < 1 || m.Slot > len(trays) || m.Slot > len(sliced.Filaments) {
+			continue
+		}
+		tray, nozzle := trays[m.Slot-1], sliced.Filaments[m.Slot-1]-1
+		i := slices.IndexFunc(status.Trays, func(t AMSTray) bool { return t.ID == tray })
+		if i < 0 {
+			return fmt.Errorf("Hmm, filament %d is mapped to a tray that %s isn't reporting right now. Pick a loaded tray instead!", m.Slot, printer)
+		}
+		if t := status.Trays[i]; dual && t.Extruder != nil && *t.Extruder != nozzle {
+			return fmt.Errorf("Filament %d is sliced for the %s, and its tray feeds the %s. Pick a tray on the %s!", m.Slot, side(nozzle), side(*t.Extruder), side(nozzle))
+		}
+		installed := []NozzleStatus{}
+		for _, n := range status.Nozzles {
+			if n.Extruder == nozzle && !n.Rack {
+				installed = append(installed, n)
+			}
+		}
+		if len(installed) == 0 {
+			if dual || nozzle > 0 {
+				return fmt.Errorf("%s isn't reporting a %s yet. Wait for it to report its nozzles, or slice for the ones it has.", printer, side(nozzle))
+			}
+			continue
+		}
+		n := installed[0]
+		if m.Diameter > 0 && math.Abs(n.Diameter-m.Diameter) > 1e-3 {
+			return fmt.Errorf("Heads up! The %s on %s is %g mm, while this slice is for %g mm. Slice again for the installed nozzle.", side(nozzle), printer, n.Diameter, m.Diameter)
+		}
+		if m.Flow != "" && n.Flow != "" && m.Flow != n.Flow {
+			return fmt.Errorf("Heads up! The %s on %s is %s, while this slice is for %s. Slice again for the installed nozzle.", side(nozzle), printer, n.Flow, m.Flow)
+		}
+	}
+	return nil
+}
+
+func (j *Job) submittedFilamentMap() []int {
+	for _, kv := range j.Request.Overrides {
+		if kv[0] != "filament_map" {
+			continue
+		}
+		out := []int{}
+		for _, t := range strings.Split(kv[1], ",") {
+			n, err := strconv.Atoi(strings.TrimSpace(t))
+			if err != nil {
+				return nil
+			}
+			out = append(out, n)
+		}
+		return out
+	}
+	return nil
 }

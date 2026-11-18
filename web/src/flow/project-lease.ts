@@ -1,4 +1,4 @@
-import { predecessorSessions, sessionId } from '../api/session';
+import { sessionId } from '../api/session';
 import { createMachine, useMachine } from './fsm';
 
 export interface LeaseHolder { label: string; since: number; lastSeen: number }
@@ -22,12 +22,11 @@ async function request(id: string, take: boolean) {
   inflight = true; clearTimeout(retryTimer); retryTimer = undefined;
   const same = (e: LeaseEvent) => lease.send(e);
   try {
-    const previous = await predecessorSessions();
     const response = await fetch(path(id), { method: 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json', 'X-Orca-Session': sessionId },
-      body: JSON.stringify({ session: sessionId, label: deviceLabel(), take, ...(previous.length ? { previous } : {}) }), signal: AbortSignal.timeout(10_000) });
+      body: JSON.stringify({ session: sessionId, label: deviceLabel(), take }), signal: AbortSignal.timeout(10_000) });
     const body = await response.json().catch(() => ({}));
-    if (response.ok || response.status === 404 || response.status === 405) return same({ type: 'GRANTED', id, heartbeatMs: body.heartbeatMs });
-    if (response.status === 409 && body.holder) return same({ type: body.code === 'lease_lost' ? 'LOST' : 'HELD', id, holder: body.holder });
+    if (response.ok || body.code === 'project_missing') return same({ type: 'GRANTED', id, heartbeatMs: body.heartbeatMs });
+    if (body.code === 'lease_held' || body.code === 'lease_lost') return same({ type: body.code === 'lease_lost' ? 'LOST' : 'HELD', id, holder: body.holder });
     throw new Error(`Session lock (${response.status})`);
   } catch {
     retryTimer = setTimeout(() => { retryTimer = undefined; lease.send({ type: 'RETRY', id }); }, 5_000);

@@ -1,4 +1,5 @@
 #include "Rests.hpp"
+#include "libslic3r/Nonplanar/Research.hpp"
 #include "MultiplanarConfirm.hpp"
 
 #include "ConformalShells.hpp"
@@ -220,7 +221,7 @@ private:
                 floats[i] = !this->rests(q.probe, q.probe.height, q.width, q.id) && !(q.surface && this->spans(q.probe, q.id));
             }
         });
-        static const bool dump = std::getenv("NP_FLOAT_DUMP") != nullptr;
+        static const bool dump = research_switch("NP_FLOAT_DUMP") != nullptr;
         for (size_t i = 0; i < m_pending.size(); ++i)
             if (floats[i]) {
                 m_floating.push_back(m_pending[i].id);

@@ -19,29 +19,33 @@ type PrinterMessage struct {
 }
 
 type PrinterStatus struct {
-	NozzleTemps []NozzleTemp       `json:"nozzle_temps,omitempty"`
-	Job         *deviceJob         `json:"job,omitempty"`
-	StartedAt   *time.Time         `json:"started_at,omitempty"`
-	SpeedMode   *int               `json:"speed_mode,omitempty"`
-	Light       *bool              `json:"light,omitempty"`
-	Messages    []PrinterMessage   `json:"messages,omitempty"`
-	Printer     string             `json:"printer"`
-	Online      bool               `json:"online"`
-	State       string             `json:"state"`
-	Detail      string             `json:"detail,omitempty"`
-	File        string             `json:"file,omitempty"`
-	Progress    *float64           `json:"progress,omitempty"`
-	Remaining   *int               `json:"remaining_s,omitempty"`
-	Layer       *int               `json:"layer,omitempty"`
-	Layers      *int               `json:"layers,omitempty"`
-	Nozzle      *Temp              `json:"nozzle,omitempty"`
-	Bed         *Temp              `json:"bed,omitempty"`
-	Chamber     *Temp              `json:"chamber,omitempty"`
-	Nozzles     []NozzleStatus     `json:"nozzles,omitempty"`
-	Fans        map[string]float64 `json:"fans,omitempty"`
-	Controls    *BambuControls     `json:"controls,omitempty"`
-	Trays       []AMSTray          `json:"trays,omitempty"`
-	At          time.Time          `json:"at"`
+	NozzleTemps    []NozzleTemp       `json:"nozzle_temps,omitempty"`
+	Job            *deviceJob         `json:"job,omitempty"`
+	StartedAt      *time.Time         `json:"started_at,omitempty"`
+	SpeedMode      *int               `json:"speed_mode,omitempty"`
+	Light          *bool              `json:"light,omitempty"`
+	Messages       []PrinterMessage   `json:"messages,omitempty"`
+	Printer        string             `json:"printer"`
+	Link           LinkState          `json:"link"`
+	Online         bool               `json:"online"`
+	State          string             `json:"state"`
+	Detail         string             `json:"detail,omitempty"`
+	File           string             `json:"file,omitempty"`
+	Progress       *float64           `json:"progress,omitempty"`
+	Elapsed        *int               `json:"elapsed_s,omitempty"`
+	FileEstimate   *int               `json:"file_estimate_s,omitempty"`
+	SlicerEstimate *int               `json:"slicer_estimate_s,omitempty"`
+	Remaining      *int               `json:"remaining_s,omitempty"`
+	Layer          *int               `json:"layer,omitempty"`
+	Layers         *int               `json:"layers,omitempty"`
+	Nozzle         *Temp              `json:"nozzle,omitempty"`
+	Bed            *Temp              `json:"bed,omitempty"`
+	Chamber        *Temp              `json:"chamber,omitempty"`
+	Nozzles        []NozzleStatus     `json:"nozzles,omitempty"`
+	Fans           map[string]float64 `json:"fans,omitempty"`
+	Controls       *BambuControls     `json:"controls,omitempty"`
+	Trays          []AMSTray          `json:"trays,omitempty"`
+	At             time.Time          `json:"at"`
 }
 
 type Temp struct {
@@ -182,65 +186,7 @@ func statusHTTP(ctx context.Context, h *hostSession, base *url.URL) (PrinterStat
 	st := PrinterStatus{Online: true}
 	switch h.printer.Kind {
 	case "moonraker":
-		var q struct {
-			Result struct {
-				Status struct {
-					PrintStats struct {
-						State    string  `json:"state"`
-						Filename string  `json:"filename"`
-						Duration float64 `json:"print_duration"`
-						Message  string  `json:"message"`
-						Info     struct {
-							Current *int `json:"current_layer"`
-							Total   *int `json:"total_layer"`
-						} `json:"info"`
-					} `json:"print_stats"`
-					SD struct {
-						Progress float64 `json:"progress"`
-					} `json:"virtual_sdcard"`
-					Extruder *struct {
-						Temperature float64 `json:"temperature"`
-						Target      float64 `json:"target"`
-					} `json:"extruder"`
-					Bed *struct {
-						Temperature float64 `json:"temperature"`
-						Target      float64 `json:"target"`
-					} `json:"heater_bed"`
-				} `json:"status"`
-			} `json:"result"`
-		}
-		code, err := h.call(ctx, "GET", base.JoinPath("/printer/objects/query").String()+"?print_stats&virtual_sdcard&extruder&heater_bed", nil, &q)
-		if code == 503 || code == 400 {
-			st.State, st.Detail = "error", strings.TrimPrefix(err.Error(), "the printer answered ")
-			return st, nil
-		}
-		if err != nil {
-			return st, err
-		}
-		s := q.Result.Status
-		st.Detail = s.PrintStats.State
-		st.State = map[string]string{"standby": "idle", "printing": "printing", "paused": "paused", "complete": "finished", "cancelled": "idle", "error": "failed"}[s.PrintStats.State]
-		if s.PrintStats.State == "error" && s.PrintStats.Message != "" {
-			st.Detail = s.PrintStats.Message
-		}
-		st.File = s.PrintStats.Filename
-		if st.State == "printing" || st.State == "paused" {
-			st.Progress = ptr(s.SD.Progress)
-			if s.SD.Progress > 0.001 {
-				st.Remaining = ptr(int(s.PrintStats.Duration/s.SD.Progress - s.PrintStats.Duration))
-			}
-		}
-		st.Layer, st.Layers = s.PrintStats.Info.Current, s.PrintStats.Info.Total
-		if s.PrintStats.Duration > 0 && (st.State == "printing" || st.State == "paused") {
-			started := time.Now().Add(-time.Duration(s.PrintStats.Duration * float64(time.Second))).UTC()
-			st.StartedAt = &started
-		}
-		if s.Extruder != nil {
-			st.Nozzle = &Temp{s.Extruder.Temperature, s.Extruder.Target}
-		}
-		if s.Bed != nil {
-			st.Bed = &Temp{s.Bed.Temperature, s.Bed.Target}
-		}
+		return statusMoonraker(ctx, h, base)
 	case "octoprint":
 		var job struct {
 			Job struct {

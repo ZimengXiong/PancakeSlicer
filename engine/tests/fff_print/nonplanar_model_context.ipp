@@ -247,11 +247,16 @@ Json context_presets(const DynamicPrintConfig &config, bool project)
         return Json{{"name", name.empty() ? Json(nullptr) : Json(name)}, {"source", project ? "project-embedded" : "catalog"},
                     {"settings_sha1", context_hash(values)}};
     };
-    Json result = {{"printer", preset(config.opt_string("printer_settings_id"), Preset::printer_options())},
-                   {"process", preset(config.opt_string("print_settings_id"), Preset::print_options())},
+    const auto id = [&config](const char *key) {
+        const auto *option = config.option<ConfigOptionString>(key);
+        return option != nullptr ? option->value : std::string();
+    };
+    Json result = {{"printer", preset(id("printer_settings_id"), Preset::printer_options())},
+                   {"process", preset(id("print_settings_id"), Preset::print_options())},
                    {"filaments", Json::array()}};
     const auto *names = config.option<ConfigOptionStrings>("filament_settings_id");
-    const size_t slots = config.option<ConfigOptionFloats>("filament_diameter")->values.size();
+    const auto *diameters = config.option<ConfigOptionFloats>("filament_diameter");
+    const size_t slots = diameters != nullptr ? diameters->values.size() : 0;
     for (size_t i = 0; i < slots; ++i) {
         Json filament = preset(names && i < names->values.size() ? names->values[i] : std::string(),
                                Preset::filament_options(), int(i));

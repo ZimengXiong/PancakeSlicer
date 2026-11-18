@@ -15,7 +15,7 @@ export function tabEnvironment(state: State, type: PresetType, slot: number, mod
   }, mode);
 }
 
-export const nativeSupportCapable = (state: State) => !!state.features.native_support && !!resolvePreset(state, 'machine', state.printer).base?.native_support_capable;
+export const nativeSupportCapable = (state: State) => !!resolvePreset(state, 'machine', state.printer).base?.native_support_capable;
 
 export function lineMode(line: TabLine, k: string): OptionMode | undefined {
   const key = splitKey(k)[0];

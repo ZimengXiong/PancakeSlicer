@@ -1,9 +1,9 @@
 import type { Config, ConfigValue, PresetType } from '../api/types';
 import { normalizeConfigValue } from '../config-values';
+import type { NozzleRecord, PrinterRecord } from '../profiles/records';
 import { filament_options_with_variant, printer_extruder_options, printer_options_with_variant_1, printer_options_with_variant_2, print_options_with_variant } from './variant-keys';
 
 export const valuesOf = (value: ConfigValue | undefined): string[] => value === undefined ? [] : (Array.isArray(value) ? value : String(value).split(/[;,]/)).map(String);
-export const extruderCount = (config: Config) => Math.max(1, valuesOf(config.nozzle_diameter).length);
 export const extruderLabel = (index: number, count: number, bambu: boolean) => bambu && count === 2 ? `${index === 0 ? 'Left' : 'Right'} nozzle` : `Extruder ${index + 1}`;
 
 export function valueAt(value: ConfigValue | undefined, index: number, fallback = ''): string {
@@ -22,8 +22,8 @@ export function variantsOf(config: Config, type: PresetType): string[] {
   return valuesOf(config[`${prefix(type)}_extruder_variant`]);
 }
 
-export function installedVariant(config: Config, type: PresetType, machine: Config, extruder: number): number {
-  const name = `${valueAt(machine.extruder_type, extruder, 'Direct Drive')} ${valueAt(machine.nozzle_volume_type ?? machine.default_nozzle_volume_type, extruder, 'Standard')}`;
+export function installedVariant(config: Config, type: PresetType, nozzle: NozzleRecord | undefined, extruder: number): number {
+  const name = `${nozzle?.type ?? 'Direct Drive'} ${nozzle?.volume ?? 'Standard'}`;
   const variants = variantsOf(config, type);
   const ids = valuesOf(config[type === 'machine' ? 'printer_extruder_id' : 'print_extruder_id']);
   const index = variants.findIndex((v, i) => v === name && (type === 'filament' || Number(ids[i] ?? 1) === extruder + 1));
@@ -50,7 +50,16 @@ export function optionIndex(key: string, type: PresetType, config: Config, selec
   if (type === 'process') return print_options_with_variant.has(key) ? variant : null;
   if (printer_options_with_variant_2.has(key)) return variant * 2 + column;
   if (printer_options_with_variant_1.has(key)) return variant;
-  return printer_extruder_options.has(key) || key === 'extruder_offset' ? Math.min(selection.extruder, extruderCount(config) - 1) : null;
+  return printer_extruder_options.has(key) || key === 'extruder_offset' ? selection.extruder : null;
+}
+
+export function nozzleElements(key: string, type: PresetType, config: Config, printer: PrinterRecord | undefined): { index: number; label?: string }[] {
+  const count = Math.max(1, printer?.nozzles.length ?? 1);
+  if (optionIndex(key, type, config, { extruder: 0, variant: 0 }) === null) return [{ index: 0 }];
+  return Array.from({ length: count }, (_, e) => ({
+    index: optionIndex(key, type, config, { extruder: e, variant: installedVariant(config, type, printer?.nozzles[e], e) })!,
+    label: count > 1 ? extruderLabel(e, count, printer?.vendor === 'BBL').replace(/ nozzle$/, '') : undefined,
+  }));
 }
 
 export function selectedOptionValues(config: Config, type: PresetType, selection: ExtruderSelection): Config {

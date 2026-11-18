@@ -197,7 +197,7 @@ void Print::_plan_belt_purge()
 
     if (total_leftover > 1.f) {
         this->active_step_add_warning(
-            PrintStateBase::WarningLevel::CRITICAL,
+            PrintStateBase::WarningLevel::CRITICAL, WarningCode{ "belt_purge_overflow" },
             Slic3r::format(_u8L("The belt purge tower cannot absorb the full purge volume: %1% mm³ in total could not "
                                 "be purged (worst layer: %2% mm³ at height %3%). The print may show color bleeding. "
                                 "Increase the belt purge tower width, or reduce flushing volumes."),

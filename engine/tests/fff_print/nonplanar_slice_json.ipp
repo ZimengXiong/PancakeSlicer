@@ -142,7 +142,7 @@ void slice_json_record(Json &record, const Args &args)
 {
     record = {{"schema", "orca.nonplanar_slice.v1"}, {"status", "started"},
               {"inputs", {{"printer", args.printer}, {"process", args.process}, {"filaments", args.filaments},
-                          {"vendor", args.vendor}, {"overrides", args.overrides}, {"mode", nullptr}, {"deform", nullptr}, {"head", nullptr}, {"atom_toolpath", nullptr},
+                          {"catalog", args.catalog}, {"overrides", args.overrides}, {"mode", nullptr}, {"deform", nullptr}, {"head", nullptr}, {"atom_toolpath", nullptr},
                           {"source_sha", std::string(GIT_COMMIT_FULL_HASH).empty() ? Json(nullptr) : Json(GIT_COMMIT_FULL_HASH)},
                           {"checkout_sha", git_sha("HEAD")}, {"trunk_sha", git_sha("refs/heads/nonplanar")}}},
               {"results", {{"patches", Json::array()}}}, {"objects", Json::array()},
@@ -212,11 +212,10 @@ struct SliceGrid : Nonplanar::TopSurfaceGrid
                 const size_t k = size_t(y) * nx + x;
                 ++total;
                 if (!eligible[k]) continue;
-                const double error = bead[k] - mesh[k];
-                if (cliff[k] && std::abs(error) > 1.) continue;
                 ++eligible_cells;
                 z += mesh[k];
                 if (!owner.empty()) ++votes[owner[k]];
+                const double error = bead[k] - mesh[k];
                 if (!std::isfinite(error)) continue;
                 ++measured; squared += error * error; sum += error; curved_cells += conformal[k];
             }

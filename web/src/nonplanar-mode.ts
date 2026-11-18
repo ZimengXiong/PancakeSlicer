@@ -7,6 +7,6 @@ export const MODE_HELP: Record<string, string> = {
   auto: 'Auto: tests different slicing styles on each part and picks the cleanest result.',
   nonplanar_top: 'Curved tops: smoothly curves the top layers (3 by default) over gentle slopes where the print head has room.',
   smooth_morph: 'Smooth morph: gradually blends layers from flat at the bed to curved at the top. Great for domes and lids (up to 1.4× print time).',
-  conformal_layers: 'Conformal layers (experimental): the top shells follow each gentle top at one thickness, as one unbroken layer.',
-  slant: 'Slant (experimental): a flat first layer, then each layer tilts a little more, up to the head\'s limit.',
+  conformal_layers: 'Conformal layers (experimental): top shells follow every gentle curve at an even thickness, all in one unbroken layer.',
+  slant: 'Slant (experimental): starts with a flat first layer, then tilts each layer a bit more up to your print head\'s limit.',
 };

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "libslic3r/WarningCode.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -24,8 +25,8 @@ void stage_cache_prime(Print &print);
 void stage_cache_record(const Print &print);
 void stage_cache_converged(const Print &print, bool converged, const std::map<size_t, std::vector<std::string>> &access_warnings);
 std::vector<std::string> stage_cache_access_warnings(size_t object_id);
-void stage_cache_note_guard_warnings(const Print &print, const std::vector<std::string> &warnings);
-std::vector<std::string> stage_cache_guard_warnings(const Print &print);
+void stage_cache_note_guard_warnings(const Print &print, const std::vector<CodedWarning> &warnings);
+std::vector<CodedWarning> stage_cache_guard_warnings(const Print &print);
 
 }
 }

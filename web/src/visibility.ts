@@ -89,7 +89,6 @@ function envValue(configs: Config[], key: string): unknown {
   const def = OPTIONS[key];
   let v: unknown;
   for (let i = configs.length - 1; i >= 0; i--) if (Object.hasOwn(configs[i], key)) { v = configs[i][key]; break; }
-  v ??= def.nullable ? null : def.default;
   if (Array.isArray(v)) v = v[0];
   if (def.nullable && (v === 'nil' || v === '')) v = null;
   if (v && typeof v === 'object' && 'value' in v) v = v.value;

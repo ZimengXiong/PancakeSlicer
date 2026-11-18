@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "revision": 1,
+  "revisionAbout": "Raise revision on every change: a library saved under a higher revision was saved by a newer PancakeSlicer, which an older one reports when it opens it.",
+  "about": "How each printer model is fed: its AMS unit, the unit's slots, how many units attach, and whether the external spool works beside them. exclusive: the external spool shares the AMS feed path, so a printer shows either the AMS slots or External. perNozzle: each nozzle has its own external spool beside the AMS units fed to it. Models not listed have no AMS: their slots are the ones the user adds.",
+  "models": {
+    "Bambu Lab A1 mini": { "unit": "AMS lite", "slots": 4, "maxUnits": 1, "external": "exclusive" },
+    "Bambu Lab A1": { "unit": "AMS lite", "slots": 4, "maxUnits": 1, "external": "exclusive" },
+    "Bambu Lab P1P": { "unit": "AMS", "slots": 4, "maxUnits": 4, "external": "exclusive" },
+    "Bambu Lab P1S": { "unit": "AMS", "slots": 4, "maxUnits": 4, "external": "exclusive" },
+    "Bambu Lab X1": { "unit": "AMS", "slots": 4, "maxUnits": 4, "external": "exclusive" },
+    "Bambu Lab X1 Carbon": { "unit": "AMS", "slots": 4, "maxUnits": 4, "external": "exclusive" },
+    "Bambu Lab X1E": { "unit": "AMS", "slots": 4, "maxUnits": 4, "external": "exclusive" },
+    "Bambu Lab H2D": { "unit": "AMS", "slots": 4, "maxUnits": 4, "external": "perNozzle", "nozzles": ["Left", "Right"] },
+    "Bambu Lab H2D Pro": { "unit": "AMS", "slots": 4, "maxUnits": 4, "external": "perNozzle", "nozzles": ["Left", "Right"] },
+    "Bambu Lab P2S": { "unit": "AMS", "slots": 4, "maxUnits": 4, "external": "exclusive" },
+    "Bambu Lab H2S": { "unit": "AMS", "slots": 4, "maxUnits": 4, "external": "exclusive" },
+    "Bambu Lab X2D": { "unit": "AMS", "slots": 4, "maxUnits": 4, "external": "perNozzle", "nozzles": ["Main", "Auxiliary"] },
+    "Bambu Lab H2C": { "unit": "AMS", "slots": 4, "maxUnits": 4, "external": "perNozzle", "nozzles": ["Left", "Right"] },
+    "Bambu Lab A2L": { "unit": "AMS lite", "slots": 4, "maxUnits": 1, "external": "exclusive" }
+  }
+}

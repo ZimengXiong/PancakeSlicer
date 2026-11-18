@@ -55,22 +55,22 @@ func (s *Server) deviceJob(st PrinterStatus) *deviceJob {
 func (s *Server) printerJobThumbnail(w http.ResponseWriter, r *http.Request) {
 	st, ok := s.sends.hub.current(r.PathValue("printer"))
 	if !ok {
-		fail(w, 404, "No active print job.")
+		fail(w, 404, "no_active_print_job")
 		return
 	}
 	job := s.deviceJob(st)
 	if job == nil {
-		fail(w, 404, "This print wasn't started from this server.")
+		fail(w, 404, "print_wasnt_started_server")
 		return
 	}
 	j := s.jobs.Get(job.ID)
 	if j == nil {
-		fail(w, 404, "This job has expired.")
+		fail(w, 404, "job_has_expired")
 		return
 	}
 	z, err := zip.OpenReader(j.OutputPath("gcode.3mf"))
 	if err != nil {
-		fail(w, 404, "No thumbnail available for this job.")
+		fail(w, 404, "no_thumbnail_available_job")
 		return
 	}
 	defer z.Close()
@@ -89,7 +89,7 @@ func (s *Server) printerJobThumbnail(w http.ResponseWriter, r *http.Request) {
 		io.Copy(w, io.LimitReader(reader, 4<<20))
 		return
 	}
-	fail(w, 404, "No thumbnail available for this job.")
+	fail(w, 404, "no_thumbnail_available_job")
 }
 
 func controlHostDevice(ctx context.Context, p *PrinterConfig, secret string, in bambuControlRequest) error {

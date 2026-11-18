@@ -95,18 +95,18 @@ func (s *Server) topSurfaces(w http.ResponseWriter, r *http.Request) {
 		} `json:"meshes"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req) != nil || len(req.Meshes) == 0 || len(req.Meshes) > 256 {
-		fail(w, 400, `expected {"head", "mode", "max_angle", "min_area", "ignore_duct", "meshes": [{"sha256", "rot_z"}...]}`)
+		fail(w, 400, "expected_head_mode_max")
 		return
 	}
 	if !validHeadID(req.Head) {
-		fail(w, 400, "This printer doesn't have a 3D print head model yet, so top-surface clearance can't be previewed.")
+		fail(w, 400, "printer_doesnt_have_3d")
 		return
 	}
 	var missing []string
 	for _, m := range req.Meshes {
 		sum := m.SHA256
 		if !blobDigest.MatchString(sum) {
-			fail(w, 400, "meshes must be lowercase hex SHA-256 digests")
+			fail(w, 400, "meshes_must_lowercase_hex")
 			return
 		}
 		if !s.blobs.has(sum) {
@@ -119,7 +119,7 @@ func (s *Server) topSurfaces(w http.ResponseWriter, r *http.Request) {
 	}
 	reach, err := loadHeadReach(s.cfg, req.Head)
 	if err != nil {
-		fail(w, 422, err.Error())
+		fail(w, 422, "top_surfaces_unprocessable", err.Error())
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)

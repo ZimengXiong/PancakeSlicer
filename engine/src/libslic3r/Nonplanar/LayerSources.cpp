@@ -802,7 +802,7 @@ std::unique_ptr<LayerField> build_smooth_morph(const PrintObject &object, std::s
             double z = levels[size_t(k)][n];
             if (k > 0) {
                 const double prev = offset + field.data()[size_t(k - 1) * N + n];
-                z = std::clamp(z, prev + 0.25 * P.h, prev + 1.1 * P.h);
+                z = std::clamp(z, prev + 0.25 * P.h, prev + P.max_ratio * P.h);
             }
             field.data()[size_t(k) * N + n] = float(z - offset);
         }

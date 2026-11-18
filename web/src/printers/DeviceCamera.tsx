@@ -89,10 +89,10 @@ export function DeviceCamera({ printer, cover, light, lightLabel, cameraLabel, b
     const why = error.replace(/^Camera unavailable\.?\s*/i, '');
     return <section className="device-camera device-camera-off" aria-label="Camera"><PrinterStill cover={cover} />
       {error && <div className="device-camera-why" role="status"><strong>Camera unavailable</strong>{why && <span>{why}</span>}
-        <button type="button" className="btn slant" onClick={() => retry(attempt + 1)}>Reconnect</button></div>}</section>;
+        <button type="button" className="btn" onClick={() => retry(attempt + 1)}>Reconnect</button></div>}</section>;
   }
   return <section ref={frame} className={`device-camera ${watching ? '' : 'camera-hidden'}`} aria-label="Camera">
-    {!watching ? <div className="device-camera-hidden"><span>Camera hidden</span><button type="button" className="btn slant" onClick={() => watch(true)}>Show camera</button></div>
+    {!watching ? <div className="device-camera-hidden"><span>Camera hidden</span><button type="button" className="btn" onClick={() => watch(true)}>Show camera</button></div>
       : <><div className="device-camera-frame" style={{ aspectRatio: ratio }}>
         {loading ? <p role="status">Connecting camera…</p>
           : !camera ? <p>No LAN camera set up</p>

@@ -1,6 +1,12 @@
 :where(.orca-parity) .project-title { width: 100%; min-width: 0; height: var(--h-compact); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, max-content) minmax(min-content, 1fr); align-items: center; column-gap: var(--s-2); }
 :where(.orca-parity) .pt-folder { justify-self: end; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); font: var(--t-body); }
 :where(.orca-parity) .pt-end { justify-self: start; min-width: 0; display: flex; align-items: center; }
+@media (max-width: 1179px) {
+  :where(.orca-parity) .project-title { grid-template-columns: 0 minmax(0, max-content) minmax(32px, 1fr); }
+  :where(.orca-parity) .pt-folder { visibility: hidden; }
+  :where(.orca-parity) .pt-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  :where(.orca-parity) .pt-status { padding: 0 var(--s-2); }
+}
 
 :where(.orca-parity) .pt-box { box-sizing: border-box; height: var(--h-compact); max-width: min(40vw, 100%); min-width: 0; padding: 0 var(--s-3); border: 1px solid transparent; border-radius: var(--control-radius); background: transparent; color: var(--ink); font: var(--t-body); }
 :where(.orca-parity) .pt-name { display: inline-flex; align-items: center; gap: var(--s-2); overflow: hidden; cursor: text; }

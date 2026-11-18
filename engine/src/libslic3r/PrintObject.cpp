@@ -1,4 +1,5 @@
 #include "Nonplanar/CurvedTopsSurface.hpp"
+#include "libslic3r/Nonplanar/Research.hpp"
 #include "Nonplanar/CurvedTopsContinuous.hpp"
 #include <cfloat>
 #include "ExPolygon.hpp"
@@ -867,7 +868,7 @@ void PrintObject::nonplanar_shells()
         std::string why;
         if (Nonplanar::build_deform_slice(*this, *conformal, &why)) {
             if (!why.empty())
-                this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, this->model_object()->name + ": " + why + ".");
+                this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, WarningCode{ "smooth_morph_limited", warning_object(this->model_object()->name) }, this->model_object()->name + ": " + why + ".");
             m_conformal = std::move(conformal);
             record_apply_inputs();
             m_print->throw_if_canceled();
@@ -877,7 +878,7 @@ void PrintObject::nonplanar_shells()
         if (m_config.nonplanar_mode.value == NonplanarMode::SmoothMorph)
             throw Slic3r::SlicingError(Slic3r::format(L("%1%: Smooth morph could not slice this part (%2%)."),
                                                     this->model_object()->name, why));
-        this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL,
+        this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, WarningCode{ "curved_shells_only", warning_object(this->model_object()->name) },
                                       Slic3r::format(L("%1%: could not curve the whole part (%2%); curving the top shells only."),
                                              this->model_object()->name, why));
         deform_refused = this->config().nonplanar_deform.serialize() + ": " + why;
@@ -928,7 +929,7 @@ void PrintObject::nonplanar_shells()
         m_conformal = std::make_unique<Nonplanar::ConformalResult>();
         m_print->set_status(40, L("Importing the Atomizer toolpath"));
         for (const std::string &warning : Nonplanar::apply_atom_toolpath(*this, *m_conformal))
-            this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, warning);
+            this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, WarningCode{ "atom_toolpath_note", warning_object(this->model_object()->name) }, warning);
     }
     if (!imported && Nonplanar::rotary_route_appends(*this)) {
         const bool fresh = !m_conformal;
@@ -1102,7 +1103,7 @@ void PrintObject::contour_z()
     m_print->throw_if_canceled();
     Nonplanar::texture_tops(*this);
     if (const std::string why = Nonplanar::split_sublayer_walls(*this); !why.empty())
-        this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, this->model_object()->name + ": " + why + ".");
+        this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, WarningCode{ "sublayer_walls_skipped", warning_object(this->model_object()->name) }, this->model_object()->name + ": " + why + ".");
     BOOST_LOG_TRIVIAL(debug) << "Contouring in parallel - end";
 
     this->set_done(posContouring);
@@ -1269,7 +1270,7 @@ void PrintObject::generate_support_material(bool with_belt_brim)
                     {LargeOverhang,L("large overhangs")} };
                 std::string warning_message = Slic3r::format(L("Looks like %s has %s. Try rotating it or turning on supports."),
                     this->model_object()->name, reasons[sntype]);
-                this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, warning_message, PrintStateBase::SlicingNeedSupportOn);
+                this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, WarningCode{ sntype == SharpTail ? "floating_regions" : sntype == Cantilever ? "floating_cantilever" : "large_overhangs", warning_object(this->model_object()->name) }, warning_message, PrintStateBase::SlicingNeedSupportOn);
             }
 
 #if 0
@@ -1333,12 +1334,12 @@ void PrintObject::generate_support_material(bool with_belt_brim)
                         message = Slic3r::format(L("Looks like %s has %s. Try rotating it or turning on supports."),
                                                  this->model_object()->name,
                                                  m_auto_support_need == SharpTail ? L("floating regions") : L("floating cantilever"));
-                        this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, message, PrintStateBase::SlicingNeedSupportOn);
+                        this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, WarningCode{ m_auto_support_need == SharpTail ? "floating_regions" : "floating_cantilever", warning_object(this->model_object()->name) }, message, PrintStateBase::SlicingNeedSupportOn);
                     }
                 } else {
                     message = (boost::format(_u8L("Support added: %1% would float without it (%2$.0f mm³).")) %
                                this->model_object()->name % volume).str();
-                    this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, message);
+                    this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, WarningCode{ "support_added", warning_object(this->model_object()->name), nlohmann::json{ { "volume_mm3", volume } }.dump() }, message);
                 }
                 m_auto_support_volume = m_auto_support_applied ? volume : 0.;
                 BOOST_LOG_TRIVIAL(warning) << "Auto support " << this->model_object()->name << ": " << volume << " mm3 kept "
@@ -1364,7 +1365,7 @@ void PrintObject::generate_support_material(bool with_belt_brim)
             !m_print->config().spiral_mode.value) {
             const double band   = this->wall_band();
             static const bool uniform = [] {
-                const char *v = std::getenv("NP_AUTO_UNIFORM");
+                const char *v = research_switch("NP_AUTO_UNIFORM");
                 return v != nullptr && *v != 0 && *v != '0';
             }();
             m_auto_band_demoted = band >= WallBand && !uniform;
@@ -1384,7 +1385,7 @@ void PrintObject::generate_support_material(bool with_belt_brim)
                 m_auto_floating_demoted = planar.part >= 0. && Nonplanar::floats_past_bar(curved, planar);
                 if (!user_support)
                     if (const std::string why = Nonplanar::may_need_support(this->model_object()->name, planar); !why.empty())
-                        this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, why);
+                        this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, WarningCode{ "may_need_support", warning_object(this->model_object()->name) }, why);
                 BOOST_LOG_TRIVIAL(warning) << "Auto floating " << this->model_object()->name << ": " << curved.part
                                            << " mm of part road in air (support " << curved.support << ") against the planar control's "
                                            << planar.part << " + " << planar.support << " (" << planar.air << " into the air)"
@@ -3050,11 +3051,21 @@ PrintObject::detect_nonplanar_surfaces()
                                 if (s.is_nonplanar())
                                     polygons_append(owned, to_polygons(s.expolygon));
                             if (! owned.empty()) {
+                                owned = union_(owned);
+                                const BoundingBox owned_box = get_extents(owned);
                                 Surfaces unclaimed;
                                 double overlap = 0;
                                 for (const Surface &piece : topNonplanar.surfaces) {
-                                    overlap += area(intersection(to_polygons(piece.expolygon), owned));
-                                    surfaces_append(unclaimed, diff_ex(piece.expolygon, owned, ApplySafetyOffset::No), piece);
+                                    const BoundingBox piece_box = get_extents(piece.expolygon);
+                                    if (! owned_box.overlap(piece_box)) {
+                                        unclaimed.push_back(piece);
+                                        continue;
+                                    }
+                                    ExPolygons rest = diff_ex(piece.expolygon,
+                                        ClipperUtils::clip_clipper_polygons_with_subject_bbox(owned, piece_box.inflated(SCALED_EPSILON)),
+                                        ApplySafetyOffset::No);
+                                    overlap += std::max(0., piece.expolygon.area() - area(rest));
+                                    surfaces_append(unclaimed, std::move(rest), piece);
                                 }
                                 if (overlap > 0)
                                     BOOST_LOG_TRIVIAL(warning) << "Nonplanar surface " << nonplanar_surface.stable_id
@@ -4950,7 +4961,7 @@ PrintObjectConfig PrintObject::object_config_from_model_object(const PrintObject
         config.support_style.value = smsDefault;
     if (config.support_style.value == smsNative && config.enable_support.value && config.nonplanar_mode.value == NonplanarMode::Auto)
         config.nonplanar_mode.value = NonplanarMode::Off;
-    static const bool legacy = std::getenv("NP_AUTO_LEGACY") != nullptr;
+    static const bool legacy = research_switch("NP_AUTO_LEGACY") != nullptr;
     const bool fixed_head = printer != nullptr && printer->nonplanar_kinematics.value == RotaryLayout::None;
     auto morph = [&]() {
         return !config.enable_support.value && !printer->nonplanar_head.value.empty() && !printer->spiral_mode.value &&

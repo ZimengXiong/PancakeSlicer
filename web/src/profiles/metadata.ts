@@ -1,10 +1,9 @@
 import type { Config, PresetType } from '../api/types';
-import { SEP } from '../separator';
+import { joinParts, SEP } from '../separator';
 const first = (v: unknown) => String(Array.isArray(v) ? v[0] ?? '' : v ?? '');
-export const PROFILE_ROLE: Record<PresetType, string> = {machine: 'Printer', filament: 'Filament', process: 'Print settings'};
 export function profileSummary(type: PresetType, config: Config, model?: string): string {
   if (type === 'machine') return [model || first(config.printer_model), first(config.nozzle_diameter) && `${first(config.nozzle_diameter)} mm nozzle`].filter(Boolean).join(SEP);
-  if (type === 'filament') return [first(config.filament_type), first(config.filament_vendor) !== 'Generic' ? first(config.filament_vendor) : ''].filter(Boolean).join(SEP);
+  if (type === 'filament') return first(config.filament_type);
   const height = Number(first(config.layer_height));
   const mode = first(config.nonplanar_mode), wave = first(config.nonplanar_wave);
   const top = wave && wave !== 'off' ? 'Waves' : mode === 'nonplanar_top' ? 'Curved top' : mode === 'off' || !mode ? 'Flat' : mode === 'auto' ? 'Automatic' : 'Custom surface';
@@ -36,20 +35,17 @@ export function printerLine(config: Config, vendor: string, model?: string): str
 export function processMode(config: Config): string {
   return profileSummary('process', config).split(SEP).pop() ?? '';
 }
-export function processTitle(name: string, config: Config, scoped: boolean): string {
-  let title = name;
-  const lead = /^(\d+(?:\.\d+)?)\s*mm\s+/i.exec(title);
-  if (lead && Number(lead[1]) === Number(first(config.layer_height))) title = title.slice(lead[0].length);
-  if (scoped) title = title.replace(/\s*@.*$/, '');
-  return title.trim() || name;
-}
 
 export const DEFAULT_FILAMENT_COLOUR = '#F2754E';
-export function profileColour(config:Config):string {
-  for (const value of [config.filament_colour, config.default_filament_colour]) { const v = first(value); if (/^#[\da-f]{6}/i.test(v)) return v.slice(0, 7).toUpperCase(); }
-  return DEFAULT_FILAMENT_COLOUR;
-}
 export function printerCover(vendor:string,config:Config,model?:string):string|undefined {
-  const actual=first(config.printer_model) || model;
+  const actual=model || first(config.printer_model);
   return vendor && actual ? `/profiles/${encodeURIComponent(vendor)}/${encodeURIComponent(actual)}_cover.png` : undefined;
+}
+
+const withoutVendor = (name: string, brand: string) => brand && name.startsWith(`${brand} `) ? name.slice(brand.length + 1) : name;
+export const printerShortName = (name: string, config: Config, vendor: string) => withoutVendor(name, vendorLabel(config, vendor)).replace(/\s+\d+(\.\d+)?\s*(mm\s*)?nozzle$/i, '');
+export function printerTrigger(p: { vendor: string; model: string; variant: string; nozzle?: number; nozzles?: number[] }): { name: string; sub: string } {
+  const size = p.nozzles && p.nozzles.length === 2 ? `L${p.nozzles[0]} R${p.nozzles[1]}` : p.nozzles && p.nozzles.length > 2 ? `${p.nozzles.join(' / ')} mm` : p.nozzle ? `${p.nozzle} mm` : '';
+  return { name: printerShortName(p.variant, {}, p.vendor),
+    sub: joinParts([rowDetail(p.variant, [{ value: modelLabel({}, p.vendor, p.model) }]), size]) };
 }

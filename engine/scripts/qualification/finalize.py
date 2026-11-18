@@ -38,8 +38,11 @@ def main():
     if not proof.get('ready'):
         raise RuntimeError('Qualification did not pass; no ready manifest is written')
     cross_platform = proof['platform'] != {'os':'linux','arch':'x86_64'}
-    if cross_platform and not all(proof['identity'][name].get('geometry',{}).get('passed') is True for name in ['benchy_flat','benchy']):
-        raise RuntimeError('Cross-platform flat and curved Benchy geometric equivalence did not pass')
+    failed = {name:geometry.failures(proof['identity'][name]['geometry']) if 'geometry' in proof['identity'][name] else ['no geometric comparison']
+              for name in ['benchy_flat','benchy'] if proof['identity'][name].get('geometry',{}).get('passed') is not True}
+    if cross_platform and failed:
+        raise RuntimeError('Cross-platform flat and curved Benchy geometric equivalence did not pass: ' +
+                           '; '.join(f'{name}: ' + ', '.join(reasons) for name,reasons in failed.items()))
     if not cross_platform and proof['identity']['benchy_flat']['gcode']['identity'] not in {'byte','normalized'}:
         raise RuntimeError('Same-platform flat Benchy identity did not pass')
     equivalence = {name:geometry.summary(proof['identity'][name]) for name in ['benchy_flat','benchy']} if cross_platform else None

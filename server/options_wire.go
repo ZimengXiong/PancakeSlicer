@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"time"
+
+	"github.com/OrcaSlicer/OrcaSlicer/server/resolve"
 )
 
 const optionsWireSchema = "orca.options.v2"
 
-func registerOptions(mux *http.ServeMux, dump *cachedResponse, devReset bool) {
+func registerOptions(mux *http.ServeMux, dump *cachedResponse, catalog *resolve.Catalog, devReset bool) {
 	var defs map[string]map[string]json.RawMessage
 	if err := json.Unmarshal(dump.plain, &defs); err != nil {
 		panic("option dictionary: " + err.Error())
@@ -22,6 +24,7 @@ func registerOptions(mux *http.ServeMux, dump *cachedResponse, devReset bool) {
 			tips[key] = tip
 		}
 		delete(def, "tooltip")
+		def["records"], _ = json.Marshal(catalog.RecordKinds(key))
 	}
 	tipsBody, _ := json.Marshal(tips)
 	sum := sha256.Sum256(tipsBody)

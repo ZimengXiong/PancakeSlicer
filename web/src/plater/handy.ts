@@ -28,7 +28,7 @@ export async function importFetched(label: string, sources: [url: string, name: 
     await importFiles(files);
     if (arrange && generation === documentGeneration()) arrangeAll(false);
   } catch (e) {
-    toast(e instanceof Error ? e.message : String(e));
+    toast('couldnt_load_2', { label, detail: e instanceof Error ? e.message : String(e) });
   } finally {
     busy.end();
   }

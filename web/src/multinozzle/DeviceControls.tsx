@@ -22,7 +22,7 @@ function DeviceValue({ printer, control, fan, label, actual, unit, min, max }: {
     if (!valid || pending) return;
     setPending(true);
     try { await controlDevice(printer, { control, fan, value }); }
-    catch (error) { toast(error instanceof Error ? error.message : String(error)); }
+    catch (error) { toast('devicecontrols_failed', { detail: error instanceof Error ? error.message : String(error) }); }
     finally { setPending(false); }
   }}>
     <label htmlFor={id}>{label}</label><span className="opt-field">

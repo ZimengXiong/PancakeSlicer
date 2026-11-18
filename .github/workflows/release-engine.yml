@@ -1,0 +1,143 @@
+name: Release engine
+
+# One target's compiled nonplanar_slice_tool: fetched from the prebuilt store, or built (with its native
+# dependencies) and published there. release.yml calls this once per target so each platform's packaging
+# can start the moment its own engine is ready.
+on:
+  workflow_call:
+    inputs:
+      target: {type: string, required: true}
+      os: {type: string, required: true}
+      arch: {type: string, required: true}
+      runner: {type: string, required: true}
+      deps_from_run: {type: string, default: ''}
+      deps_targets: {type: string, default: ''}
+
+permissions:
+  contents: write
+
+env:
+  CMAKE_POLICY_VERSION_MINIMUM: '3.10'
+  CMAKE_BUILD_PARALLEL_LEVEL: '4'
+  PYTHONUTF8: '1'
+
+jobs:
+  engine:
+    name: engine ${{ inputs.target }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 240
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPILERCHECK: content
+      CCACHE_SLOPPINESS: pch_defines,time_macros,include_file_mtime,include_file_ctime
+      CCACHE_DEPEND: '1'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Name the prebuilt assets
+        id: keys
+        run: .github/scripts/build/keys.sh ${{ inputs.target }} ${{ inputs.os }}
+      - name: Fetch the compiled engine
+        id: engine
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          rc=0; .github/scripts/build/prebuilt.sh fetch "${{ steps.keys.outputs.engine }}" build-native/tool || rc=$?
+          case $rc in 0) echo "hit=true" >> "$GITHUB_OUTPUT" ;; 3) echo "hit=false" >> "$GITHUB_OUTPUT" ;; *) exit $rc ;; esac
+
+      - name: Install build tools (macOS)
+        if: steps.engine.outputs.hit == 'false' && runner.os == 'macOS'
+        run: brew install automake texinfo libtool pkgconf nasm ninja xz ccache
+      - name: Install build tools (Linux)
+        if: steps.engine.outputs.hit == 'false' && runner.os == 'Linux'
+        run: |
+          .github/scripts/build/apt-install.sh build-essential cmake ninja-build autoconf automake libtool texinfo \
+            pkgconf nasm yasm gettext ccache libcurl4-openssl-dev libssl-dev libgl-dev libdbus-1-dev libfontconfig1-dev \
+            libfreetype-dev libx11-dev libudev-dev libva-dev libjpeg-turbo8-dev liblzma-dev \
+            libxkbcommon-dev libwayland-dev wayland-protocols extra-cmake-modules libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libegl-dev
+      - name: Install build tools (Windows)
+        if: steps.engine.outputs.hit == 'false' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install nasm ninja ccache --no-progress -y
+          'C:\Program Files\NASM' >> $env:GITHUB_PATH
+      - name: Fetch native dependencies
+        id: deps
+        if: steps.engine.outputs.hit == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          rc=0; .github/scripts/build/prebuilt.sh fetch "${{ steps.keys.outputs.deps }}" engine/deps/build || rc=$?
+          case $rc in 0) echo "hit=true" >> "$GITHUB_OUTPUT" ;; 3) echo "hit=false" >> "$GITHUB_OUTPUT" ;; *) exit $rc ;; esac
+      - name: Resume the dependency prefix of an earlier run
+        id: resume
+        if: steps.deps.outputs.hit == 'false' && inputs.deps_from_run != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "${{ inputs.deps_from_run }}" --repo "$GITHUB_REPOSITORY" --name "deps-prefix-${{ inputs.target }}" --dir .
+          mkdir -p engine/deps/build && tar -xf deps-prefix.tar -C engine/deps/build && rm deps-prefix.tar
+      - name: Build native dependencies
+        if: steps.deps.outputs.hit == 'false'
+        env:
+          DEPS_TARGETS: ${{ inputs.deps_targets }}
+        run: |
+          if [ "${{ steps.resume.outcome }}" = success ]; then
+            source .github/scripts/build/deps-${{ inputs.os }}.sh
+            configure ${{ inputs.arch }}
+            if [ -n "$DEPS_TARGETS" ]; then cmake --build engine/deps/build --config Release --target $DEPS_TARGETS --parallel 4; fi
+          else
+            .github/scripts/build/deps.sh ${{ inputs.os }} ${{ inputs.arch }}
+          fi
+      - name: Check and publish native dependencies
+        if: steps.deps.outputs.hit == 'false'
+        env:
+          CMAKE_APPLE_SILICON_PROCESSOR: ${{ inputs.target == 'mac-x64' && 'x86_64' || '' }}
+          git_commit_hash: ${{ steps.keys.outputs.source }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/build/engine.sh ${{ inputs.os }} ${{ inputs.arch }} --configure-only
+          .github/scripts/build/prebuilt.sh publish "${{ steps.keys.outputs.deps }}" engine/deps/build OrcaSlicer_dep
+      - name: Save the dependency prefix for a resumed run
+        if: failure() && steps.deps.outputs.hit == 'false'
+        run: tar -cf deps-prefix.tar -C engine/deps/build OrcaSlicer_dep
+      - name: Upload the dependency prefix for a resumed run
+        if: failure() && steps.deps.outputs.hit == 'false'
+        uses: actions/upload-artifact@v7
+        with:
+          name: deps-prefix-${{ inputs.target }}
+          path: deps-prefix.tar
+          retention-days: 7
+      - name: Restore compiler cache
+        if: steps.engine.outputs.hit == 'false'
+        id: ccache
+        uses: actions/cache/restore@v6
+        with:
+          path: .ccache
+          key: ccache-v2-${{ inputs.runner }}-${{ inputs.arch }}-${{ github.run_id }}
+          restore-keys: ccache-v2-${{ inputs.runner }}-${{ inputs.arch }}-
+      - name: Build the engine
+        if: steps.engine.outputs.hit == 'false'
+        env:
+          CMAKE_APPLE_SILICON_PROCESSOR: ${{ inputs.target == 'mac-x64' && 'x86_64' || '' }}
+          git_commit_hash: ${{ steps.keys.outputs.source }}
+        run: .github/scripts/build/engine.sh ${{ inputs.os }} ${{ inputs.arch }}
+      - name: Save compiler cache
+        if: always() && steps.ccache.outcome == 'success'
+        uses: actions/cache/save@v6
+        with:
+          path: .ccache
+          key: ${{ steps.ccache.outputs.cache-primary-key }}
+      - name: Publish the compiled engine
+        if: steps.engine.outputs.hit == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/build/prebuilt.sh publish "${{ steps.keys.outputs.engine }}" build-native/tool .
+

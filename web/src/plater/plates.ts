@@ -1,4 +1,4 @@
-import { getState, markStale, newId, setState, subscribeStore, toast, type JobView, type PlateObject, type State } from '../state/store';
+import { IDLE_JOB, getState, markStale, newId, setState, subscribeStore, toast, type JobView, type PlateObject, type State } from '../state/store';
 import { undoable } from '../state/history';
 import { bedArea, canExport, exportFilename, slice } from '../actions';
 import { arrange, nextFreeSpot } from './geometry';
@@ -6,13 +6,12 @@ import { promptDialog } from '../components/Ask';
 
 export const OBJECT_DRAG = 'application/x-orca-object';
 
-const IDLE: JobView = { state: 'idle', pct: 0, stage: '' };
 
 const plateJobs = new Map<number, JobView>();
 
 const busy = (s: State) => s.job.state === 'running' || s.job.state === 'submitting';
 
-export const canAddPlate = (s: State) => !s.project && !!s.features.mesh_plates;
+export const canAddPlate = (s: State) => !s.project;
 
 export function currentPlates(s: State) {
   return s.projectPlates.map((p) => (p.index === s.plateIndex ? { ...p, objects: s.objects, events: s.events } : p));
@@ -27,7 +26,7 @@ function showPlate(s: State, index: number): Partial<State> {
   const plates = currentPlates(s);
   const target = plates.find((p) => p.index === index)!;
   if (s.job.state === 'done' || s.job.state === 'failed') plateJobs.set(s.plateIndex, s.job);
-  const job = plateJobs.get(index) ?? IDLE;
+  const job = plateJobs.get(index) ?? IDLE_JOB;
   plateJobs.delete(index);
   return { projectPlates: plates, objects: target.objects, events: target.events ?? [], plateIndex: index, selected: null, gizmo: 'none', job };
 }
@@ -70,7 +69,7 @@ export function deletePlate(index = getState().plateIndex) {
     plateJobs.clear();
     for (const [k, j] of jobs) if (k !== index) plateJobs.set(after(k), j);
     const selected = st.plateIndex === index ? Math.min(index, left.length) : after(st.plateIndex);
-    const job = plateJobs.get(selected) ?? IDLE;
+    const job = plateJobs.get(selected) ?? IDLE_JOB;
     plateJobs.delete(selected);
     const target = left[selected - 1];
     return {
@@ -109,7 +108,7 @@ export function movePlateToFront(index: number) {
     plateJobs.clear();
     for (const [k, j] of jobs) plateJobs.set(renumber(k), j);
     const selected = renumber(st.plateIndex);
-    const job = plateJobs.get(selected) ?? IDLE;
+    const job = plateJobs.get(selected) ?? IDLE_JOB;
     plateJobs.delete(selected);
     const wipeTowerPos = Object.fromEntries(Object.entries(st.wipeTowerPos).map(([k, v]) => [renumber(Number(k)), v]));
     return {
@@ -157,7 +156,7 @@ function shiftTo(o: PlateObject, x: number, y: number): PlateObject {
   return { ...o, instances: o.instances.map((i) => ({ ...i, x: i.x + dx, y: i.y + dy })) };
 }
 
-export const plateJob = (s: State, index: number) => (index === s.plateIndex ? s.job : plateJobs.get(index) ?? IDLE);
+export const plateJob = (s: State, index: number) => (index === s.plateIndex ? s.job : plateJobs.get(index) ?? IDLE_JOB);
 
 export function setPlateJob(index: number, job: JobView) {
   if (index === getState().plateIndex) setState({ job });
@@ -212,6 +211,6 @@ export async function exportAll() {
     a.href = href; a.download = `${name}.zip`; document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(href), 60000);
   } catch (e) {
-    toast(`Oops! Export failed: ${e instanceof Error ? e.message : e}`);
+    toast('export_failed', { detail: e instanceof Error ? e.message : e });
   }
 }

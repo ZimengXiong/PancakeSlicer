@@ -96,7 +96,7 @@ export async function performCut() {
       gizmo: 'none', cut: null, toast: open.length ? `${open.map((f) => f.file.name).join(', ')}: open edges after the cut` : null, toastKind: null }));
   } catch (error) {
     created.forEach((x) => x.geometry.dispose());
-    toast(error instanceof Error ? error.message : String(error));
+    toast('cutperform_failed', { detail: error instanceof Error ? error.message : String(error) });
   } finally {
     busy = false;
     overlay.end();

@@ -1,4 +1,5 @@
 const tag = '$orcaBinary';
+export { sha256 } from '../sha256';
 const arrays = { Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array,
   Float32Array, Float64Array, BigInt64Array, BigUint64Array };
 export function bytesBase64(bytes: Uint8Array): string {
@@ -10,6 +11,7 @@ type BinaryField = Readonly<{ $orcaBinary: string; data: string }>;
 function stringifyDocument(value: unknown, binaries?: WeakMap<object, BinaryField>): string {
   return JSON.stringify(value, function (this: Record<string, unknown>, key, item: unknown) {
     if (this[key] instanceof Date) return { $orcaDate: this[key].getTime() };
+    if (item instanceof Map) return { $orcaMap: [...item.entries()] };
     if (item instanceof ArrayBuffer || ArrayBuffer.isView(item)) {
       const cached = binaries?.get(item);
       if (cached) return cached;
@@ -34,6 +36,7 @@ export function prepareDocumentText(value: unknown) {
 export function parseDocument<T>(text: string): T {
   return JSON.parse(text, (_key, item: unknown) => {
     if (item && typeof item === 'object' && Object.hasOwn(item, '$orcaDate') && Object.keys(item).length === 1) return new Date((item as {$orcaDate:number}).$orcaDate);
+    if (item && typeof item === 'object' && Object.hasOwn(item, '$orcaMap') && Object.keys(item).length === 1 && Array.isArray((item as { $orcaMap: unknown }).$orcaMap)) return new Map((item as { $orcaMap: [unknown, unknown][] }).$orcaMap);
     if (!item || typeof item !== 'object' || !Object.hasOwn(item, tag)) return item;
     const { [tag]: type, data } = item as Record<string, unknown>;
     if (typeof type !== 'string' || typeof data !== 'string') throw new Error('Invalid binary document field');

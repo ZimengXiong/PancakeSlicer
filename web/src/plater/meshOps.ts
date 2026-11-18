@@ -63,9 +63,10 @@ export async function fixModel(objectId: number) {
     const closed = Number(record.boundary_edges_closed) || 0;
     if (closed) done.push(`${closed} boundary edges closed`);
     replace(o, file, geometry, 'Fix Model');
-    logNotice(done.length ? `${o.name}: repaired (${done.join(', ')})` : `${o.name}: no errors found`, 'success');
+    if (done.length) logNotice('model_repaired', { name: o.name, done: done.join(', ') });
+    else logNotice('model_no_errors', { name: o.name });
   } catch (e) {
-    toast(`Oops! Couldn't repair the model: ${e instanceof Error ? e.message : String(e)}`);
+    toast('couldnt_repair_model', { detail: e instanceof Error ? e.message : String(e) });
   } finally {
     busy.end();
   }
@@ -78,9 +79,9 @@ export async function simplifyModel(objectId: number, triangles: number, maxErro
   try {
     const { record, file, geometry } = await run(o, 'simplify', maxError ? { simplify_max_error: String(maxError) } : { simplify_triangles: String(Math.max(1, Math.round(triangles))) });
     replace(o, file, geometry, 'Simplify Model');
-    toast(`${o.name}: ${record.triangles_before} → ${record.triangles_after} triangles`);
+    toast('triangles', { name: o.name, trianglesbefore: record.triangles_before, trianglesafter: record.triangles_after });
   } catch (e) {
-    toast(`Simplify Model: ${e instanceof Error ? e.message : String(e)}`);
+    toast('simplify_model', { detail: e instanceof Error ? e.message : String(e) });
   } finally {
     busy.end();
   }

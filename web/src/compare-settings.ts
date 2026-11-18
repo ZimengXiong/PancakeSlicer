@@ -1,5 +1,6 @@
 import { OPTIONS, isHidden } from './options';
 import { effectiveConfig, type State } from './state/store';
+import { slotFilaments } from './profiles/slots';
 
 type Config = Record<string, unknown>;
 export interface SettingChange { label: string; from: string; to: string }
@@ -11,7 +12,7 @@ export const editedOf = (signature: string | undefined): Set<string> => {
   try { return new Set(Object.keys((JSON.parse(signature ?? '{}') as { overrides?: Config }).overrides ?? {})); } catch { return new Set(); }
 };
 const SHOWN_AS: Record<string, string> = { nonplanar_mode: 'Slicing method' };
-const resolvedNow = (s: State): Config[] => [effectiveConfig(s, 'machine'), effectiveConfig(s, 'process'), ...s.filamentSlots.map((_, i) => effectiveConfig(s, 'filament', i))];
+const resolvedNow = (s: State): Config[] => [effectiveConfig(s, 'machine'), effectiveConfig(s, 'process'), ...slotFilaments(s).map((_, i) => effectiveConfig(s, 'filament', i))];
 
 function shown(key: string, value: unknown): string {
   const def = OPTIONS[key];

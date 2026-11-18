@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { getState, newId, setState, toast, type PlateObject, type State, type TextSpec, type Volume, type VolumeType } from '../state/store';
+import { getState, newId, setState, toast, type PlateObject, type TextSpec, type Volume, type VolumeType } from '../state/store';
 import { undoable } from '../state/history';
 import { bedArea } from '../actions';
 import { bakeStl, bedBounds, nextFreeSpot, volumeGeometry } from './geometry';
@@ -19,8 +19,6 @@ const fields = (t: TextSpec): Record<string, string> => ({
   text: t.text, ...(t.font ? { font: t.font } : {}), size: String(t.size), depth: String(t.depth), line_spacing: String(t.lineSpacing),
   char_gap: String(t.charGap), align: t.align, ...(t.bold ? { bold: '1' } : {}), ...(t.italic ? { italic: '1' } : {}),
 });
-
-export const surfaceOk = (s: State, type: VolumeType) => !!s.features.emboss_surface && (type !== 'part' || !!s.features.emboss_surface_outside);
 
 async function surfaceMesh(o: PlateObject, type: VolumeType, t: TextSpec) {
   const { geometry } = await meshJob('text', { ...fields(t), ...surfaceFields(t.surface!, type) }, [[await bakeStl(o, new THREE.Matrix4()), 'target.stl']], 'text');
@@ -53,7 +51,7 @@ async function withService<T>(work: () => Promise<T>): Promise<T | undefined> {
   try {
     return await work();
   } catch (e) {
-    toast(`Text: ${e instanceof Error ? e.message : String(e)}`);
+    toast('text', { detail: e instanceof Error ? e.message : String(e) });
     return undefined;
   } finally {
     busy = false;

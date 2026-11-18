@@ -1,4 +1,5 @@
 import { openUrlImport } from '../url-import';
+import { NoticeLog } from './NoticeLog';
 import { More } from './kit';
 import { preloadable } from '../preloadable';
 import { MenuButton, type MenuEntry } from './Menu';
@@ -6,9 +7,10 @@ import { Glyph } from './Glyph';
 import { Check } from './Check';
 import { Range } from './Range';
 import { slicingText } from '../api/progress';
-import { accessNotice, accessSnapshot, saveAccessToken, subscribeAccess } from '../api/access';
+import { ACCESS_FAILURES, accessNotice, accessSnapshot, forgetAccessToken, saveAccessToken, subscribeAccess } from '../api/access';
+import { useMachine } from '../flow/fsm';
+import { libraryWrites } from '../profiles/library-writes';
 import { Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactElement } from 'react';
-import { createPortal } from 'react-dom';
 import { addInstance, arrangeAll, cancelSlice, fileUse, openFileDialog, removeInstance, toolbarOperation, outsideVolumeWarning, canBoolean, toggleBoolean, toggleSvg, toggleText } from '../actions';
 import { setCompareWanted } from '../compare';
 import { toggleNonplanarView, useNonplanarView, usePatchPreview } from '../patch-preview';
@@ -22,8 +24,8 @@ import { closeSlantPlane, commitSlant, resetSlantAuto, setSlant } from '../plate
 import { InTopLayer } from './Modal';
 import { useTier } from '../breakpoints';
 import { SliceFailed } from './Notices';
-import { bareName, plainWarnings, type PlainWarning } from '../engine-warnings';
-import './prepare.css';
+import { bareName } from '../engine-warnings';
+import { plainWarnings, type PlainWarning } from '../engine-warning-text';
 
 const OrientConfirm = preloadable(() => import('./OrientConfirm').then((m) => ({ default: m.OrientConfirm })));
 const RemapFilaments = preloadable(() => import('./RemapFilaments'));
@@ -35,6 +37,8 @@ import { canEditLayers } from './LayerHeight';
 import { Num } from './Num';
 import { setAssembly, useAssembly } from '../plater/assembly';
 import { Sep } from '../separator';
+import { slotFilaments } from '../profiles/slots';
+import { PagePortal, usePageLeave } from './PageLayer';
 
 const PAINT_GIZMOS: [PaintKind, string, string, string][] = [
   ['support', 'toolbar_support', 'Support painting', 'L'],
@@ -65,23 +69,21 @@ export function CanvasToolbar() {
   const instances = useStore((s) => s.objects.find((o) => o.id === s.selected?.object)?.instances.length ?? 0);
   const project = useStore((s) => !!s.project);
   const toggle = (g: Gizmo) => setState({ gizmo: gizmo === g ? 'none' : g });
-  const brimEars = useStore((s) => !!s.features.brim_ears);
   const booleanOk = useStore(canBoolean);
-  const text = useStore((s) => !!s.features.emboss_text);
   const assemblyOn = useAssembly().on;
-  const svg = useStore((s) => !!s.features.emboss_svg);
   const native = useStore((s) => !!s.objects.find((o) => o.id === s.selected?.object)?.native);
   const volumes = useStore((s) => !!s.objects.find((o) => o.id === s.selected?.object)?.volumes?.length);
   const locked = project ? ' — instances cannot be added or removed from an opened project' : '';
   const placeholder = useStore((s) => s.objects.find((o) => o.id === s.selected?.object)?.project?.placeholder);
   const edit = !!sel && !placeholder && !sel.all;
-  const splitParts = useStore((s) => !!s.features.volumes && !s.objects.find((o) => o.id === s.selected?.object)?.volumes?.length);
+  const splitParts = useStore((s) => !s.objects.find((o) => o.id === s.selected?.object)?.volumes?.length);
   const cutBlock = useStore(cutBlocked);
   const paint = useStore(canPaint);
   const layers = useStore(canEditLayers);
   const preview = !!usePatchPreview();
   const nonplanarView = useNonplanarView();
   const [arranging, setArranging] = useState(false);
+  usePageLeave(() => setArranging(false));
   const arrangeAt = useRef<HTMLSpanElement>(null);
   const rare: MenuEntry[] = [
     {label: 'Auto orient', shortcut: 'Q', icon: menuGlyph('toolbar_orient'), action: () => toolbarOperation('orient'), disabled: !hasObjects || project},
@@ -99,9 +101,9 @@ export function CanvasToolbar() {
     {label: 'Mesh boolean', shortcut: 'B', icon: menuGlyph('toolbar_meshboolean'), action: toggleBoolean, disabled: !booleanOk && gizmo !== 'boolean'},
     'sep',
     ...PAINT_GIZMOS.map(([kind, icon, label, key]): MenuEntry => ({label, shortcut: key, icon: menuGlyph(icon), action: () => togglePaint(kind), disabled: !paint && gizmo !== kind, checked: gizmo === kind})),
-    ...(brimEars ? [{label: 'Brim ears', icon: menuGlyph('toolbar_brimears'), action: () => toggle('brimears'), disabled: !sel || !!placeholder || !!native || volumes} as MenuEntry] : []),
-    ...(text ? [{label: 'Emboss text', shortcut: 'T', icon: menuGlyph('toolbar_text'), action: toggleText, disabled: !!sel?.all || !!placeholder || !!native} as MenuEntry] : []),
-    ...(svg ? [{label: 'SVG', icon: menuGlyph('menu_obj_svg'), action: toggleSvg, disabled: !!sel?.all || !!placeholder || !!native} as MenuEntry] : []),
+    {label: 'Brim ears', icon: menuGlyph('toolbar_brimears'), action: () => toggle('brimears'), disabled: !sel || !!placeholder || !!native || volumes},
+    {label: 'Emboss text', shortcut: 'T', icon: menuGlyph('toolbar_text'), action: toggleText, disabled: !!sel?.all || !!placeholder || !!native},
+    {label: 'SVG', icon: menuGlyph('menu_obj_svg'), action: toggleSvg, disabled: !!sel?.all || !!placeholder || !!native},
     ...(preview ? [{label: 'Non-planar surfaces', icon: menuGlyph('toolbar_nonplanar_paint'), action: toggleNonplanarView, checked: nonplanarView} as MenuEntry] : []),
   ];
   const needSelection = !hasObjects ? 'add an object' : sel?.all ? 'select one object' : 'select an object';
@@ -128,9 +130,8 @@ function ToolButton({ icon, name, keys, active = false, unavailable, onClick }: 
 function ArrangeOptions({ at }: { at: HTMLElement | null }) {
   const a = useSyncExternalStore(subscribeArrangeSettings, arrangeSettings);
   const hasObjects = useStore((s) => s.objects.length > 0);
-  const canMulti = useStore((s) => !!s.features.arrange_materials);
   const r = at?.getBoundingClientRect();
-  return createPortal(
+  return <PagePortal>
     <div className="manip-panel" role="dialog" aria-label="Arrange options" style={{ position: 'fixed', top: (r?.bottom ?? 40) + 8, left: r?.left ?? 0, zIndex: 5 }}>
       <div className="manip-grid" style={{ gridTemplateColumns: '70px 140px 70px' }}>
         <span>Spacing</span>
@@ -141,7 +142,7 @@ function ArrangeOptions({ at }: { at: HTMLElement | null }) {
         <label className="select-row" style={{ gridColumn: '1 / -1' }}>
           <Check checked={a.rotation} onCheckedChange={(next) => setArrangeSettings({ rotation: next })} />Auto rotate for arrangement
         </label>
-        {canMulti && (
+        {(
           <label className="select-row" style={{ gridColumn: '1 / -1' }}>
             <Check checked={a.multiMaterials} onCheckedChange={(next) => setArrangeSettings({ multiMaterials: next })} />Allow multiple materials on same plate
           </label>
@@ -152,9 +153,8 @@ function ArrangeOptions({ at }: { at: HTMLElement | null }) {
         <button className="btn primary" disabled={!hasObjects} onClick={() => arrangeAll()}>Arrange</button>
         <button className="btn" onClick={resetArrangeSettings}>Reset</button>
       </div>
-    </div>,
-    document.body,
-  );
+    </div>
+  </PagePortal>;
 }
 
 const cleanError = (msg = '') => msg.replace(/^(error:\s*)?(validate:\s*)?/i, '');
@@ -162,7 +162,8 @@ const cleanError = (msg = '') => msg.replace(/^(error:\s*)?(validate:\s*)?/i, ''
 export function AccessNotification() {
   const notice = useSyncExternalStore(subscribeAccess, accessSnapshot);
   const [value, setValue] = useState('');
-  if (!notice) return null;
+  const libraryOffline = useMachine(libraryWrites).value === 'offline';
+  if (!notice || libraryOffline && [502, 503, 504].includes(notice.status)) return null;
   return (
     <div className={`notification ${notice.status === 429 || notice.status === 503 ? 'warning' : 'failed'}`} role="alert">
       <button className="notif-close icon-btn" aria-label="Close" onClick={() => accessNotice(null)}><Glyph name="close" size={14} /></button>
@@ -170,12 +171,12 @@ export function AccessNotification() {
       {notice.status === 401 && (
         <form className="access-token-form" onSubmit={(event) => {
           event.preventDefault();
-          saveAccessToken(value);
           setValue('');
-          accessNotice(null);
+          saveAccessToken(value).then(() => accessNotice(null), (error: Error) => accessNotice({ status: 401, message: error.message }));
         }}>
           <input type="password" aria-label="Access token" autoComplete="off" value={value} onChange={(event) => setValue(event.target.value)} />
           <button type="submit">Save</button>
+          <button type="button" onClick={() => forgetAccessToken().then(() => accessNotice({ status: 401, message: 'Access token forgotten' }), (error: Error) => accessNotice({ status: 401, message: error.message }))}>Forget</button>
           <div className="notif-body">Save your access token, then give that another try.</div>
         </form>
       )}
@@ -192,11 +193,11 @@ function TrySmoothest({ f }: { f: CurveFailure }) {
 
 function WarningLines({ warnings, open, onToggle }: { warnings: PlainWarning[]; open: boolean; onToggle(): void }) {
   const lines = [...new Set(warnings.flatMap((w) => (w.text ? [w.text] : [])))];
-  const unknown = warnings.filter((w) => w.text === undefined);
+  const unknown = warnings.filter((w) => w.detail);
   return <>
     {lines.map((l) => <div key={l} className="notif-body">{l}</div>)}
     {unknown.length > 0 && <div className="notif-body notif-actions"><button type="button" className="notif-link" aria-expanded={open} onClick={onToggle}>Details</button></div>}
-    {open && unknown.map((w) => <div key={w.raw} className="notif-body notif-detail">{w.raw}</div>)}
+    {open && unknown.map((w) => <div key={`${w.code}|${w.detail}`} className="notif-body notif-detail">{w.detail}</div>)}
   </>;
 }
 
@@ -239,6 +240,7 @@ export function SliceNotification() {
   const failedIds = new Set(failures.map((f) => f.objectId));
   const results = done ? sliced.filter((r) => !failedIds.has(r.objectId)) : [];
   const suggestIds = useStore((s) => pendingRecommendations(s).map((o) => o.id).join(','));
+  const tab = useStore((s) => s.tab);
   const plateObjects = useStore((s) => s.objects);
   const orientPrompts = useStore((s) => s.orientPrompts);
   const orientConfirm = useStore((s) => s.orientConfirm !== null);
@@ -251,13 +253,15 @@ export function SliceNotification() {
   const perObject = plateObjects.flatMap((o) => {
     const bare = bareName(o.name), key = `${done ?? job.id}:o${o.id}`;
     const r = results.find((x) => x.objectId === o.id), f = failures.find((x) => x.objectId === o.id);
-    const ws = plain.filter((w) => w.object === bare && w.text !== null);
+    const ws = plain.filter((w) => w.object === bare && (w.text !== null || w.detail));
     return r || f || ws.length ? [{ o, bare, key, r, f, ws }] : [];
   });
   const known = new Set(plateObjects.map((o) => bareName(o.name)));
-  const loose = plain.filter((w) => (!w.object || !known.has(w.object)) && w.text !== null);
+  const unplaced = plain.filter((w) => (!w.object || !known.has(w.object)) && (w.text !== null || w.detail));
+  const notes = unplaced.filter((w) => w.code.endsWith('_capped')), loose = unplaced.filter((w) => !notes.includes(w));
+  const noteKey = notes.length ? `${job.id}:n` : null;
   const [held, setHeld] = useState(false);
-  const transient = [exported, ...perObject.filter((n) => n.r && !n.f && !n.ws.length && !n.r.slant?.why && !n.r.printedFlat).map((n) => n.key),
+  const transient = [exported, noteKey, ...perObject.filter((n) => n.r && !n.f && !n.ws.length && !n.r.slant?.why && !n.r.printedFlat).map((n) => n.key),
     ...Object.keys(orientPrompts).map((id) => `orient${id}`)].filter((k): k is string => !!k && !expired.has(k));
   useEffect(() => {
     if (held) return;
@@ -265,6 +269,7 @@ export function SliceNotification() {
     return () => timers.forEach(clearTimeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transient.join('|'), held]);
+  const inPreview = tab === 'preview';
   const compareLink = <button type="button" className="notif-link" onClick={() => (setCompareWanted('standard'), setState({ tab: 'preview' }))}>Compare</button>;
   const tier = useTier();
   const [tipsOpen, setTipsOpen] = useState(false);
@@ -288,16 +293,22 @@ export function SliceNotification() {
         <div className="notif-body">{job.exported}{'\n'}{fileUse(machine)}</div>
       </div>
     ),
+    noteKey && !expired.has(noteKey) && !closed.has(noteKey) && (
+      <div key="notes" className="notification done">
+        {close(noteKey)}
+        <WarningLines warnings={notes} open={details.has(noteKey)} onToggle={() => toggleDetails(noteKey)} />
+      </div>
+    ),
     brief && !expired.has(brief) && (
       <div key="brief" className="notification done">
         <div className="notif-title">Slicing canceled</div>
       </div>
     ),
-    ...perObject.filter((n) => !n.f && !closed.has(n.key) && !expired.has(n.key)).map(({ bare, key, r, ws }) => (
+    ...perObject.filter((n) => !n.f && !closed.has(n.key) && !expired.has(n.key) && !(inPreview && !n.ws.length && !n.r?.partial)).map(({ bare, key, r, ws }) => (
       <div key={key} className={`notification ${ws.length && !r ? 'warning' : 'done'}`}>
         {close(key)}
         <div className="notif-title notif-sentence">{r ? `${bare}: ${r.style}` : bare}</div>
-        {r && <div className="notif-body">{r.fact}{r.curved && <><Sep/>{compareLink}</>}</div>}
+        {r && !inPreview && <div className="notif-body">{r.fact}{r.curved && <><Sep/>{compareLink}</>}</div>}
         {r?.partial && <div className="notif-body">{r.partial[0].toUpperCase() + r.partial.slice(1)}</div>}
         <WarningLines warnings={ws} open={details.has(key)} onToggle={() => toggleDetails(key)} />
       </div>
@@ -309,8 +320,8 @@ export function SliceNotification() {
       <InTopLayer>
         <div className="notif-group">
           <AccessNotification />
-          {job.state === 'failed' && notice?.message !== cleanError(job.error) && !/Access token needed|Oops! Server storage is full|The slicer is busy right now/.test(job.error ?? '') && !closed.has('error') && (
-            <SliceFailed error={cleanError(job.error)} onClose={() => setClosed((c) => new Set(c).add('error'))} />
+          {job.state === 'failed' && notice?.message !== cleanError(job.error) && !ACCESS_FAILURES.has(job.errorCode ?? '') && !closed.has('error') && (
+            <SliceFailed error={cleanError(job.error)} code={job.errorCode ?? 'slice_failed'} onClose={() => setClosed((c) => new Set(c).add('error'))} />
           )}
         </div>
       </InTopLayer>
@@ -332,7 +343,7 @@ export function SliceNotification() {
         <div key={`cnc${key}`} className="notification curve-failed" role="alert">
           <div className="notif-title notif-sentence">Oops! Couldn't slice {f.label} with {f.method}</div>
           <div className="notif-body">{f.why[0].toUpperCase() + f.why.slice(1)}</div>
-          <WarningLines warnings={ws.filter((w) => !/^Printed with flat layers so the print head doesn't bump the part/.test(w.text ?? ''))} open={details.has(key)} onToggle={() => toggleDetails(key)} />
+          <WarningLines warnings={ws.filter((w) => w.code !== 'conformal_flat_fallback')} open={details.has(key)} onToggle={() => toggleDetails(key)} />
           <div className="notif-body notif-actions">
             <button type="button" className="notif-link" onClick={() => sliceFlatInstead([f])}>Slice flat instead</button>
             {f.tryDuct && <button type="button" className="notif-link" onClick={() => tryIgnoreDuct()}>Try Ignore cooling duct</button>}
@@ -366,6 +377,7 @@ export function SliceNotification() {
         <button type="button" className="notif-chip" aria-expanded={tipsOpen} onClick={() => setTipsOpen(!tipsOpen)}>{tips.length} tips</button>
       )}
       {(tips.length < 2 || tier !== 'phone' || tipsOpen) && tips}
+      <NoticeLog />
     </div>
   );
 }
@@ -390,7 +402,7 @@ export function SlantPanel() {
       {e.limit !== undefined && (over
         ? <div className="slant-warn" role="alert">Steeper than the head reaches ({deg(e.limit)}) in this direction: {strict
           ? `prints at ${deg(e.limit)}`
-          : 'prints as set, the head may touch the part'}</div>
+          : 'prints as set, though the head might give the part a little nudge'}</div>
         : <div className="slant-note">The head reaches {deg(e.limit)} in this direction</div>)}
       <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
         <button className="btn" disabled={e.auto} onClick={resetSlantAuto}>Reset to auto</button>
@@ -407,7 +419,7 @@ const CutJoints = preloadable(() => import('./CutJoints'));
 export function CutPanel() {
   const cut = useStore((s) => (s.gizmo === 'cut' ? s.cut : null));
   const can = useStore(canPerformCut);
-  const joints = useStore((s) => !!s.features.cut_connectors && !s.objects.find((o) => o.instances.some((i) => i.id === s.selected?.instance))?.project);
+  const joints = useStore((s) => !s.objects.find((o) => o.instances.some((i) => i.id === s.selected?.instance))?.project);
   if (!cut) return null;
   if (cut.editing) return <div className="manip-panel"><Suspense fallback={null}><CutJoints /></Suspense></div>;
   const joined = cut.mode === 'dovetail' || !!cut.connectors?.length;
@@ -474,7 +486,7 @@ export function PaintPanel() {
   const t = useSyncExternalStore(subscribePaintTool, paintTool);
   const threshold = useStore((s) => object && kind === 'support' ? Number({ ...effectiveConfig(s, 'process'), ...object.settings }.support_threshold_angle) || 0 : 0);
   useEffect(() => { if (kind === 'support') setPaintTool({ highlight: threshold }); }, [kind, object?.id, threshold]);
-  const filaments = useStore((s) => s.filamentSlots.map((_, i) => filamentColor(s, i + 1)).join(' ')).split(' ').filter(Boolean);
+  const filaments = useStore((s) => slotFilaments(s).map((_, i) => filamentColor(s, i + 1)).join(' ')).split(' ').filter(Boolean);
   useEffect(() => { if (kind && !PAINT_TOOLS[kind].some(([id]) => id === paintTool().tool)) setPaintTool({ tool: 'circle' }); }, [kind, t.tool]);
   useEffect(() => { if (t.filament > filaments.length) setPaintTool({ filament: 1 }); }, [t.filament, filaments.length]);
   if (!kind || !object) return null;

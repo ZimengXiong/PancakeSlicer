@@ -19,19 +19,22 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/OrcaSlicer/OrcaSlicer/server/resolve"
 )
 
 type DiscoveredPrinter struct {
-	Kind       string `json:"kind"`
-	Host       string `json:"host,omitempty"`
-	URL        string `json:"url,omitempty"`
-	Serial     string `json:"serial,omitempty"`
-	Name       string `json:"name,omitempty"`
-	Model      string `json:"model,omitempty"`
-	Preset     string `json:"preset,omitempty"`
-	Connection string `json:"connection,omitempty"`
-	Source     string `json:"source"`
-	Assigned   string `json:"assigned,omitempty"`
+	Kind         string `json:"kind"`
+	Host         string `json:"host,omitempty"`
+	URL          string `json:"url,omitempty"`
+	Serial       string `json:"serial,omitempty"`
+	Name         string `json:"name,omitempty"`
+	Model        string `json:"model,omitempty"`
+	Preset       string `json:"preset,omitempty"`
+	CatalogModel string `json:"catalogModel,omitempty"`
+	Connection   string `json:"connection,omitempty"`
+	Source       string `json:"source"`
+	Assigned     string `json:"assigned,omitempty"`
 }
 
 const discoveryWindow = 4 * time.Second
@@ -39,17 +42,17 @@ const discoveryWindow = 4 * time.Second
 func (s *Server) discoverPrinters(w http.ResponseWriter, r *http.Request) {
 	m := s.sends
 	if m.store == nil {
-		fail(w, 403, "Printer network connections are disabled on this server.")
+		fail(w, 403, "printer_network_connections_disabled")
 		return
 	}
-	if ok, retry := m.allowBurst("discover "+s.clientIP(r), 3); !ok {
+	if ok, retry := m.allowBurst("discover "+s.clientIP(r), 3, sendRate); !ok {
 		w.Header().Set("Retry-After", fmt.Sprint(min(retry, 86400)))
-		fail(w, 429, "Network scan was just run—wait a few seconds before scanning again.")
+		fail(w, 429, "network_scan_run_wait")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), discoveryWindow+2*time.Second)
 	defer cancel()
-	found, notes := discover(ctx, m.store.hosts, s.cfg.Resources)
+	found, notes := discover(ctx, m.store.hosts, discoveryEnv{s.cfg.Resources, s.catalog})
 	for i := range found {
 		d := &found[i]
 		for _, p := range m.connections() {
@@ -62,7 +65,12 @@ func (s *Server) discoverPrinters(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"printers": found, "notes": notes})
 }
 
-func discover(ctx context.Context, policy *hostPolicy, resources string) ([]DiscoveredPrinter, []string) {
+type discoveryEnv struct {
+	resources string
+	catalog   *resolve.Catalog
+}
+
+func discover(ctx context.Context, policy *hostPolicy, env discoveryEnv) ([]DiscoveredPrinter, []string) {
 	var mu sync.Mutex
 	found := map[string]DiscoveredPrinter{}
 	notes := []string{}
@@ -80,49 +88,35 @@ func discover(ctx context.Context, policy *hostPolicy, resources string) ([]Disc
 	}
 	note := func(text string) { mu.Lock(); notes = append(notes, text); mu.Unlock() }
 	var wg sync.WaitGroup
-	for _, run := range []func(context.Context, func(DiscoveredPrinter, netip.Addr), func(string), string){discoverBambu, discoverMDNS, probeLocal} {
+	for _, run := range []func(context.Context, func(DiscoveredPrinter, netip.Addr), func(string), discoveryEnv){discoverBambu, discoverMDNS, probeLocal} {
 		wg.Add(1)
-		go func() { defer wg.Done(); run(ctx, add, note, resources) }()
+		go func() { defer wg.Done(); run(ctx, add, note, env) }()
 	}
 	wg.Wait()
 	list := []DiscoveredPrinter{}
 	for _, d := range found {
 		list = append(list, d)
 	}
-	sort.Slice(list, func(i, j int) bool { return list[i].Kind+list[i].Host+list[i].URL < list[j].Kind+list[j].Host+list[j].URL })
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].Kind+list[i].Host+list[i].URL < list[j].Kind+list[j].Host+list[j].URL
+	})
 	return list, notes
 }
 
-func bambuModels(resources string) map[string][2]string {
+func bambuModels(c *resolve.Catalog) map[string][2]string {
 	out := map[string][2]string{}
-	dir := filepath.Join(resources, "profiles", "BBL", "machine")
-	entries, _ := os.ReadDir(dir)
-	for _, e := range entries {
-		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
-		if err != nil {
-			continue
+	for _, p := range c.Printers {
+		if id := stringValue(p.Model["model_id"]); id != "" && p.Vendor == "BBL" {
+			out[id] = [2]string{p.ID, c.Variant(p.ID, 0.4)}
 		}
-		var model struct {
-			Name string `json:"name"`
-			ID   string `json:"model_id"`
-			Type string `json:"type"`
-		}
-		if json.Unmarshal(b, &model) != nil || model.ID == "" || model.Type != "machine_model" {
-			continue
-		}
-		preset := ""
-		if _, err := os.Stat(filepath.Join(dir, model.Name+" 0.4 nozzle.json")); err == nil {
-			preset = model.Name + " 0.4 nozzle"
-		}
-		out[model.ID] = [2]string{model.Name, preset}
 	}
 	return out
 }
 
 const bambuSearch = "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1990\r\nMAN: \"ssdp:discover\"\r\nMX: 3\r\nST: urn:bambulab-com:device:3dprinter:1\r\n\r\n"
 
-func discoverBambu(ctx context.Context, add func(DiscoveredPrinter, netip.Addr), note func(string), resources string) {
-	models := bambuModels(resources)
+func discoverBambu(ctx context.Context, add func(DiscoveredPrinter, netip.Addr), note func(string), env discoveryEnv) {
+	models := bambuModels(env.catalog)
 	parse := func(packet []byte, from netip.Addr) {
 		if !strings.Contains(strings.ToLower(string(packet)), "bambulab") {
 			return
@@ -145,7 +139,7 @@ func discoverBambu(ctx context.Context, add func(DiscoveredPrinter, netip.Addr),
 		code := headers["devmodel.bambu.com"]
 		model := models[code]
 		d := DiscoveredPrinter{Kind: "bambu-lan", Host: ip.String(), Serial: strings.ToUpper(serial), Name: headers["devname.bambu.com"],
-			Model: strings.TrimPrefix(cmpOr(model[0], bambuModel("", code)), "Bambu Lab "), Preset: model[1], Connection: headers["devconnect.bambu.com"], Source: "ssdp"}
+			Model: strings.TrimPrefix(cmpOr(model[0], bambuModel("", code)), "Bambu Lab "), Preset: model[1], CatalogModel: model[0], Connection: headers["devconnect.bambu.com"], Source: "ssdp"}
 		add(d, ip)
 	}
 	listen := func(address string) net.PacketConn {
@@ -201,7 +195,7 @@ func readAll(ctx context.Context, conns []net.PacketConn, handle func([]byte, ne
 
 var mdnsServices = map[string]string{"_octoprint._tcp.local": "octoprint", "_moonraker._tcp.local": "moonraker"}
 
-func discoverMDNS(ctx context.Context, add func(DiscoveredPrinter, netip.Addr), note func(string), _ string) {
+func discoverMDNS(ctx context.Context, add func(DiscoveredPrinter, netip.Addr), note func(string), _ discoveryEnv) {
 	query := []byte{0, 0, 0, 0, 0, byte(len(mdnsServices)), 0, 0, 0, 0, 0, 0}
 	for name := range mdnsServices {
 		query = append(append(query, dnsName(name)...), 0, 12, 0, 1)
@@ -348,7 +342,7 @@ func parseDNS(msg []byte) ([]dnsRecord, error) {
 	return out, nil
 }
 
-func probeLocal(ctx context.Context, add func(DiscoveredPrinter, netip.Addr), note func(string), resources string) {
+func probeLocal(ctx context.Context, add func(DiscoveredPrinter, netip.Addr), note func(string), env discoveryEnv) {
 	var targets []netip.Addr
 	ifaces, _ := net.Interfaces()
 	for _, iface := range ifaces {
@@ -372,10 +366,10 @@ func probeLocal(ctx context.Context, add func(DiscoveredPrinter, netip.Addr), no
 		}
 	}
 	roots := x509.NewCertPool()
-	if pem, err := os.ReadFile(filepath.Join(resources, "cert", "printer.cer")); err == nil {
+	if pem, err := os.ReadFile(filepath.Join(env.resources, "cert", "printer.cer")); err == nil {
 		roots.AppendCertsFromPEM(pem)
 	}
-	models := bambuModels(resources)
+	models := bambuModels(env.catalog)
 	work := make(chan netip.Addr)
 	var wg sync.WaitGroup
 	for i := 0; i < 64; i++ {
@@ -429,7 +423,7 @@ func probeBambu(ctx context.Context, ip netip.Addr, roots *x509.CertPool, models
 	d := DiscoveredPrinter{Kind: "bambu-lan", Host: ip.String(), Serial: serial, Model: bambuModel("", serial[:3]), Source: "probe"}
 	for _, m := range models {
 		if m[0] == "Bambu Lab "+d.Model {
-			d.Preset = m[1]
+			d.Preset, d.CatalogModel = m[1], m[0]
 		}
 	}
 	add(d, ip)

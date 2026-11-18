@@ -1,4 +1,5 @@
 #include "Multiplanar.hpp"
+#include "libslic3r/Nonplanar/Research.hpp"
 #include "libslic3r/ExPolygon.hpp"
 #include "libslic3r/Exception.hpp"
 #include "libslic3r/format.hpp"
@@ -414,7 +415,7 @@ HeadHit head_blocked(const indexed_triangle_set &piece, const Matrix3d &frame, d
 }
 static double route_under_delta()
 {
-    const char *v = std::getenv("NP_ONESHOT_ROUTE_UNDER");
+    const char *v = research_switch("NP_ONESHOT_ROUTE_UNDER");
     return v != nullptr && *v != 0 ? std::atof(v) : RouteUnderDelta;
 }
 
@@ -1085,7 +1086,7 @@ bool full_orientation(const PrintConfig &config)
 
 indexed_triangle_set route_cut_enforcers(const PrintObject &object)
 {
-    static const bool on = [] { const char *v = std::getenv("NP_ROUTE_SEAM_COVERED"); return v != nullptr && std::atoi(v) != 0; }();
+    static const bool on = [] { const char *v = research_switch("NP_ROUTE_SEAM_COVERED"); return v != nullptr && std::atoi(v) != 0; }();
     const OneShotState *state = object.oneshot_state();
     indexed_triangle_set out;
     if (!on || state == nullptr || !state->route || !oneshot_requested(object))
@@ -1207,19 +1208,19 @@ void collect_paths(const ExtrusionEntity *ee, std::vector<const ExtrusionPath *>
 
 bool chunk_support_requested()
 {
-    static const bool on = [] { const char *v = std::getenv("NP_ONESHOT_CHUNK_SUPPORT"); return v != nullptr && (*v == '1' || *v == '2'); }();
+    static const bool on = [] { const char *v = research_switch("NP_ONESHOT_CHUNK_SUPPORT"); return v != nullptr && (*v == '1' || *v == '2'); }();
     return on;
 }
 
 bool chunk_support_conformal()
 {
-    static const bool on = [] { const char *v = std::getenv("NP_ONESHOT_CONFORMAL_SUPPORT"); return v != nullptr && *v == '1'; }();
+    static const bool on = [] { const char *v = research_switch("NP_ONESHOT_CONFORMAL_SUPPORT"); return v != nullptr && *v == '1'; }();
     return on && chunk_support_grounded();
 }
 
 bool chunk_support_grounded()
 {
-    static const bool on = [] { const char *v = std::getenv("NP_ONESHOT_CHUNK_SUPPORT"); return v != nullptr && *v == '2'; }();
+    static const bool on = [] { const char *v = research_switch("NP_ONESHOT_CHUNK_SUPPORT"); return v != nullptr && *v == '2'; }();
     return on;
 }
 
@@ -1233,7 +1234,7 @@ double grounded_route_gap(size_t chunk)
 {
     static const std::vector<double> gaps = [] {
         std::vector<double> out;
-        if (const char *v = std::getenv("NP_ONESHOT_GROUNDED_GAP"); v != nullptr && *v != 0)
+        if (const char *v = research_switch("NP_ONESHOT_GROUNDED_GAP"); v != nullptr && *v != 0)
             for (const char *p = v; *p != 0;) {
                 char *end = nullptr;
                 out.push_back(std::strtod(p, &end));
@@ -1410,7 +1411,7 @@ MultiplanarParams multiplanar_params(const PrintObject &object, const ToolKinema
 
 bool plinth_requested()
 {
-    static const bool on = [] { const char *v = std::getenv("NP_ONESHOT_PLINTH"); return v != nullptr && *v == '1'; }();
+    static const bool on = [] { const char *v = research_switch("NP_ONESHOT_PLINTH"); return v != nullptr && *v == '1'; }();
     return on;
 }
 
@@ -1444,7 +1445,7 @@ Plinth plinth_for_raft(const PrintObject &object, const indexed_triangle_set &me
     Plinth plinth;
     plinth.plate_z = -slicing.object_print_z_min;
     const std::vector<ExPolygons> first = slice_mesh_ex(mesh, { float(0.5 * slicing.first_object_layer_height) });
-    const char  *inset  = std::getenv("NP_ONESHOT_PLINTH_INSET");
+    const char  *inset  = research_switch("NP_ONESHOT_PLINTH_INSET");
     const double reach  = inset != nullptr && *inset != 0 ? -std::atof(inset) : PlinthExpansion;
     if (!first.empty())
         plinth.outline = offset(to_polygons(first.front()), float(scale_(reach)));
@@ -1469,7 +1470,7 @@ bool Plinth::blocked(const Vec3d &p) const
 
 double oneshot_planner_cuts()
 {
-    if (const char *env = std::getenv("NP_ONESHOT_ROUTE_WORK"); env != nullptr && *env != 0)
+    if (const char *env = research_switch("NP_ONESHOT_ROUTE_WORK"); env != nullptr && *env != 0)
         return std::max(0., std::atof(env));
     return OneShotPlannerCuts;
 }
@@ -1637,7 +1638,7 @@ std::shared_ptr<const MultiplanarPlan> clip_multiplanar_slices(PrintObject &obje
 
 int route_clear_mode()
 {
-    static const int mode = [] { const char *v = std::getenv("NP_ONESHOT_ROUTE_CLEAR"); return v != nullptr ? std::atoi(v) : 0; }();
+    static const int mode = [] { const char *v = research_switch("NP_ONESHOT_ROUTE_CLEAR"); return v != nullptr ? std::atoi(v) : 0; }();
     return mode;
 }
 

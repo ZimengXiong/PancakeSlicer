@@ -1,15 +1,8 @@
-import { useEffect, useRef } from 'react';
-import { logNotice, useStore } from '../state/store';
+import { useStore } from '../state/store';
 import './notices.css';
 
 export function NoticeLog() {
   const entries = useStore((s) => s.noticeLog);
-  const projectNotice = useStore((s) => s.projectNotice);
-  const previous = useRef<string | null>(null);
-  useEffect(() => {
-    if (projectNotice && projectNotice !== previous.current) logNotice(projectNotice, 'info');
-    previous.current = projectNotice;
-  }, [projectNotice]);
   if (!entries.length) return null;
   return (
     <details className="notice-log" onKeyDown={(e) => {

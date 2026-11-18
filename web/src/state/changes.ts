@@ -1,8 +1,9 @@
-import type { ConfigValue, PresetType } from '../api/types';
+import type { Config, ConfigValue, PresetType } from '../api/types';
 import { sameValue } from './value-equality';
 export { sameValue } from './value-equality';
-import { isHidden, OPTIONS } from '../options';
-import { effectiveConfig, PRESET_META, presetEdits, resolvePreset, type State } from './store';
+import { isHidden, profileHolds } from '../options';
+import { effectiveConfig, PRESET_META, presetEdits, type State } from './store';
+import { valueBelow, selectionValues } from '../profiles/view';
 
 export type ChangeScope = 'project' | 'object' | 'part' | 'range';
 export interface ChangeTarget { object?: number; volume?: number; range?: number }
@@ -19,12 +20,12 @@ export interface SettingChange {
 
 
 export function presetValue(s: State, type: PresetType, key: string, slot = 0): ConfigValue | undefined {
-  const name = type === 'machine' ? s.printer : type === 'process' ? s.process : s.filamentSlots[slot];
-  return resolvePreset(s, type, name ?? '').config[key] ?? OPTIONS[key]?.default as ConfigValue | undefined;
+  const layers = selectionValues(s, type, slot).layers[key];
+  return layers ? valueBelow(layers, 'project') : undefined;
 }
 
 export function settingValue(s: State, type: PresetType, key: string, slot = 0, target: ChangeTarget = {}): ConfigValue | undefined {
-  let value = effectiveConfig(s, type, slot)[key] ?? OPTIONS[key]?.default as ConfigValue | undefined;
+  let value: ConfigValue | undefined = effectiveConfig(s, type, slot)[key];
   if (type !== 'process') return value;
   const object = s.objects.find((o) => o.id === target.object);
   if (!object) return value;
@@ -33,6 +34,25 @@ export function settingValue(s: State, type: PresetType, key: string, slot = 0, 
   value = volume?.settings[key] ?? value;
   const range = object.ranges?.find((r) => r.id === target.range);
   return range ? key === 'layer_height' ? range.layer_height : range.settings[key] ?? value : value;
+}
+
+const plateOwns = (edits: Config, plate: { settings: Config } | undefined, key: string) => edits[key] === undefined && plate?.settings[key] !== undefined;
+
+export function authoredChanges(s: State, type: PresetType, slot = 0): Config {
+  const edits = presetEdits(s, type, slot);
+  const project = (type === 'filament' ? s.projectPresets?.filaments[slot] : s.projectPresets?.[type]) ?? {};
+  const plate = type === 'process' ? s.projectPlates.find((p) => p.index === s.plateIndex) : undefined;
+  const out: Config = {};
+  for (const key of new Set([...Object.keys(project), ...Object.keys(edits)])) {
+    const value = edits[key] ?? project[key];
+    if (value === undefined || plateOwns(edits, plate, key) || isHidden(key) || PRESET_META.test(key) || !profileHolds(type, key)) continue;
+    out[key] = value;
+  }
+  return out;
+}
+
+export function unsavedRule(edited: Record<string, unknown>, values: Config, below: Config, sources?: Record<string, string | undefined>): (key: string) => boolean {
+  return (key) => key in edited && (!sameValue(key, values[key], below[key]) || sources?.[key] === 'set');
 }
 
 export function selectChanges(s: State, type: PresetType, slot = 0): SettingChange[] {
@@ -44,12 +64,11 @@ export function selectChanges(s: State, type: PresetType, slot = 0): SettingChan
   const project = type === 'filament' ? s.projectPresets?.filaments[slot] : s.projectPresets?.[type];
   const plate = type === 'process' ? s.projectPlates.find((p) => p.index === s.plateIndex) : undefined;
   const global = effectiveConfig(s, type, slot);
-  const globalValue = (key: string) => global[key] ?? OPTIONS[key]?.default as ConfigValue | undefined;
+  const globalValue = (key: string): ConfigValue | undefined => global[key];
   for (const key of new Set([...Object.keys(project ?? {}), ...Object.keys(plate?.settings ?? {}), ...Object.keys(edits)])) {
     const now = global[key];
-    if (now === undefined) continue;
-    const owner: ChangeOwner = edits[key] === undefined && plate?.settings[key] !== undefined
-      ? { name: plate.name || `Plate ${plate.index}`, plate: plate.index } : { name: 'Project' };
+    if (now === undefined || !profileHolds(type, key)) continue;
+    const owner: ChangeOwner = plateOwns(edits, plate, key) && plate ? { name: plate.name || `Plate ${plate.index}`, plate: plate.index } : { name: 'Project' };
     add(key, presetValue(s, type, key, slot), now, 'project', owner);
   }
   if (type !== 'process') return rows;

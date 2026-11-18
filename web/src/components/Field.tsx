@@ -3,27 +3,40 @@ import { ColorPicker } from './ColorPicker';
 import { Dropdown, EditableDropdown } from './Dropdown';
 import { createContext, memo, useContext, useEffect, useId, useRef, useState } from 'react';
 import type { ConfigValue, PresetType } from '../api/types';
-import { normalizeConfigValue, toolValue } from '../config-values';
+import { normalizeConfigValue } from '../config-values';
+import { sameValue } from '../state/value-equality';
 import { DESKTOP_ONLY, OPTIONS, splitKey, useTooltips, type OptionDef } from '../options';
 import { effectiveConfig, getState, resetOption, setOption, toast, useStore } from '../state/store';
 import { fieldIssue, fieldNumber, fieldRange } from './field-validation';
 import { Glyph } from './Glyph';
 import { MODE_HELP, MODE_LABELS } from '../nonplanar-mode';
 import { LabelTip, SourceGlyph } from './InfoTip';
-import { Choice } from './kit';
 import { displayLabel } from './fields/labels';
+import { display } from '../profiles/format';
 import { ScopeMark } from '../profiles/Scope';
 import type { ChangeTarget } from '../state/changes';
+import { slotFilaments } from '../profiles/slots';
 
 const LabelId = createContext<string | undefined>(undefined);
 const useLabel = () => ({ 'aria-labelledby': useContext(LabelId) });
 
 const NUMERIC = new Set(['float', 'floats', 'int', 'ints', 'percent', 'percents', 'float_or_percent', 'floats_or_percents']);
 
+function bounded(def: OptionDef): OptionDef {
+  if (def.sidetext?.trim() !== 'mm/s' || !def.key.endsWith('_speed')) return def;
+  const machine = effectiveConfig(getState(), 'machine');
+  const top = Math.max(...['machine_max_speed_x', 'machine_max_speed_y'].map((k) => Number([machine[k]].flat()[0]) || 0));
+  return top > 0 && (def.max === undefined || top < def.max) ? { ...def, max: top } : def;
+}
 function rejectField(text: string, previous: string, def: OptionDef, label: string): boolean {
+  const own = def; def = bounded(def);
   const issue = fieldIssue(text, def);
   if (!issue) return false;
-  toast(`${label}: ${fieldNumber(text, def)} ${issue.detail}—kept ${fieldNumber(previous, def)} instead.`, null, undefined, 'warning');
+  if (def.max !== own.max && Number(text) > def.max!) {
+    toast('printer_tops_out_mm', { max: def.max, previous });
+    return true;
+  }
+  toast('kept_instead', { label, value: fieldNumber(text, def), detail: issue.detail, value2: fieldNumber(previous, def) });
   return true;
 }
 
@@ -68,10 +81,10 @@ const PROMPTED = new Set(['spiral_mode', 'wall_loops', 'top_shell_layers', 'spar
   'nozzle_temperature_range_low', 'nozzle_temperature_range_high', 'alternate_extra_wall', 'ensure_vertical_shell_thickness', 'seam_slope_type',
   'seam_slope_start_height', 'filament_max_volumetric_speed']);
 
-const sameValue = (a: unknown, b: unknown) => a === b || (Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x, i) => x === b[i]));
+const sameProp = (a: unknown, b: unknown) => a === b || (Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x, i) => x === b[i]));
 const sameFieldProps = (a: Record<string, unknown>, b: Record<string, unknown>) => {
   const keys = Object.keys(a);
-  return keys.length === Object.keys(b).length && keys.every((k) => sameValue(a[k], b[k]));
+  return keys.length === Object.keys(b).length && keys.every((k) => sameProp(a[k], b[k]));
 };
 export const Field = memo(function Field(props: {
   optKey: string;
@@ -87,6 +100,7 @@ export const Field = memo(function Field(props: {
   definition?: Partial<OptionDef>;
   inheritedValue?: ConfigValue;
   overrideDisabled?: boolean;
+  overrideChecked?: boolean;
   onSet?: (key: string, value: ConfigValue) => void;
   onReset?: (key: string) => void;
   resetTitle?: string;
@@ -95,8 +109,8 @@ export const Field = memo(function Field(props: {
   widget?: React.ReactNode;
   source?: 'auto' | 'set' | 'printer';
   sourceText?: string;
-  onResetToBase?: (key: string) => void;
   mixed?: string;
+  overriddenBy?: string;
   mode?: string;
 }) {
   useTooltips();
@@ -111,23 +125,24 @@ export const Field = memo(function Field(props: {
   const vector = def.type.endsWith('s') && (props.optKey.includes('#') || !['points', 'points_groups', 'ints_groups'].includes(def.type));
   const current = props.value === undefined ? undefined : normalizeConfigValue(key, props.value);
   const system = props.systemValue === undefined ? undefined : normalizeConfigValue(key, props.systemValue);
-  const value = elementOf(current ?? (def.nullable ? undefined : def.default as ConfigValue | undefined), idx, vector);
+  const value = elementOf(current, idx, vector);
   const prompt = (k: string) => { if (PROMPTED.has(k)) void import('../configPrompts').then((m) => m.checkSetting(props.type, k, props.slot)); };
   const set = props.onSet ?? ((k: string, v: ConfigValue) => { setOption(props.type, k, v, props.slot); prompt(k); });
   const reset = props.onReset ?? ((k: string) => { resetOption(props.type, k, props.slot); prompt(k); });
   const commit = (el: ConfigValue) => {
-    const next = normalizeConfigValue(key, vector ? withElement(current ?? system ?? def.default as ConfigValue, idx, el) : el);
-    if (system !== undefined && toolValue(key, next) === toolValue(key, system) && !props.onSet) reset(key);
+    const next = normalizeConfigValue(key, vector ? withElement((current ?? system)!, idx, el) : el);
+    if (system !== undefined && sameValue(key, next, system) && !props.onSet) reset(key);
     else set(key, next);
   };
   const fullLabel = props.label ?? (def.label || def.full_label || key);
   const label = props.label === undefined ? displayLabel(key, fullLabel) : fullLabel;
-  const modified = props.dirty || props.source === 'set';
+  const modified = !!props.dirty;
   const sourced = props.source === 'auto' || props.source === 'printer', glyph = <SourceGlyph text={props.sourceText}/>;
   const glyphInUnit = sourced && !props.widget && NUMERIC.has(def.type) && !def.multiline && !(props.mixed && !unmixed);
-  const checked = !props.overrideDisabled && value != null && value !== 'nil' && value !== '';
-  const inherited = props.inheritedValue ?? OPTIONS[key.replace(/^filament_/, '')]?.default;
-  const fallback = elementOf(inherited as ConfigValue | undefined, idx, vector) ?? '0';
+  const checked = !props.overrideDisabled && (props.overrideChecked ?? (value != null && value !== 'nil' && value !== ''));
+  const inherited = props.inheritedValue;
+  const real = (v: ConfigValue | undefined) => v != null && v !== 'nil' && v !== '' ? v : undefined;
+  const fallback = real(value) ?? real(elementOf(system, idx, vector)) ?? real(elementOf(inherited as ConfigValue | undefined, idx, vector)) ?? String(def.min !== undefined && Math.abs(def.min) < 1e9 ? def.min : 0);
   const isSwitch = def.type.replace(/s$/, '') === 'bool' && !FILAMENT_SLOT_KEYS.has(key);
   const isOn = value === true || value === 'true' || value === '1' || value === 1;
   const locked = !!props.disabled || !!def.readonly || (def.nullable && !checked);
@@ -135,19 +150,20 @@ export const Field = memo(function Field(props: {
   const hint = CHOICE_HINTS[key]?.[asText(value)];
   const help = props.tooltip || def.tooltip;
 
+  const was = system !== undefined ? `Was ${display(key, elementOf(system, idx, vector) ?? system)}` : (props.resetTitle ?? 'Reset');
   return (
-    <div className={`opt-line ${def.full_width || def.multiline ? 'full' : ''} ${isSwitch ? 'is-switch' : ''}`} data-opt={key} data-source={props.source} onClick={isSwitch && !locked ? (e) => {
+    <div className={`opt-line ${def.full_width || def.multiline ? 'full' : ''} ${isSwitch ? 'is-switch' : ''}`} data-opt={key} data-source={props.source} data-modified={modified ? 'unsaved' : undefined} onClick={isSwitch && !locked ? (e) => {
       if (!(e.target as HTMLElement).closest('input, button')) commit(isOn ? '0' : '1');
     } : undefined}>
       <span className={`opt-label ${modified ? 'modified' : ''} ${props.hideLabel ? 'field-label-hidden' : ''}`} id={labelId}>
         {def.nullable && <Check className="nullable-toggle" aria-label={`Override ${label}`} checked={checked} disabled={props.overrideDisabled}
-        onCheckedChange={(next) => commit(next ? fallback : 'nil')} />}
+        onCheckedChange={(next) => { if (!next) commit('nil'); else if (!rejectField(asText(fallback), asText(value ?? ''), def, label)) commit(fallback); }} />}
         {props.hideLabel ? <span className="opt-label-text">{label}</span> : <LabelTip label={label} full={fullLabel}>
           <strong>{fullLabel}</strong>{hint && !help?.includes(hint) && <p>{hint}</p>}{help && <HelpText text={help} current={hint}/>}
           {defaultText(def) && <p className="info-meta">Default {defaultText(def)}</p>}
           {!def.enum_values?.length && fieldRange(def) && <p className="info-meta">{fieldRange(def)}</p>}
           <code>{key}</code></LabelTip>}
-      </span>
+      {props.overriddenBy && <span className="opt-object-dot" role="img" aria-label={`Also set on ${props.overriddenBy}`} title={`Also set on ${props.overriddenBy}`}/>}</span>
       <fieldset ref={fieldRef} className="opt-field" aria-description={disabledReason} disabled={props.disabled || (def.nullable && !checked)}>
         <LabelId.Provider value={labelId}>
           {props.widget ?? (props.mixed && !unmixed
@@ -157,16 +173,12 @@ export const Field = memo(function Field(props: {
             : <Widget def={def} label={label} value={def.nullable && !checked ? fallback : value} onCommit={commit} glyph={glyphInUnit ? glyph : undefined} />)}
         </LabelId.Provider>
         {def.sidetext && (props.widget || !NUMERIC.has(def.type)) && <span className="opt-side">{def.sidetext}</span>}
+        {modified && !props.scope && <button type="button" className="reset-icon field-reset" title={was} aria-label={`${label}: ${was}`}
+          onClick={() => reset(key)}><Glyph name="undo" size={14} /></button>}
       </fieldset>
       <span className="opt-undo">
         {sourced && !glyphInUnit && glyph}
-        {props.scope ? <ScopeMark type={props.type} slot={props.slot} optKey={key} target={props.scope.target} /> : <>
-        {modified && (
-          <button type="button" className="reset-icon" aria-label={`${props.resetTitle ?? 'Reset to the preset value'}: ${label}`} onClick={() => props.dirty || !props.onResetToBase ? reset(key) : props.onResetToBase(key)}>
-            <Glyph name="undo" size={14} />
-          </button>
-        )}
-        {props.extra}</>}
+        {props.scope ? <ScopeMark type={props.type} slot={props.slot} optKey={key} target={props.scope.target} /> : props.extra}
       </span>
     </div>
   );
@@ -176,7 +188,7 @@ const FILAMENT_SLOT_KEYS = new Set(['support_filament', 'support_interface_filam
   'inner_wall_filament_id', 'sparse_infill_filament_id', 'internal_solid_filament_id', 'top_surface_filament_id', 'bottom_surface_filament_id']);
 
 function SlotChoice({ value, onCommit }: { value: string; onCommit: (v: ConfigValue) => void }) {
-  const slots = useStore((s) => s.filamentSlots);
+  const slots = useStore((s) => slotFilaments(s));
   useStore((s) => s.filamentEdits);
   const type = (i: number) => { const t = effectiveConfig(getState(), 'filament', i).filament_type; return String(Array.isArray(t) ? t[0] : t ?? ''); };
   const known = value === '0' || (Number(value) >= 1 && Number(value) <= slots.length);
@@ -203,8 +215,6 @@ function Widget({ def, label, value, onCommit, glyph }: { def: OptionDef; label:
     const v = asText(value);
     const known = def.enum_values.includes(v);
     const labels = def.enum_values.map((ev, i) => def.enum_labels?.[i] ?? ev);
-    if (known && !def.enum_notes?.some(Boolean) && def.gui_type !== 'select_close' && segmented(labels)) return <Choice label={def.full_label || def.label || def.key} value={v} disabled={def.readonly} onChange={onCommit}
-      options={def.enum_values.map((ev, i) => ({ id: ev, label: labels[i], disabled: def.enum_disabled?.includes(ev) }))} />;
     return (
       <Dropdown className="combo" {...named} value={v} disabled={def.readonly} onValueChange={onCommit} options={[...(!known ? [{ value: v, label: v }] : []), ...def.enum_values.map((ev, i) => (
           ({ value: ev, label: def.enum_notes?.[i] ? <>{labels[i]}<span className="menu-note">{def.enum_notes[i]}</span></> : labels[i], search: labels[i], disabled: def.enum_disabled?.includes(ev) })
@@ -225,17 +235,15 @@ function OpenNumber({ def, label, value, onCommit }: { def: OptionDef; label: st
   const named = useLabel(), errorId = useId();
   const [draft, setDraft] = useState(value);
   useEffect(() => setDraft(value), [value]);
-  const issue = fieldIssue(draft, def);
+  const issue = draft.trim() !== '' ? fieldIssue(draft, bounded(def)) : undefined;
   return <span className="control-stack">
-    <EditableDropdown {...named} value={value} readOnly={def.readonly} className="text" aria-invalid={!!issue || undefined} aria-describedby={issue ? errorId : undefined}
+    <EditableDropdown {...named} value={value} readOnly={def.readonly} className="text num" aria-invalid={!!issue || undefined} aria-describedby={issue ? errorId : undefined}
       onInputValueChange={setDraft} onValueChange={(next) => { setDraft(next); if (next !== value && !def.readonly && !rejectField(next, value, def, label)) onCommit(next); }}
       options={def.enum_values!.map((v, i) => ({ value: v, label: def.enum_labels?.[i] ?? v }))} />
     {issue && <span className="control-error" id={errorId} role="status">{issue.inline}</span>}
   </span>;
 }
 
-const segmented = (labels: string[]) => labels.length >= 2 && labels.length <= 4 && labels.every((l) => l.trim())
-  && labels.reduce((w, l) => w + l.length * 7 + 16, 0) <= 150;
 
 const floatStep = (n: number) => (n ? 10 ** (Math.floor(Math.log10(Math.abs(n))) - 1) : 0.1);
 
@@ -258,17 +266,19 @@ function TextBox(props: { value: string; label?: string; multiline?: boolean; nu
   const percentOnly = !!props.numeric && /^percents?$/.test(props.def?.type ?? '') && props.def?.sidetext?.trim() === '%';
   const shown = (v: string) => percentOnly ? v.replace(/\s*%\s*$/, '') : v;
   const [text, setText] = useState(shown(props.value));
-  const issue = props.numeric && props.def ? fieldIssue(text, props.def) : undefined;
+  const issue = props.numeric && props.def && text.trim() !== '' ? fieldIssue(text, bounded(props.def)) : undefined;
   const latest = useRef(text), byKey = useRef(false);
   latest.current = text;
   useEffect(() => setText(shown(props.value)), [props.value]);
+  const stored = useRef(props.value); stored.current = props.value;
+  const settle = () => requestAnimationFrame(() => setTimeout(() => { latest.current = shown(stored.current); setText(shown(stored.current)); }, 0));
   const commit = () => {
     const keyed = byKey.current; byKey.current = false;
     const text = percentOnly && latest.current.trim() && !latest.current.trim().endsWith('%') ? `${latest.current.trim()}%` : latest.current;
     if (props.readOnly || text === props.value) return;
-    if (props.numeric && props.def && rejectField(text, props.value, props.def, label)) return;
-    if (keyed) { const commitText = props.onCommit; afterPaint(() => commitText(text)); }
-    else props.onCommit(text);
+    if (props.numeric && props.def && rejectField(text, props.value, props.def, label)) { settle(); return; }
+    if (keyed) { const commitText = props.onCommit; afterPaint(() => { commitText(text); settle(); }); }
+    else { props.onCommit(text); settle(); }
   };
   const stepNumber = (direction: number, big = false, keyboard = false) => {
     if (props.readOnly || !props.def) return;
@@ -279,7 +289,7 @@ function TextBox(props: { value: string; label?: string; multiline?: boolean; nu
     const next = Math.min(props.def.max ?? Infinity, Math.max(props.def.min ?? -Infinity, requested));
     if (next !== requested) {
       const issue = fieldIssue(`${requested}${pct ? '%' : ''}`, props.def);
-      toast(`${label}: ${fieldNumber(`${requested}${pct ? '%' : ''}`, props.def)} ${issue?.detail}—using ${fieldNumber(`${next}${pct ? '%' : ''}`, props.def)}.`, null, undefined, 'warning');
+      toast('using', { label, value: fieldNumber(`${requested}${pct ? '%' : ''}`, props.def), detail: issue?.detail, value2: fieldNumber(`${next}${pct ? '%' : ''}`, props.def) });
     }
     const value = `${next}${pct ? '%' : ''}`;
     if (rejectField(value, props.value, props.def, label)) return;

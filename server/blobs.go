@@ -44,13 +44,13 @@ func (b *blobStore) missing(w http.ResponseWriter, r *http.Request) {
 		SHA256 []string `json:"sha256"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body) != nil || len(body.SHA256) > 4096 {
-		fail(w, 400, "missing needs {\"sha256\": [...]} with at most 4096 digests")
+		fail(w, 400, "missing_needs_sha256_most")
 		return
 	}
 	missing := []string{}
 	for _, sum := range body.SHA256 {
 		if !blobDigest.MatchString(sum) {
-			fail(w, 400, "digests must be lowercase hex SHA-256")
+			fail(w, 400, "digests_must_lowercase_hex")
 			return
 		}
 		if !b.has(sum) {
@@ -63,7 +63,7 @@ func (b *blobStore) missing(w http.ResponseWriter, r *http.Request) {
 func (b *blobStore) put(w http.ResponseWriter, r *http.Request, maxUpload int64) {
 	sum := r.PathValue("sha256")
 	if !blobDigest.MatchString(sum) {
-		fail(w, 400, "blob name must be its lowercase hex SHA-256")
+		fail(w, 400, "blob_name_must_lowercase")
 		return
 	}
 	if b.has(sum) {
@@ -73,12 +73,12 @@ func (b *blobStore) put(w http.ResponseWriter, r *http.Request, maxUpload int64)
 	}
 	dir := filepath.Dir(b.path(sum))
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		fail(w, 507, "Oops! File storage on the server isn't available right now.")
+		fail(w, 507, "file_storage_server_isnt")
 		return
 	}
 	f, err := os.CreateTemp(dir, ".blob-*")
 	if err != nil {
-		fail(w, 507, "Oops! File storage on the server isn't available right now.")
+		fail(w, 507, "file_storage_server_isnt")
 		return
 	}
 	defer os.Remove(f.Name())
@@ -89,22 +89,22 @@ func (b *blobStore) put(w http.ResponseWriter, r *http.Request, maxUpload int64)
 	var timeout net.Error
 	switch {
 	case errors.As(err, &tooLarge):
-		fail(w, 413, "Oops! That file is larger than the server's maximum upload size.")
+		fail(w, 413, "file_larger_than_servers")
 		return
 	case errors.As(err, &timeout) && timeout.Timeout():
 		w.Header().Set("Connection", "close")
-		fail(w, http.StatusRequestTimeout, "Oops! The upload took too long and timed out.")
+		fail(w, http.StatusRequestTimeout, "upload_took_too_long")
 		return
 	case err != nil:
-		fail(w, 400, "Oops! The file upload was interrupted before it finished.")
+		fail(w, 400, "file_upload_interrupted_before")
 		return
 	}
 	if hex.EncodeToString(hash.Sum(nil)) != sum {
-		fail(w, 400, "Oops! The uploaded file's checksum didn't match—please try uploading it again.")
+		fail(w, 400, "uploaded_files_checksum_didnt")
 		return
 	}
 	if err := os.Chmod(f.Name(), 0400); err != nil || os.Rename(f.Name(), b.path(sum)) != nil {
-		fail(w, 507, "Oops! The server couldn't save the uploaded file.")
+		fail(w, 507, "server_couldnt_save_uploaded")
 		return
 	}
 	go b.evict()

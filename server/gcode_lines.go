@@ -69,33 +69,33 @@ func (s *Server) gcodeLines(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if (j.Request.Output != "gcode" && j.Request.Output != "gcode.3mf") || j.AwaitFinished(r.Context()) != StateDone {
-		fail(w, 409, "No finished G-code file was found for this job.")
+		fail(w, 409, "no_finished_g_code")
 		return
 	}
 	path := j.OutputPath("gcode")
 	f, err := os.Open(path)
 	if err != nil {
-		fail(w, 410, "Oops! That sliced file has expired. Please slice the plate again.")
+		fail(w, 410, "sliced_file_has_expired")
 		return
 	}
 	defer f.Close()
 	st, err := f.Stat()
 	if err != nil {
-		fail(w, 500, err.Error())
+		fail(w, 500, "gcode_lines_internal", err.Error())
 		return
 	}
 	ix, err := indexGcode(path, f, st.Size())
 	if err != nil {
-		fail(w, 500, err.Error())
+		fail(w, 500, "gcode_lines_internal", err.Error())
 		return
 	}
 	k, err := strconv.Atoi(r.URL.Query().Get("block"))
 	if err != nil || k < 0 || k >= len(ix.starts) {
-		fail(w, 404, "Couldn't find that G-code section.")
+		fail(w, 404, "couldnt_find_g_code")
 		return
 	}
 	if _, err := f.Seek(ix.starts[k], io.SeekStart); err != nil {
-		fail(w, 500, err.Error())
+		fail(w, 500, "gcode_lines_internal", err.Error())
 		return
 	}
 	lines := make([]string, 0, min(gcodeBlockLines, ix.total-k*gcodeBlockLines))

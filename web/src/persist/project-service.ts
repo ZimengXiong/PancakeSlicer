@@ -1,11 +1,12 @@
 import { newKey, type ProjectMeta, type ProjectStore, type StoredDocBase, type ProjectCommandAck, type ProjectCommandStatus, type ProfileReferenceDocuments } from './backend';
 import { jsonWrite, putAsset, readAsset, routeKey } from './service';
+import type { NoticeOwner } from '../api/access';
 import { captureProjectWire, prepareOnce, projectJson as serviceJson, projectWrite } from './project-wire';
 interface ProjectRecord { meta: ProjectMeta; doc: StoredDocBase; jobReferences?: unknown }
 const projectPath = (id: string) => `/api/projects/${routeKey(id)}`;
 const pendingSaves = new Map<string, Promise<{ request: RequestInit; savedAt: number }>>();
-async function required<T>(path: string, init?: RequestInit): Promise<T> {
-  const value = await serviceJson<T>(path, init);
+async function required<T>(path: string, init?: RequestInit, owner?: NoticeOwner): Promise<T> {
+  const value = await serviceJson<T>(path, init, false, owner);
   if (value === null) throw new Error('Oops! The server didn\'t return any data for this project.');
   return value;
 }
@@ -62,7 +63,9 @@ function executeCommand(entry: PendingCommand): Promise<ProjectCommandAck | Proj
     entry.result = ack; entry.status.state = 'acknowledged'; publishCommands();
     return ack;
   }).catch((error: unknown) => {
-    entry.status.state = (error as { status?: number })?.status === 409 ? 'conflict' : 'failed';
+    const e = error as { status?: number; code?: string };
+    entry.status.held = e?.code === 'lease_held' || e?.code === 'lease_lost';
+    entry.status.state = e?.status === 409 && !entry.status.held ? 'conflict' : 'failed';
     entry.status.error = error instanceof Error ? error.message : 'Oops! Couldn\'t update project'; publishCommands(); throw error;
   });
   entry.running = task;
@@ -91,7 +94,7 @@ export const serviceStore: ProjectStore = {
     for (const [prior, preparation] of [...pendingSaves]) {
       if (!prior.startsWith(`${id}/${revision}/`) || prior === `${id}/${revision}/${capture.digest}`) continue;
       const request = await preparation.then((p) => p.request, () => null);
-      const replay = request && await required<{revision:number}>(projectPath(id), request).catch(() => null);
+      const replay = request && await required<{revision:number}>(projectPath(id), request, 'project').catch(() => null);
       if (pendingSaves.get(prior) === preparation) pendingSaves.delete(prior);
       if (replay?.revision === revision + 1) { revision = replay.revision; break; }
     }
@@ -104,7 +107,7 @@ export const serviceStore: ProjectStore = {
     });
     let pending: Awaited<typeof preparation>;
     try { pending = await preparation; } finally { capture.release(); }
-    const ack = await required<{revision:number}>(projectPath(id), pending.request);
+    const ack = await required<{revision:number}>(projectPath(id), pending.request, 'project');
     if (ack.revision !== revision + 1) throw new Error('Oops! Couldn\'t verify the saved project version.');
     if (pendingSaves.get(key) === preparation) pendingSaves.delete(key);
     return { revision: ack.revision, savedAt: pending.savedAt };
@@ -117,7 +120,7 @@ export const serviceStore: ProjectStore = {
   subscribeCommands(listener) { commandListeners.add(listener); return () => { commandListeners.delete(listener); }; },
   discardRejectedCommand(operationId) {
     const found = [...commands].find(([, entry]) => entry.status.operationId === operationId);
-    if (!found || found[1].status.state !== 'conflict' || found[1].running) throw new Error('Wait until the save conflict finishes checking before discarding changes.');
+    if (!found || found[1].status.state !== 'conflict' && !found[1].status.held || found[1].running) throw new Error('Wait until the save conflict finishes checking before discarding changes.');
     commands.delete(found[0]); publishCommands();
   },
   referenceDocuments: () => required<ProfileReferenceDocuments>('/api/projects/references'),

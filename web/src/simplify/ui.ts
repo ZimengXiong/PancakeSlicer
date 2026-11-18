@@ -22,5 +22,5 @@ export function noteSimplified(list: Simplified[]) {
   const done = list.filter((s) => s.trianglesAfter < s.trianglesBefore);
   if (!done.length) return;
   const before = done.reduce((n, s) => n + s.trianglesBefore, 0), after = done.reduce((n, s) => n + s.trianglesAfter, 0);
-  toast(`Simplified ${count(before)} → ${count(after)} triangles`);
+  toast('simplified_triangles', { value: count(before), value2: count(after) });
 }

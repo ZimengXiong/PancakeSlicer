@@ -3,7 +3,7 @@ import { Dropdown } from './Dropdown';
 import { More } from './kit';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { changeVolumeType, setState, useStore, type TextSpec } from '../state/store';
-import { editedText, loadFonts, surfaceOk, updateText, type Font } from '../plater/text';
+import { editedText, loadFonts, updateText, type Font } from '../plater/text';
 import { setTextPlacing, subscribeTextPlacing, textPlacing } from '../plater/textPlacing';
 
 const OPERATIONS = [['part', 'Join'], ['negative', 'Cut'], ['modifier', 'Modifier']] as const;
@@ -14,8 +14,6 @@ export default function TextPanel() {
   const current = useStore((s) => editedText(s)?.spec);
   const [fonts, setFonts] = useState<Font[]>([]);
   const placing = useSyncExternalStore(subscribeTextPlacing, textPlacing);
-  const canSurface = useStore((s) => !!v && surfaceOk(s, v.type));
-  const raises = useStore((s) => !!s.features.emboss_surface_outside);
   useEffect(() => () => setTextPlacing(false), []);
   const [spec, setSpec] = useState<TextSpec | null>(current ?? null);
   const key = objectId !== undefined ? `${objectId}:${v?.id ?? ''}` : '';
@@ -54,7 +52,7 @@ export default function TextPanel() {
       </div>
       {v && (
         <label className="prefs-row cut-joint-row"><span>Operation</span>
-          <Dropdown className="combo" value={v.type} aria-label="Operation" onValueChange={(next) => { changeVolumeType(objectId, v.id, next as typeof v.type); if (spec.surface) void updateText(spec);  }} options={[...OPERATIONS.map(([t, label]) => ({ value: t, label, disabled: t === 'part' && !!spec.surface && !raises }))]} />
+          <Dropdown className="combo" value={v.type} aria-label="Operation" onValueChange={(next) => { changeVolumeType(objectId, v.id, next as typeof v.type); if (spec.surface) void updateText(spec);  }} options={[...OPERATIONS.map(([t, label]) => ({ value: t, label, disabled: false }))]} />
         </label>
       )}
       <More id="text">
@@ -65,9 +63,9 @@ export default function TextPanel() {
         {num('Char gap', 'charGap', -100, 100, 1)}
         {num('Line gap', 'lineSpacing', 0.1, 10, 0.1)}
         {v && (
-          <label className="prefs-row cut-joint-row" title={canSurface ? undefined : v.type === 'part' ? 'Update the slicing service to raise text on a curved surface; until then, use Cut or Modifier' : 'Update your slicing service to wrap SVGs onto curved surfaces.'}>
+          <label className="prefs-row cut-joint-row">
             <span>Use surface</span>
-            <Check checked={!!spec.surface || placing} disabled={!canSurface && !spec.surface}
+            <Check checked={!!spec.surface || placing}
               onCheckedChange={(next) => { if (next) setTextPlacing(true); else { setTextPlacing(false); if (spec.surface) edit({ surface: undefined }); } }} />
           </label>
         )}

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
-import type { SystemPreset } from '../api/types';
+import type { PrinterPreset } from '../state/store';
 import { bedAsset } from './bed-assets';
 import { bedBounds, parsePoints } from './geometry';
 import { isDark } from '../theme';
@@ -11,7 +11,7 @@ export const sceneColors = () => {
   return { background: token('--canvas', 0xd3d3d3), plate: token('--bed-plate', 0x363636), texture: token('--bed-texture', 0x323232), grid: token('--bed-grid', 0x646464), outline, model: token('--bed-texture', 0x2c2c2c), shell: outline };
 };
 
-export const bedKey = (machine: SystemPreset | undefined) =>
+export const bedKey = (machine: PrinterPreset | undefined) =>
   `${machine?.name}|${machine?.config.printable_area}|${machine?.config.bed_custom_texture}|${machine?.config.bed_custom_model}|${isDark()}`;
 
 export function showBedFor(bed: THREE.Object3D | null | undefined, camera: THREE.Camera, gridlines = true) {
@@ -66,7 +66,7 @@ function loadSvgTexture(url: string) {
   return texCache.get(url)!;
 }
 
-export function buildBed(machine: SystemPreset | undefined, onReady: () => void): THREE.Group {
+export function buildBed(machine: PrinterPreset | undefined, onReady: () => void): THREE.Group {
   const group = new THREE.Group();
   group.name = 'bed';
   const colors = sceneColors();

@@ -1,17 +1,18 @@
 import { createMachine, type StateNode } from '../flow/fsm';
 import { projectId } from './identity';
 import { jsonWrite, serviceJson } from './service';
+import type { NoticeOwner } from '../api/access';
 export type JsonValue = null | boolean | number | string | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 export type ServiceDocument = Record<string, unknown>;
 export type DocumentSyncState = 'loading' | 'ready' | 'debounced' | 'writing' | 'failed' | 'conflict';
-export type DocumentSnapshot<D> = { state: DocumentSyncState; revision: number; document: D; error: string | null };
+export type DocumentSnapshot<D> = { state: DocumentSyncState; revision: number; document: D; error: string | null; code: string | null };
 type SyncEvent = { type: 'PATCH' } | { type: 'HYDRATED' } | { type: 'WRITE'; retry: boolean; auto: boolean } | { type: 'ACK' }
-  | { type: 'FAIL'; error: string; conflict: boolean; transient: boolean } | { type: 'ONLINE' } | { type: 'RELOAD' };
-interface SyncContext { error: string | null; transient: boolean; retryDelay: number }
-type KeyMerge = (remote: unknown, local: unknown) => unknown;
+  | { type: 'FAIL'; error: string; code: string | null; conflict: boolean; transient: boolean } | { type: 'ONLINE' } | { type: 'RELOAD' };
+interface SyncContext { error: string | null; code: string | null; transient: boolean; retryDelay: number }
+export type KeyMerge = (remote: unknown, local: unknown) => unknown;
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-export function createServiceDocument<D extends ServiceDocument>(path: string, method: 'PUT' | 'PATCH', beforeWrite: (document: D) => Promise<unknown> = () => Promise.resolve(), merge: Record<string, KeyMerge> = {}) {
-  let current: DocumentSnapshot<D> = { state: 'loading', revision: 0, document: {} as D, error: null };
+export function createServiceDocument<D extends ServiceDocument>(path: string, method: 'PUT' | 'PATCH', owner: NoticeOwner, beforeWrite: (document: D) => Promise<unknown> = () => Promise.resolve(), merge: Partial<Record<keyof D & string, KeyMerge>> = {}) {
+  let current: DocumentSnapshot<D> = { state: 'loading', revision: 0, document: {} as D, error: null, code: null };
   let hydrated = false, loading: Promise<DocumentSnapshot<D>> | null = null, running: Promise<void> | null = null;
   let serial = 0, savedSerial = 0;
   let beforeHydration: Partial<D> = {};
@@ -23,21 +24,21 @@ export function createServiceDocument<D extends ServiceDocument>(path: string, m
     return error instanceof TypeError || error instanceof DOMException || status === 408 || status === 429 || status >= 500; };
   const auto = () => { void write(false, true).catch(() => {}); };
   const fail = [
-    { target: 'conflict' as const, guard: (_: SyncContext, e: Extract<SyncEvent, { type: 'FAIL' }>) => e.conflict, action: (_: SyncContext, e: Extract<SyncEvent, { type: 'FAIL' }>) => ({ error: e.error, transient: false }) },
+    { target: 'conflict' as const, guard: (_: SyncContext, e: Extract<SyncEvent, { type: 'FAIL' }>) => e.conflict, action: (_: SyncContext, e: Extract<SyncEvent, { type: 'FAIL' }>) => ({ error: e.error, code: e.code, transient: false }) },
     { target: 'failed' as const, action: (c: SyncContext, e: Extract<SyncEvent, { type: 'FAIL' }>) =>
-      ({ error: e.error, transient: e.transient, retryDelay: e.transient ? Math.min(c.retryDelay * 2 || 1000, 10_000) : c.retryDelay }) },
+      ({ error: e.error, code: e.code, transient: e.transient, retryDelay: e.transient ? Math.min(c.retryDelay * 2 || 1000, 10_000) : c.retryDelay }) },
   ];
-  const refail = { action: (_: SyncContext, e: Extract<SyncEvent, { type: 'FAIL' }>) => ({ error: e.error }) };
-  const hydratedAfterFailure = [{ target: 'debounced' as const, guard: () => savedSerial < serial, action: () => ({ error: null }) }, { target: 'ready' as const, action: () => ({ error: null }) }];
+  const refail = { action: (_: SyncContext, e: Extract<SyncEvent, { type: 'FAIL' }>) => ({ error: e.error, code: e.code }) };
+  const hydratedAfterFailure = [{ target: 'debounced' as const, guard: () => savedSerial < serial, action: () => ({ error: null, code: null }) }, { target: 'ready' as const, action: () => ({ error: null, code: null }) }];
   const edits: StateNode<DocumentSyncState, SyncEvent, SyncContext>['on'] = { PATCH: 'debounced', WRITE: 'writing', RELOAD: 'loading' };
   const sync = createMachine<DocumentSyncState, SyncEvent, SyncContext>({
-    id: `service-document:${path}`, initial: 'loading', strict: true, context: { error: null, transient: false, retryDelay: 0 },
+    id: `service-document:${path}`, initial: 'loading', strict: true, context: { error: null, code: null, transient: false, retryDelay: 0 },
     states: {
       loading: { on: { ...edits, HYDRATED: 'ready', FAIL: fail } },
       ready: { on: edits },
       debounced: { on: { ...edits, HYDRATED: {}, FAIL: fail }, after: { ms: 500, action: () => { void flush().catch(() => {}); } } },
       writing: { on: { PATCH: {}, HYDRATED: {}, RELOAD: 'loading', FAIL: fail,
-        ACK: [{ target: 'debounced', guard: () => savedSerial < serial, action: () => ({ error: null, retryDelay: 0 }) }, { target: 'ready', action: () => ({ error: null, retryDelay: 0 }) }] } },
+        ACK: [{ target: 'debounced', guard: () => savedSerial < serial, action: () => ({ error: null, code: null, retryDelay: 0 }) }, { target: 'ready', action: () => ({ error: null, code: null, retryDelay: 0 }) }] } },
       failed: { on: { PATCH: {}, RELOAD: 'loading', FAIL: refail, HYDRATED: hydratedAfterFailure,
         WRITE: { target: 'writing', guard: (c, e) => e.retry || (e.auto && c.transient) },
         ONLINE: { guard: (c) => c.transient, action: auto } },
@@ -46,9 +47,11 @@ export function createServiceDocument<D extends ServiceDocument>(path: string, m
     },
   });
   if (typeof window !== 'undefined') window.addEventListener('online', () => { if (sync.get().value === 'failed') sync.send({ type: 'ONLINE' }); });
+  if (typeof window !== 'undefined') window.addEventListener('pagehide', () => { if (sync.get().value === 'debounced') void flush().catch(() => {}); });
   const publish = (patch: Partial<DocumentSnapshot<D>>) => { current = { ...current, ...patch }; listeners.forEach((listener) => listener()); };
-  sync.subscribe(({ value, context }) => publish({ state: value, error: context.error }));
+  sync.subscribe(({ value, context }) => publish({ state: value, error: context.error, code: context.code }));
   const message = (error: unknown) => error instanceof Error ? error.message : String(error);
+  const codeOf = (error: unknown) => (error as { code?: unknown })?.code as string | undefined ?? null;
   const hydrate = () => {
     if (hydrated) return Promise.resolve(current);
     loading ??= serviceJson<{revision:number;document:D}>(path).then((remote) => {
@@ -59,7 +62,7 @@ export function createServiceDocument<D extends ServiceDocument>(path: string, m
       sync.send({ type: 'HYDRATED' });
       return current;
     }).catch((error: unknown) => {
-      loading = null; sync.send({ type: 'FAIL', error: message(error), conflict: false, transient: transient(error) }); throw error;
+      loading = null; sync.send({ type: 'FAIL', error: message(error), code: codeOf(error), conflict: false, transient: transient(error) }); throw error;
     });
     return loading;
   };
@@ -79,15 +82,14 @@ export function createServiceDocument<D extends ServiceDocument>(path: string, m
     sync.send({ type: 'WRITE', retry, auto: automatic });
     running = (async () => {
       if (!hydrated) await hydrate();
-      let rebases = 0;
       while (savedSerial < serial) {
         operation ??= { operationId: projectId(), expectedRevision: current.revision, document: current.document, serial };
         const captured = operation, { serial: _serial, ...body } = captured;
         await beforeWrite(captured.document);
         let ack: { revision: number } | null;
-        try { ack = await serviceJson<{revision:number}>(path, jsonWrite(method, body)); }
+        try { ack = await serviceJson<{revision:number}>(path, jsonWrite(method, body), false, owner); }
         catch (error) {
-          if ((error as { code?: string }).code !== 'revision_conflict' || ++rebases > 3) throw error;
+          if ((error as { code?: string }).code !== 'revision_conflict') throw error;
           const carried = error as { revision?: number; document?: D };
           const remote = carried.document && Number.isSafeInteger(carried.revision) ? { revision: carried.revision!, document: carried.document }
             : await serviceJson<{revision:number;document:D}>(path);
@@ -97,7 +99,7 @@ export function createServiceDocument<D extends ServiceDocument>(path: string, m
             const theirs = remote.document[key], mine = current.document[key];
             if (same(theirs, base[key])) next[key] = mine;
             else if (same(theirs, mine)) unsaved.delete(key);
-            else if (merge[key]) next[key] = merge[key](theirs, mine);
+            else if (merge[key as keyof D & string]) next[key] = merge[key as keyof D & string]!(theirs, mine);
             else if (retry) next[key] = mine;
             else throw error;
           }
@@ -110,7 +112,7 @@ export function createServiceDocument<D extends ServiceDocument>(path: string, m
       }
     })().then(() => { running = null; sync.send({ type: 'ACK' }); }, (error: unknown) => {
       running = null;
-      sync.send({ type: 'FAIL', error: message(error), conflict: error instanceof Error && error.name === 'ProjectConflictError', transient: transient(error) });
+      sync.send({ type: 'FAIL', error: message(error), code: codeOf(error), conflict: codeOf(error) === 'revision_conflict', transient: transient(error) });
       throw error;
     });
     return running;

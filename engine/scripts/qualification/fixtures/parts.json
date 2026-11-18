@@ -9,7 +9,7 @@
   "parts": [
     {
       "id": "benchy",
-      "file": "models/benchy.stl",
+      "file": "handy_models/3DBenchy.drc",
       "show": "Cabin roof and foredeck curved top roads.",
       "pack_candidate": true,
       "preferred_arm": "curved",

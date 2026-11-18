@@ -1,7 +1,6 @@
 import { beginBusy } from '../state/busy';
 import { Box3, Matrix4, Vector3, type BufferGeometry } from 'three';
 import { arrangeSettings } from './arrangeSettings';
-import { flushReady } from '../flush-state';
 import { appendLibrary, firstLayer, plateSignature } from '../slice-input';
 import { jobValue } from '../options';
 import { responseError } from '../api/access';
@@ -20,7 +19,6 @@ export async function orientJob(o: PlateObject, operation: 'orient' | 'orient-sc
   const fd = new FormData();
   fd.append('operation', operation);
   await attachFiles(fd, [{ name: 'orient.stl', blob: await bakeStl(o) }]);
-  await flushReady();
   appendLibrary(fd, s, Object.fromEntries(Object.entries(o.settings).map(([key, value]) => [key, jobValue(key, value)])));
   const response = await postJob(fd);
   if (!response.ok) throw await responseError(response);
@@ -39,18 +37,12 @@ export async function orientJob(o: PlateObject, operation: 'orient' | 'orient-sc
 }
 
 async function orient(o: PlateObject): Promise<PlateObject> {
-  if (getState().features.orient_scores) {
-    const scores = (await orientJob(o, 'orient-scores'))?.scores;
-    if (!Array.isArray(scores)) throw new Error('Oops! We couldn\'t calculate orientation options for this model.');
-    const best = (scores as Record<string, unknown>[]).find((x) => (x.object ?? 0) === 0 && x.best === true);
-    const axis = best?.axis as number[], angle = Number(best?.angle_deg);
-    if (!best || best.original === true || !Array.isArray(axis) || axis.length !== 3 || !Number.isFinite(angle) || Math.abs(angle) < 0.01) return o;
-    return withRotation(o, axisAngle(axis, angle));
-  }
-  const rotation = (await orientJob(o, 'orient'))?.rotation as number[];
-  if (!Array.isArray(rotation) || rotation.length !== 9 || !rotation.every(Number.isFinite))
-    throw new Error('Oops! We couldn\'t find a better orientation for this model.');
-  return withRotation(o, rotation);
+  const scores = (await orientJob(o, 'orient-scores'))?.scores;
+  if (!Array.isArray(scores)) throw new Error('Oops! We couldn\'t calculate orientation options for this model.');
+  const best = (scores as Record<string, unknown>[]).find((x) => (x.object ?? 0) === 0 && x.best === true);
+  const axis = best?.axis as number[], angle = Number(best?.angle_deg);
+  if (!best || best.original === true || !Array.isArray(axis) || axis.length !== 3 || !Number.isFinite(angle) || Math.abs(angle) < 0.01) return o;
+  return withRotation(o, axisAngle(axis, angle));
 }
 
 async function splitObject(o: PlateObject): Promise<PlateObject[]> {
@@ -109,7 +101,7 @@ export async function run(operation: 'orient' | 'split' | 'split-parts', all: bo
   const s = getState();
   if (busy || s.project || s.tab !== 'prepare') return;
   const plateWide = operation === 'orient' && (all || !s.selected);
-  if (plateWide && s.projectPlates.find((p) => p.index === s.plateIndex)?.locked) return toast('This plate is locked');
+  if (plateWide && s.projectPlates.find((p) => p.index === s.plateIndex)?.locked) return toast('plate_locked');
   const objects = plateWide ? s.objects : s.objects.filter((o) => o.id === s.selected?.object);
   if (!objects.length) return;
   busy = true;
@@ -131,7 +123,7 @@ export async function run(operation: 'orient' | 'split' | 'split-parts', all: bo
       () => setState({ objects: next, selected: { object: first.id, instance: first.instances[0].id }, toast: null }));
   } catch (error) {
     created.forEach((o) => o.geometry.dispose());
-    toast(error instanceof Error ? error.message : String(error));
+    toast('operations_failed', { detail: error instanceof Error ? error.message : String(error) });
   } finally {
     busy = false;
     overlay.end();
@@ -139,7 +131,6 @@ export async function run(operation: 'orient' | 'split' | 'split-parts', all: bo
 }
 
 export async function plateForm(s: State, operation: string): Promise<FormData> {
-  await flushReady();
   const { plate, files } = await plateJson(s.objects, firstLayer(s));
   const fd = new FormData();
   fd.append('operation', operation);
@@ -161,7 +152,7 @@ export async function arrangeNative() {
     const { distance, rotation, multiMaterials } = arrangeSettings();
     if (distance > 0) fd.append('arrange_spacing', String(distance));
     fd.append('arrange_rotation', rotation ? '1' : '0');
-    if (s.features.arrange_materials) fd.append('arrange_multi_materials', multiMaterials ? '1' : '0');
+    fd.append('arrange_multi_materials', multiMaterials ? '1' : '0');
     const response = await postJob(fd);
     if (!response.ok) throw await responseError(response);
     const { id } = await response.json() as { id: string };
@@ -190,9 +181,9 @@ export async function arrangeNative() {
       return { ...turned, x: turned.x + r.x - cx + (r.plate - 1) * width * 1.2, y: turned.y + r.y - cy };
     }) }));
     undoable('Arrange', () => setState({ objects }));
-    if (away) toast(`${away} copy${away > 1 ? 's do' : ' does'} couldn't fit on the plate`);
+    if (away) toast('copyx_couldnt_fit_plate', { away, value: away > 1 ? 's do' : ' does' });
   } catch (e) {
-    toast(`Oops! Couldn't auto-arrange the plate: ${e instanceof Error ? e.message : e}`);
+    toast('couldnt_auto_arrange_plate', { detail: e instanceof Error ? e.message : e });
   } finally {
     busy = false;
     overlay.end();

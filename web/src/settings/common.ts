@@ -1,6 +1,7 @@
 import type { PresetType } from '../api/types';
 import { isHidden, modeVisible, OPTIONS, splitKey, TABS, type OptionMode, type TabGroup, type TabPage } from '../options';
 import { effectiveConfig, effectiveMode, type State } from '../state/store';
+import { plateSetup } from '../profiles/plate-setup';
 import { lineMode, tabEnvironment } from '../settings-env';
 import { condition, optionState, settingVisible } from '../visibility';
 import common from '../tabs/common.json';
@@ -15,10 +16,7 @@ const empty = (v: unknown): boolean => v == null || typeof v === 'string' && /^(
   || typeof v === 'object' && v !== null && 'value' in v && empty(v.value);
 
 export function currentPlate(s: State): string {
-  const plate = s.projectPlates.find((p) => p.index === s.plateIndex)?.settings.curr_bed_type;
-  const machine = effectiveConfig(s, 'machine');
-  return String((plate && !s.dirty.machine.curr_bed_type ? plate : s.bedType || machine.curr_bed_type)
-    || OPTIONS.curr_bed_type?.default || '');
+  return plateSetup(s)?.plate ?? '';
 }
 
 export function commonKeys(type: PresetType, s: State): Set<string> {
@@ -46,9 +44,9 @@ export function hiddenReason(k: string, s: State, type?: PresetType, slot?: numb
   const element = (v: unknown) => Array.isArray(v) && /^(?:floats|ints|percents)/.test(def.type)
     ? v[Math.min(idx, v.length - 1)] : v;
   if (emptyRanges.has(key)) {
-    const v = element(value === undefined ? def.default : value);
+    const v = element(value);
     if (empty(v) || key.startsWith('nozzle_temperature_range_') && Number(scalar(v)) === 0) return 'empty';
-  } else if (/^(?:float|int|percent)/.test(def.type) && empty(element(value === undefined && !def.nullable ? def.default : value))) return 'empty';
+  } else if (/^(?:float|int|percent)/.test(def.type) && empty(element(value))) return 'empty';
   const machine = effectiveConfig(s, 'machine');
   const off = (name: string) => {
     const v = scalar(machine[name]);

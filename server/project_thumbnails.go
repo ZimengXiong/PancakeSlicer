@@ -114,7 +114,7 @@ func (st *workspaceStore) thumbnailRoutes(mux *http.ServeMux) {
 			return
 		}
 		if !found {
-			workspaceFailure(w, 404, "thumbnail_missing", "This project has no thumbnail.", "open_projects", 0)
+			workspaceFailure(w, 404, "thumbnail_missing", "This project doesn't have a thumbnail yet.", "open_projects", 0)
 			return
 		}
 		version := thumbnailVersion(data)

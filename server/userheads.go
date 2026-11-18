@@ -19,7 +19,7 @@ func (s *Server) listUserHeads(w http.ResponseWriter, r *http.Request) {
 	entries, err := os.ReadDir(userHeadDir(s.cfg))
 	out := []json.RawMessage{}
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		fail(w, 500, err.Error())
+		fail(w, 500, "userheads_internal", err.Error())
 		return
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
@@ -37,7 +37,7 @@ func (s *Server) listUserHeads(w http.ResponseWriter, r *http.Request) {
 func (s *Server) saveUserHead(w http.ResponseWriter, r *http.Request) {
 	b, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 	if err != nil {
-		fail(w, 413, err.Error())
+		fail(w, 413, "userheads_too_large", err.Error())
 		return
 	}
 	var head struct {
@@ -46,26 +46,26 @@ func (s *Server) saveUserHead(w http.ResponseWriter, r *http.Request) {
 		Boxes  []json.RawMessage `json:"boxes"`
 	}
 	if json.Unmarshal(b, &head) != nil || head.Schema != "orca.head_envelope.v1" || len(head.Boxes) == 0 {
-		fail(w, 400, "expected an orca.head_envelope.v1 head with boxes")
+		fail(w, 400, "expected_orca_head_envelope")
 		return
 	}
 	if !userHeadID.MatchString(head.ID) {
-		fail(w, 400, "Print head IDs can only use letters, numbers, hyphens (-), and underscores (_).")
+		fail(w, 400, "print_head_ids_only")
 		return
 	}
 	dir := userHeadDir(s.cfg)
 	for _, existing := range []string{filepath.Join(s.cfg.Resources, "nonplanar", "heads", head.ID+".json"), filepath.Join(dir, head.ID+".json")} {
 		if _, err := os.Stat(existing); err == nil {
-			fail(w, 409, "A print head profile with that ID already exists—please pick a different ID.")
+			fail(w, 409, "print_head_profile_id")
 			return
 		}
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		fail(w, 500, err.Error())
+		fail(w, 500, "userheads_internal", err.Error())
 		return
 	}
 	if err := durableWrite(filepath.Join(dir, head.ID+".json"), b); err != nil {
-		fail(w, 500, err.Error())
+		fail(w, 500, "userheads_internal", err.Error())
 		return
 	}
 	w.Write(b)

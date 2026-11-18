@@ -2,6 +2,7 @@ import { confirmDialog, messageDialog } from './components/Ask';
 import { undoable } from './state/history';
 import { effectiveConfig, getState, markStale, presetEdits, setState } from './state/store';
 import type { Config, ConfigValue, PresetType } from './api/types';
+import { slotFilaments } from './profiles/slots';
 
 const TITLE = 'Warning';
 const first = (v: ConfigValue | undefined) => Number(String(Array.isArray(v) ? v[0] : v ?? '').split(',')[0]);
@@ -11,7 +12,7 @@ function setOptions(type: PresetType, patch: Config, name: string, slot = 0) {
   undoable(name, () => setState((s) => {
     const edits = { ...presetEdits(s, type, slot), ...patch };
     return {
-      ...(type === 'filament' ? { filamentEdits: { ...s.filamentEdits, [s.filamentSlots[slot]]: edits } } : { dirty: { ...s.dirty, [type]: edits } }),
+      ...(type === 'filament' ? { filamentEdits: { ...s.filamentEdits, [slotFilaments(s)[slot]]: edits } } : { dirty: { ...s.dirty, [type]: edits } }),
       job: markStale(s.job),
     };
   }));

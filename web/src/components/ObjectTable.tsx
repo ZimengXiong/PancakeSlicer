@@ -4,6 +4,7 @@ import { effectiveConfig, getState, markStale, setState, useStore, type PlateObj
 import { undoable } from '../state/history';
 import { listedPlates } from '../plater/plates';
 import { Modal, ModalFooter, ModalTitle } from './Modal';
+import { slotFilaments } from '../profiles/slots';
 
 type Col = { key: string; label: string; kind: 'float' | 'int' | 'percent' | 'bool' | 'enum'; choices?: [string, string][] };
 const COLS: Col[] = [
@@ -68,7 +69,7 @@ export default function ObjectTable({ close }: { close(): void }) {
                   onCheckedChange={(next) => editObject(o.id, 'Change printable', (x) => ({ ...x, instances: x.instances.map((i) => ({ ...i, printable: next })) }))} /></td>
                 <td>{plate}</td>
                 <td className="name" data-full-text={o.name}>{o.name}</td>
-                <td><Dropdown className="combo" value={o.extruder} aria-label="Filament" onValueChange={(next) => editObject(o.id, 'Change filament', (x) => ({ ...x, extruder: Number(next) }))} options={[...s.filamentSlots.map((_, i) => ({ value: i + 1, label: i + 1 }))]} /></td>
+                <td><Dropdown className="combo" value={o.extruder} aria-label="Filament" onValueChange={(next) => editObject(o.id, 'Change filament', (x) => ({ ...x, extruder: Number(next) }))} options={[...slotFilaments(s).map((_, i) => ({ value: i + 1, label: i + 1 }))]} /></td>
                 {COLS.map((c) => <Cell key={c.key} s={s} o={o} col={c} />)}
               </tr>
             ))}

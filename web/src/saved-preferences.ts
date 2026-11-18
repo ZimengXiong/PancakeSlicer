@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { createMachine } from './flow/fsm';
 import type { DocumentSyncState, JsonValue } from './persist/service-document';
 type Controller = typeof import('./persist/preferences');
-type Status = { state: 'loading' | 'ready' | 'pending' | 'failed'; error: string | null; hydrated: boolean };
+type Status = { state: 'loading' | 'ready' | 'pending' | 'failed'; error: string | null; hydrated: boolean;  unreachable?: boolean };
 let values: Record<string, JsonValue> = {}, queued: Record<string, JsonValue> = {};
 let status: Status = { state: 'loading', error: null, hydrated: false }, controller: Controller | null = null;
 const listeners = new Set<() => void>();
@@ -51,7 +51,7 @@ const boot = createMachine<BootState, BootEvent, BootContext>({
 const state = (s: DocumentSyncState): Status['state'] => s === 'debounced' || s === 'writing' ? 'pending' : s === 'conflict' ? 'failed' : s;
 function refresh(next = controller ? controller.servicePreferencesSnapshot().document : { ...values, ...queued }) {
   const b = boot.get(), doc = controller?.servicePreferencesSnapshot();
-  publish(next, b.value === 'failed' ? { state: 'failed', error: b.context.error, hydrated: false }
+  publish(next, b.value === 'failed' ? { state: 'failed', error: b.context.error, hydrated: false, unreachable: b.context.transient }
     : { state: doc ? state(doc.state) : Object.keys(queued).length ? 'pending' : 'loading', error: doc?.error ?? null, hydrated: b.value === 'attached' });
 }
 boot.subscribe(() => refresh());

@@ -2,13 +2,14 @@ import { useMemo } from 'react';
 import type { PresetType } from '../api/types';
 import { selectChanges } from './changes';
 import { effectiveConfig, presetEdits, resolvePreset, useStore, type State } from './store';
+import { slotFilaments } from '../profiles/slots';
 
 export function useChanges(type: PresetType, slot = 0) {
   const select = useMemo(() => {
     let last: State | undefined, snapshot: State, previous: unknown[] = [];
     return (s: State) => {
       if (s === last) return snapshot;
-      const name = type === 'machine' ? s.printer : type === 'process' ? s.process : s.filamentSlots[slot];
+      const name = type === 'machine' ? s.printer : type === 'process' ? s.process : slotFilaments(s)[slot];
       const project = type === 'filament' ? s.projectPresets?.filaments[slot] : s.projectPresets?.[type];
       const plate = type === 'process' ? s.projectPlates.find((p) => p.index === s.plateIndex) : undefined;
       const inputs: unknown[] = [effectiveConfig(s, type, slot), resolvePreset(s, type, name ?? '').config,

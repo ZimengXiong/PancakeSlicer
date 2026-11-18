@@ -39,7 +39,7 @@ static StringObjectException validate_native_support(const Print &print, std::ve
             return object->config().enable_support.value &&
                    (style != nullptr ? style->value : print.default_object_config().support_style.value) == smsNative;
         })) {
-        StringObjectException w{ Slic3r::format(_u8L("Native supports aren't available for this printer—using %1% instead."),
+        StringObjectException w{ Slic3r::format(_u8L("Native supports aren't available for this printer, so we're using %1% instead."),
                                                 _u8L(print_config_def.get("support_style")->enum_labels[size_t(smsDefault)].c_str())),
                                  nullptr, "support_style" };
         w.is_warning = true;
@@ -56,29 +56,29 @@ static StringObjectException validate_native_support(const Print &print, std::ve
         };
         static const char *other_style = L("Turn it off or choose another support style.");
         if (config.nonplanar_mode.value != NonplanarMode::Off)
-            return refuse(_u8L("non-planar printing"), L("Switch the slicing method to Flat layers, or pick a different support style."), "nonplanar_mode");
+            return refuse(_u8L("non-planar printing"), L("Try switching the slicing method to Flat layers, or pick another support style."), "nonplanar_mode");
         if (config.nonplanar_steep_skin.value && print.config().nonplanar_kinematics.value != RotaryLayout::None)
-            return refuse(_u8L("the steep-face skin"), L("Turn off steep-face skin, or pick a different support style."), "nonplanar_steep_skin");
+            return refuse(_u8L("the steep-face skin"), L("Turn off steep-face skin, or pick another support style."), "nonplanar_steep_skin");
         if (!is_auto(config.support_type.value))
             return refuse("'" + _u8L(print_config_def.get("support_type")->enum_labels[size_t(config.support_type.value)].c_str()) + "'",
-                          L("Switch support type to 'Normal (auto)' or 'Tree (auto)', or pick a different support style."), "support_type");
+                          L("Switch support type to 'Normal (auto)' or 'Tree (auto)', or pick another support style."), "support_type");
         if (config.support_on_build_plate_only.value)
             return refuse(_u8L("'On build plate only'"), other_style, "support_on_build_plate_only");
         if (config.support_critical_regions_only.value)
             return refuse(_u8L("'Support critical regions only'"), other_style, "support_critical_regions_only");
         if (object->has_raft())
-            return refuse(_u8L("a raft"), L("Set raft layers to 0, or pick a different support style."), "raft_layers");
+            return refuse(_u8L("a raft"), L("Set raft layers to 0, or pick another support style."), "raft_layers");
         if (std::abs(config.support_bottom_z_distance.value - config.support_top_z_distance.value) > EPSILON)
             return refuse(_u8L("a bottom Z distance different from the top Z distance"),
-                          L("Make the top and bottom support Z distances equal, or pick a different support style."), "support_bottom_z_distance");
+                          L("Match the top and bottom support Z distances, or pick another support style."), "support_bottom_z_distance");
         if (std::any_of(model.volumes.begin(), model.volumes.end(), [](const ModelVolume *v) { return v->is_support_modifier(); }))
-            return refuse(_u8L("support enforcers or blockers"), L("Remove them, or pick a different support style."), "support_style");
+            return refuse(_u8L("support enforcers or blockers"), L("Remove them, or pick another support style."), "support_style");
         if (std::any_of(model.volumes.begin(), model.volumes.end(), [](const ModelVolume *v) { return v->is_fdm_support_painted(); }))
-            return refuse(_u8L("painted support"), L("Clear your painted supports, or pick a different support style."), "support_style");
+            return refuse(_u8L("painted support"), L("Clear your painted supports, or pick another support style."), "support_style");
         if (!model.layer_height_profile.empty() ||
             std::any_of(model.layer_config_ranges.begin(), model.layer_config_ranges.end(),
                         [](const auto &range) { return range.second.has("layer_height"); }))
-            return refuse(_u8L("variable layer height"), L("Reset variable layer height to uniform layers, or pick a different support style."), "layer_height");
+            return refuse(_u8L("variable layer height"), L("Reset variable layer height to uniform layers, or pick another support style."), "layer_height");
     }
     return {};
 }
@@ -94,7 +94,7 @@ StringObjectException validate(const Print &print, std::vector<StringObjectExcep
         return err;
     const PrintConfig &config = print.config();
     if (warnings != nullptr && config.nonplanar_ignore_duct.value && !clearance_override_active(config)) {
-        StringObjectException w{ _u8L("Note: 'Ignore cooling duct' doesn't change anything on this printer because its print head model doesn't include a fan duct."),
+        StringObjectException w{ _u8L("Just a heads-up: 'Ignore cooling duct' won't do anything on this printer since its print head model doesn't have a fan duct."),
                                  nullptr, "nonplanar_ignore_duct" };
         w.is_warning = true;
         warnings->push_back(std::move(w));
@@ -115,12 +115,12 @@ StringObjectException validate(const Print &print, std::vector<StringObjectExcep
         if (mode == NonplanarMode::ConformalLayers) {
             needs_head = enabled = true;
             if (config.nonplanar_kinematics.value != RotaryLayout::None || config.spiral_mode || config.belt_printer)
-                return { L("Conformal layers require a fixed 3-axis printer without spiral vase or belt printing."),
+                return { L("Conformal layers need a fixed 3-axis printer (no spiral vase or belt printing, please!)."),
                          object, "nonplanar_mode" };
             if (object->num_printing_regions() != 1 || object->model_object()->is_mm_painted())
-                return { L("Conformal layers require one material and one set of part settings."), object, "nonplanar_mode" };
+                return { L("Conformal layers need just one material and one set of part settings."), object, "nonplanar_mode" };
             if (object->config().raft_layers.value > 0)
-                return { L("Conformal layers cannot be printed on a raft."), object, "raft_layers" };
+                return { L("Conformal layers can't be printed on a raft."), object, "raft_layers" };
         }
         if (mode == NonplanarMode::SmoothMorph) {
             needs_head = enabled = true;
@@ -133,19 +133,20 @@ StringObjectException validate(const Print &print, std::vector<StringObjectExcep
         if (mode == NonplanarMode::Slant) {
             needs_head = enabled = true;
             if (config.nonplanar_kinematics.value != RotaryLayout::None || config.spiral_mode || config.belt_printer)
-                return { L("Slant requires a fixed 3-axis printer without spiral vase or belt printing."), object, "nonplanar_mode" };
+                return { L("Slant needs a fixed 3-axis printer (no spiral vase or belt printing)."), object, "nonplanar_mode" };
             if (object->num_printing_regions() != 1 || object->model_object()->is_mm_painted())
-                return { L("Slant requires one material and one set of part settings."), object, "nonplanar_mode" };
+                return { L("Slant needs just one material and one set of part settings."), object, "nonplanar_mode" };
             if (object->config().raft_layers.value > 0)
-                return { L("Slant cannot be printed on a raft."), object, "raft_layers" };
+                return { L("Slant can't be printed on a raft."), object, "raft_layers" };
         }
         if (curved_tops_mode(mode) && warnings != nullptr) {
             std::string unknown;
             resolve_head_envelope(config, &unknown);
             if (!unknown.empty() && std::none_of(warnings->begin(), warnings->end(), [](const StringObjectException &w) {
                     return w.opt_key == "nonplanar_head"; })) {
-                StringObjectException w{ _u8L("Curved tops needs a print head model to check for collisions, so top surfaces will print flat for now. "
-                                              "Pick a print head model in your printer's Non-planar settings."),
+                StringObjectException w{ _u8L("Curved tops needs a print head model to check for bumps, so top "
+                                              "surfaces will print flat for now. Pick one in your printer's "
+                                              "Non-planar settings!"),
                                          nullptr, "nonplanar_head" };
                 w.is_warning = true;
                 warnings->push_back(std::move(w));
@@ -155,8 +156,8 @@ StringObjectException validate(const Print &print, std::vector<StringObjectExcep
         const double max_angle    = curved_max_angle_limit(mode);
         if (curved_tops_mode(mode) &&
             (!std::isfinite(curved_angle) || curved_angle < 0. || curved_angle > max_angle))
-            return { (boost::format(_u8L("Max curved top angle must be between 0° and %1%°. Steeper angles "
-                                        "aren't supported.")) % max_angle).str(),
+            return { (boost::format(_u8L("Max curved top angle has to be between 0° and %1%° — steeper angles are out "
+                                        "of reach.")) % max_angle).str(),
                      object, "nonplanar_curved_max_angle" };
         if (mode == NonplanarMode::Multiplanar || field) {
             multiplanar_instances += object->instances().size();
@@ -221,7 +222,7 @@ StringObjectException validate(const Print &print, std::vector<StringObjectExcep
                     return warning.object == object && warning.opt_key == "nonplanar_max_patch_height";
                 })) {
                 StringObjectException warning {
-                    Slic3r::format(_u8L("Max curved band height (%1$.3f mm) is thinner than a single layer or shell—using %2$.3f mm instead."),
+                    Slic3r::format(_u8L("Max curved band height (%1$.3f mm) is thinner than a single layer or shell, so we bumped it to %2$.3f mm."),
                                    cap, clamped), object, "nonplanar_max_patch_height" };
                 warning.is_warning = true;
                 warnings->push_back(std::move(warning));
@@ -273,7 +274,7 @@ StringObjectException validate(const Print &print, std::vector<StringObjectExcep
     if (!config.nonplanar_head.value.empty())
         resolve_head_envelope(config, &head_warning);
     if (!head_warning.empty()) {
-        const std::string message = (boost::format(_u8L("Couldn't find or load print head profile \"%1%\". Please pick a valid print head in your printer settings.")) %
+        const std::string message = (boost::format(_u8L("Oops! Couldn't find or load print head profile \"%1%\". Pick a valid print head in your printer settings.")) %
                                      config.nonplanar_head.value).str();
         if (enabled || config.nonplanar_collision_check.value != NonplanarCollisionCheck::Off)
             return { message, nullptr, "nonplanar_head" };

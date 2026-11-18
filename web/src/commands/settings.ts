@@ -1,3 +1,4 @@
+import { selectionValues } from '../profiles/view';
 import type { PresetType } from '../api/types';
 import { loadTab, OPTIONS, splitKey, TABS, isHidden, tooltipsReady, type OptionMode, type TabDesc } from '../options';
 import { lineMode, tabEnvironment } from '../settings-env';
@@ -108,14 +109,15 @@ function hiddenBySettings(entry: Entry, tab: TabDesc['tab']): string | undefined
 function reveal(entry: Entry) {
   const s = getState();
   const patch: Parameters<typeof setState>[0] = { presetUx: null };
-  if (entry.type === 'process') Object.assign(patch, { dialog: null, tab: 'prepare', processScope: 'global' });
+  if (entry.type === 'process') Object.assign(patch, { dialog: null, tab: 'prepare' });
   else if (s.dialog?.type !== entry.type) patch.dialog = { type: entry.type, slot: 0 };
   setState({ ...patch, settingsFocus: { type: entry.type, page: entry.page, key: entry.key, nonce: Date.now() } });
 }
 
 function valueOf(e: Entry): string {
-  const s = getState();
-  const v = effectiveConfig(s, e.type, e.type === 'filament' && s.dialog?.type === 'filament' ? s.dialog.slot : 0)[e.key] ?? OPTIONS[e.key]?.default;
+  const s = getState(), slot = e.type === 'filament' && s.dialog?.type === 'filament' ? s.dialog.slot : 0;
+  if (selectionValues(s, e.type, slot).state !== 'ready') return '';
+  const v = effectiveConfig(s, e.type, slot)[e.key];
   if (v === undefined || OPTIONS[e.key]?.multiline || /gcode|filament(_id)?$/.test(e.key)) return '';
   const text = OPTIONS[e.key]?.type.startsWith('bool') ? (display(e.key, v as never) === 'true' ? 'On' : 'Off') : display(e.key, v as never);
   const unit = OPTIONS[e.key]?.sidetext;

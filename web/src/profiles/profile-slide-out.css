@@ -1,0 +1,10 @@
+:where(.orca-parity) .profile-slide-out { position: absolute; inset: 0; z-index: 20; display: flex; background: var(--panel); color: var(--ink); border-left: 1px solid var(--line);
+  box-shadow: var(--shadow-pop); outline: 0; clip-path: inset(0 0 0 0); will-change: clip-path; animation: pso-open 200ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
+:where(.orca-parity) .profile-slide-out[data-state=closing] { animation: pso-close 150ms cubic-bezier(0.4, 0, 1, 1) both; }
+@keyframes pso-open { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes pso-close { from { clip-path: inset(0 0 0 0); } to { clip-path: inset(0 100% 0 0); } }
+@keyframes pso-fade { from { opacity: 0; } to { opacity: 1; } }
+:where(.orca-parity) .pso-content { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; padding: var(--s-4) var(--s-4) 0; overflow: hidden; animation: pso-fade 120ms ease-out 120ms both; }
+:where(.orca-parity) .pso-content > * { flex: 1; min-height: 0; }
+:where(.orca-parity) .pso-missing { padding: var(--s-5); color: var(--ink-3); }
+@media (prefers-reduced-motion: reduce) { :where(.orca-parity) :is(.profile-slide-out, .profile-slide-out[data-state=closing], .pso-content) { animation: none; } }

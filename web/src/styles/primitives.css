@@ -32,7 +32,7 @@
 :where(.orca-parity) .seg:not(.slant-seg) > :is([aria-checked=true], [aria-pressed=true], [data-state=active], .on), :where(.orca-parity) .seg:not(.slant-seg) > :is([aria-checked=true], [aria-pressed=true], [data-state=active], .on) + button { box-shadow: none; }
 :where(.orca-parity) .seg > button:disabled { color: var(--ink-3); background: none; cursor: not-allowed; }
 :where(.orca-parity) .seg.num > button { font: var(--t-num); font-size: 12px; font-variant-numeric: tabular-nums; min-width: 34px; padding: 0 var(--s-3); }
-@media (pointer: coarse) { :where(.orca-parity) .seg:not(.slant-seg) { --seg-h: 44px; } }
+@media (pointer: coarse) { :where(.orca-parity) .seg:not(.slant-seg) { --seg-h: 46px; } }
 :where(.orca-parity) .seg-unit { font: var(--t-small); color: var(--ink-3); margin-left: var(--s-2); }
 
 :where(.orca-parity) .chip { display: inline-flex; align-items: center; gap: var(--s-2); min-height: 30px; padding: 0 var(--s-3); border: 1px solid var(--line-strong); border-radius: var(--r-2); background: none; color: var(--ink-2); font: var(--t-small); white-space: nowrap; cursor: pointer; }
@@ -78,7 +78,7 @@
 
 @media (pointer: coarse), (hover: none), (max-width: 599px) {
   :where(.orca-parity) .icon-btn { min-width: 44px; min-height: 44px; }
-  :where(.orca-parity) .seg:not(.slant-seg) { --seg-h: 44px; }
+  :where(.orca-parity) .seg:not(.slant-seg) { --seg-h: 46px; }
   :where(.orca-parity) .seg > button, :where(.orca-parity) .seg.slant-seg > button { min-height: 44px; }
   :where(.orca-parity) :is(.btn, .btn-primary, .btn-danger, .btn-ghost, .chip) { min-height: 44px; }
   :where(.orca-parity) :is(input.text, textarea.text, .dropdown) { min-height: 44px; }

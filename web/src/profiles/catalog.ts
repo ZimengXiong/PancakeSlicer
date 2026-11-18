@@ -1,92 +1,22 @@
-import type { Config, PresetType, SystemPreset, UserPreset } from '../api/types';
-import { getState, type State } from '../state/store';
-import { catalogAnchor, catalogKey, changedKeys, findCatalogBase, profilesFor, resolveProfile } from './model';
+import type { PresetType } from '../api/types';
+import { type State } from '../state/store';
 import { selectCompatibility } from './compatibility';
-import { findProfile, profileKey } from './identity';
-import type { ProfileCreation } from './transactions';
-import { randomId } from '../random-id';
-export { catalogKey } from './model';
+const recordsOf = (s: State, type: PresetType) => type === 'machine' ? s.records.printers : type === 'process' ? s.records.processes : s.records.filaments;
 
-export interface ProfileRow {
-  key: string;
-  name: string;
-  base: string;
-  layerHeight?: number;
-  nozzle?: number;
-  material?: string;
-  vendor?: string;
-  mine: true;
-  changed: boolean;
-}
-
-const first = (value: Config[string] | undefined) => String(Array.isArray(value) ? value[0] ?? '' : value ?? '');
-const number = (value: Config[string] | undefined) => { const n = Number(first(value)); return first(value) !== '' && Number.isFinite(n) ? n : undefined; };
-const metadata = (config: Config) => ({ layerHeight: number(config.layer_height), nozzle: number(config.nozzle_diameter), material: first(config.filament_type) || undefined });
+export interface ProfileRow { key: string; name: string; mine: true }
 
 const profileRows = new WeakMap<State, Map<PresetType, ProfileRow[]>>();
-
-export function listProfiles(s: State, type: PresetType, filters: {browseAll?: boolean} = {}): ProfileRow[] {
+export function listProfiles(s: State, type: PresetType, filters: { browseAll?: boolean } = {}): ProfileRow[] {
   let cache = profileRows.get(s);
   if (!cache) profileRows.set(s, (cache = new Map()));
   if (!filters.browseAll && cache.has(type)) return cache.get(type)!;
-  const rows: ProfileRow[] = s.userPresets.filter((p) => p.type === type && !p.archived && (p.kind ?? 'profile') === 'profile' && (filters.browseAll || (p as { baseRole?: string }).baseRole !== 'base-only' && selectCompatibility(s,type,profileKey(p)).ok)).map((p) => {
-    const { config, base } = resolveProfile(s, type, profileKey(p));
-    return { key: profileKey(p), name: p.name, base: p.base?.name ?? p.inherits, ...metadata(config), vendor: base?.vendor,
-      mine: true, changed: Object.keys(p.overlay ?? p.overrides).length > 0 };
-  });
+  const rows: ProfileRow[] = recordsOf(s, type).filter((r) => !r.archived && (filters.browseAll || selectCompatibility(s, type, r.id).ok))
+    .map((r) => ({ key: r.id, name: r.name, mine: true as const }));
   if (!filters.browseAll) cache.set(type, rows);
   return rows;
 }
-export function resolveCatalogEntry(s: State, type: PresetType, key: string) {
-  const found = findCatalogBase(s,type,key);
-  if (!found.base) throw new Error(found.ambiguous ? 'More than one catalog item matches that name—please pick the exact one you want.' : 'That catalog item isn\'t available anymore. Reopen Add and pick another one.');
-  return {key: catalogKey(found.base), base: found.base, anchor: catalogAnchor(found.base)};
-}
-
-export const displayName = (base: SystemPreset) => base.name.replace(/\s*@.*$/, '').replace(/\s+0\.4 nozzle$/i, '').trim();
 export function uniqueName(s: State, type: PresetType, desired: string): string {
   let name = desired, n = 2;
-  while (s.userPresets.some((p) => p.type === type && !p.archived && p.name === name) || profilesFor(s, type).some((p) => p.name === name)) name = `${desired} (${n++})`;
+  while (recordsOf(s, type).some((r) => !r.archived && r.name === name)) name = `${desired} (${n++})`;
   return name;
-}
-export function makeProfile(s: State, base: SystemPreset, name: string, values: Config = {}): UserPreset {
-  const overlay = changedKeys(values, base.config);
-  return { id: `profile:${randomId()}`, revision: 0, kind: 'profile', name: uniqueName(s, base.type, name), type: base.type, inherits: base.name, base: catalogAnchor(base), snapshot: {base: catalogAnchor(base),config: {...base.config,...overlay}},
-    overlay, overrides: overlay, baseline: Object.fromEntries(Object.keys(overlay).map((key) => [key, base.config[key] ?? null])) };
-}
-
-const pendingCreations=new Map<string,{creation:ProfileCreation;flight?:Promise<string>}>();
-const baseIdentity=catalogKey;
-export async function createProfileFromBase(type:PresetType,baseName:string,name?:string,values?:Config):Promise<string> {
-  const {key:identity}=resolveCatalogEntry(getState(),type,baseName),explicit=name?.trim();
-  const {profileCreation}=await import('./transactions');
-  let entry=explicit?undefined:pendingCreations.get(identity);
-  if(!entry){
-    entry={creation:profileCreation(s=>{
-      const current=findCatalogBase(s,type,identity).base;
-      if(!current || baseIdentity(current)!==identity)throw new Error('The profile catalog just updated. Close and reopen the Add menu to pick your item again.');
-      if(!explicit){
-        const selected=type==='machine'?[s.printer]:type==='process'?[s.process]:s.filamentSlots;
-        const active=new Set(selected.flatMap(key=>{const p=findProfile(s,type,key);return p?[profileKey(p)]:[];}));
-        const owned=s.userPresets.filter(p=>{
-          if(p.type!==type || p.archived || p.kind==='master')return false;
-          const bound=findCatalogBase(s,type,p.base ?? p.inherits).base;
-          return !!bound && baseIdentity(bound)===identity && selectCompatibility(s,type,profileKey(p)).ok;
-        });
-        const reuse=owned.find(p=>active.has(profileKey(p))) ?? owned.sort((a,b)=>profileKey(a).localeCompare(profileKey(b)))[0];
-        if(reuse)return profileKey(reuse);
-      }
-      const made=makeProfile(s,current,explicit || displayName(current),explicit && values ? {...current.config,...values} : {});
-      const defaults=type==='machine' ? (current as {print_defaults?:Config}).print_defaults : undefined;
-      return defaults && Object.keys(defaults).length ? {...made,printOverrides:{...defaults}} as UserPreset : made;
-    })};
-    if(!explicit)pendingCreations.set(identity,entry);
-  }
-  if(!entry.flight){
-    const own=entry;
-    own.flight=own.creation.commit().then(key=>{if(pendingCreations.get(identity)===own)pendingCreations.delete(identity);return key;},error=>{
-      own.flight=undefined;if(!own.creation.retryable && pendingCreations.get(identity)===own)pendingCreations.delete(identity);throw error;
-    });
-  }
-  return entry.flight!;
 }

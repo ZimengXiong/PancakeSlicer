@@ -3,7 +3,7 @@ import { toast } from '../state/store';
 import { copyToClipboard } from '../clipboard';
 
 export function copyText(text: string) {
-  toast(copyToClipboard(text) ? `Copied ${text}` : 'Your browser blocked clipboard access');
+  (copyToClipboard(text) ? toast('copied', { text }) : toast('browser_blocked_clipboard_access'));
 }
 
 export function Copyable({ value, children }: { value: string; children?: ReactNode }) {

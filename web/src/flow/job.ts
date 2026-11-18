@@ -2,7 +2,7 @@ import type { Api } from '../api/client';
 import type { JobStatus, ProgressEvent } from '../api/types';
 import { mutation, responseError } from '../api/access';
 import { followJobStream } from '../api/job-stream';
-import { createMachine, type StateNode } from './fsm';
+import { assertNever, createMachine, type StateNode } from './fsm';
 
 export function waitForJob(api: Api, id: string, signal?: AbortSignal, progress?: (p: ProgressEvent) => void): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -28,8 +28,8 @@ export function waitForJob(api: Api, id: string, signal?: AbortSignal, progress?
           timeout = setTimeout(() => fail(new Error('Oops! The slicing service stopped responding while exporting. Please try exporting again.')), 10_000);
         })]);
         if (settled) return;
-        if (status.state === 'done') finish();
-        else if (jobTerminal(status.state)) finish(new Error(status.error ?? `Project export ${status.state}`));
+        if (jobLifecycle(status as CanonicalJobStatus) === 'done') finish();
+        else if (jobTerminal(jobLifecycle(status as CanonicalJobStatus))) finish(new Error(status.error ?? `Project export ${jobLifecycle(status as CanonicalJobStatus)}`));
         else timer = setTimeout(() => void poll(), 5000);
       } catch (e) { finish(e); }
       finally { clearTimeout(timeout); }
@@ -46,7 +46,17 @@ export function waitForJob(api: Api, id: string, signal?: AbortSignal, progress?
 
 export type JobLifecycle = 'idle' | 'queued' | 'preparing' | 'slicing' | 'progress' | 'storing' | 'done' | 'failed'
   | 'canceling' | 'cancelled' | 'interrupted' | 'stale';
-export type CanonicalJobStatus = JobStatus & { seq?: number };
+export type CanonicalJobStatus = JobStatus & { lifecycle_state?: Exclude<JobLifecycle, 'progress'>; seq?: number };
+export function jobLifecycle(status: CanonicalJobStatus): Exclude<JobLifecycle, 'progress'> {
+  if (status.lifecycle_state && Object.hasOwn(jobStates, status.lifecycle_state)) return status.lifecycle_state;
+  const state = status.state;
+  switch (state) {
+    case 'queued': case 'done': case 'failed': return state;
+    case 'running': return 'slicing';
+    case 'canceled': return 'cancelled';
+    default: return assertNever(state);
+  }
+}
 export const jobTerminal = (state: JobLifecycle) => ['done', 'failed', 'cancelled', 'interrupted', 'stale'].includes(state);
 export interface TrackedJob { id: string; projectId: string; signature: string }
 interface JobContext { job: TrackedJob | null; seq: number; pct: number; stage: string; error: string | null; status: CanonicalJobStatus | null }
@@ -59,7 +69,7 @@ const track = { target: 'queued', action: (_: JobContext, e: Extract<JobEvent, {
 const reset = { target: 'idle', action: () => ({ job: null, seq: -1, pct: 0, stage: '', error: null, status: null }) } as const;
 const statusEdges = (allowed: Exclude<JobLifecycle, 'progress'>[]): { target: JobLifecycle; guard: (c: JobContext, e: { status: CanonicalJobStatus }) => boolean;
     action: (c: JobContext, e: { status: CanonicalJobStatus }) => Partial<JobContext> }[] =>
-  allowed.map((target) => ({ target, guard: (c, e) => e.status.id === c.job?.id && e.status.state === target,
+  allowed.map((target) => ({ target, guard: (c, e) => e.status.id === c.job?.id && jobLifecycle(e.status) === target,
     action: (c, e) => ({ status: e.status, pct: e.status.progress ?? c.pct, stage: e.status.stage ?? target, error: e.status.error ?? null }) }));
 const progress = { target: 'progress', guard: (c: JobContext, e: Extract<JobEvent, { type: 'PROGRESS' }>) =>
   c.job?.id === e.id && e.seq > c.seq, action: (_: JobContext, e: Extract<JobEvent, { type: 'PROGRESS' }>) =>
@@ -167,8 +177,8 @@ export function followJob(api: Api, tracked: TrackedJob, options: {
           if (accepted) options.progress?.({ pct: data.pct, stage });
         }
         options.checkpoint?.(last, m.get().value);
-        if (typeof data.state === 'string') {
-          if (data.state === 'done') void status().catch(() => {});
+        if (typeof data.state === 'string' || typeof data.lifecycle_state === 'string') {
+          if (data.lifecycle_state === 'done' || data.state === 'done') void status().catch(() => {});
           else apply({ ...data, id } as CanonicalJobStatus);
         }
       });
@@ -213,7 +223,7 @@ export function followJob(api: Api, tracked: TrackedJob, options: {
       } catch {  }
       finally { clearTimeout(timeout); }
       if (stopped) return;
-      if (existing && jobTerminal(existing.state)) {
+      if (existing && jobTerminal(jobLifecycle(existing))) {
         const r = await mutation(`/api/jobs/${encodeURIComponent(current.id)}/retry`, {
           method: 'POST', headers: { 'Idempotency-Key': `retry-${current.id}` },
         });

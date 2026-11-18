@@ -68,7 +68,7 @@
 @media (hover: none), (pointer: coarse) { :where(.orca-parity) .pj-item .pj-check, :where(.orca-parity) .pj-item .pj-icon:not(.on), :where(.orca-parity) .pj-item .pj-icon { opacity: 1; } }
 
 :where(.orca-parity) .pj-grid { flex: none; display: grid; grid-auto-rows: max-content; gap: var(--s-3); padding: var(--s-4) var(--s-5) var(--s-5); align-content: start; }
-:where(.orca-parity) .pj-grid .pj-item { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--r-2); background: var(--surface); overflow: hidden; contain-intrinsic-size: auto 172px; }
+:where(.orca-parity) .pj-grid .pj-item { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--r-2); background: var(--surface); overflow: hidden; content-visibility: visible; }
 :where(.orca-parity) .pj-grid .pj-item:hover { border-color: var(--border-control); }
 :where(.orca-parity) .pj-grid .pj-item.selected { border-color: var(--focus); background: var(--selected); }
 :where(.orca-parity) .pj-grid .pj-item.current { border-color: var(--accent); }
@@ -151,3 +151,6 @@
 
 :where(.orca-parity) .topbar-slot { display: flex; flex: 1; min-width: 0; justify-content: flex-end; }
 :where(.orca-parity) .pj-top-actions { display: flex; align-items: center; gap: var(--s-2); }
+:where(.orca-parity) .pj-grid .pj-item { container-type: inline-size; }
+@container (max-width: 190px) { :where(.orca-parity) .pj-sub:has(.pj-open) .pj-count { display: none; } }
+:where(.orca-parity) .pj-folder-edit { display: flex; flex-direction: column; gap: var(--s-1); min-width: 0; }

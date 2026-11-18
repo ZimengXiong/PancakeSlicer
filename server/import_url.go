@@ -54,7 +54,7 @@ func importError(status int, message string) error { return &urlImportError{stat
 func importURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u == nil || (u.Scheme != "https" && u.Scheme != "http") || u.Hostname() == "" || u.User != nil || len(raw) > 8192 {
-		return nil, importError(400, "Enter an http or https link without embedded credentials.")
+		return nil, importError(400, "Pop in an http or https link without embedded credentials.")
 	}
 	u.Fragment = ""
 	return u, nil
@@ -70,14 +70,14 @@ func urlImportClient() *http.Client {
 		}
 		ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 		if err != nil {
-			return nil, importError(422, "The link's host could not be resolved.")
+			return nil, importError(422, "Oops! Couldn't find that link's host.")
 		}
 		if len(ips) == 0 {
-			return nil, importError(422, "The link's host has no public address.")
+			return nil, importError(422, "Hmm, that link's host doesn't have a public address.")
 		}
 		for _, ip := range ips {
 			if !urlPublicIP(ip) {
-				return nil, importError(400, "Private, loopback and reserved network destinations are blocked.")
+				return nil, importError(400, "Private, loopback, and reserved network addresses are blocked.")
 			}
 		}
 		var last error
@@ -92,7 +92,7 @@ func urlImportClient() *http.Client {
 	}
 	return &http.Client{Transport: transport, Timeout: 90 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) > 5 {
-			return importError(422, "The link redirects more than five times.")
+			return importError(422, "Whoa, that link redirects more than five times!")
 		}
 		_, err := importURL(req.URL.String())
 		return err
@@ -149,26 +149,26 @@ func urlFetch(ctx context.Context, client *http.Client, raw, query string, limit
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == 404 {
-		return nil, "", importError(404, "The linked file or model page was not found (404).")
+		return nil, "", importError(404, "Oops! Couldn't find that file or model page (404).")
 	}
 	if resp.StatusCode == 401 || resp.StatusCode == 403 {
 		if strings.HasSuffix(u.Hostname(), "makerworld.com") {
-			return nil, "", importError(422, "This file requires a MakerWorld sign-in. Download the file and drop it here.")
+			return nil, "", importError(422, "This file needs a MakerWorld sign-in — download it yourself and drop it right here!")
 		}
-		return nil, "", importError(422, "This site requires sign-in or blocks service downloads. Paste a public direct file link instead.")
+		return nil, "", importError(422, "This site asks for a sign-in or blocks automatic downloads. Paste a public direct file link instead!")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, "", importError(422, fmt.Sprintf("The site returned HTTP %d.", resp.StatusCode))
+		return nil, "", importError(422, fmt.Sprintf("Oops, the site returned HTTP %d.", resp.StatusCode))
 	}
 	if resp.ContentLength > limit {
-		return nil, "", importError(413, "The download exceeds the 200 MiB import limit.")
+		return nil, "", importError(413, "Whoa, that download is over the 200 MiB import limit!")
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
 		return nil, "", err
 	}
 	if int64(len(b)) > limit {
-		return nil, "", importError(413, "The download exceeds the 200 MiB import limit.")
+		return nil, "", importError(413, "Whoa, that download is over the 200 MiB import limit!")
 	}
 	name := path.Base(resp.Request.URL.Path)
 	if _, params, e := mime.ParseMediaType(resp.Header.Get("Content-Disposition")); e == nil && params["filename"] != "" {
@@ -182,7 +182,7 @@ func (s *Server) importFromURL(w http.ResponseWriter, r *http.Request) {
 	case urlImportSlots <- struct{}{}:
 		defer func() { <-urlImportSlots }()
 	default:
-		fail(w, 429, "Two URL imports are already downloading right now—give it a moment and try again!")
+		fail(w, 429, "two_url_imports_already")
 		return
 	}
 	var in struct {
@@ -191,12 +191,12 @@ func (s *Server) importFromURL(w http.ResponseWriter, r *http.Request) {
 		Name    string `json:"name"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&in) != nil {
-		fail(w, 400, "Please enter a valid URL.")
+		fail(w, 400, "enter_valid_url")
 		return
 	}
 	u, err := importURL(in.URL)
 	if err != nil {
-		fail(w, 400, err.Error())
+		fail(w, 400, "import_url_invalid", err.Error())
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
@@ -213,7 +213,7 @@ func (s *Server) importFromURL(w http.ResponseWriter, r *http.Request) {
 			}
 			if recognized {
 				if len(choices) == 0 {
-					return importError(422, "This page has no publicly downloadable model files. Paste a direct file link instead.")
+					return importError(422, "Hmm, this page doesn't have any publicly downloadable model files. Try pasting a direct file link!")
 				}
 				if len(choices) > 1 {
 					result.Files = choices
@@ -258,11 +258,11 @@ func (s *Server) importFromURL(w http.ResponseWriter, r *http.Request) {
 	if err = run(); err != nil {
 		var failure *urlImportError
 		if errors.As(err, &failure) {
-			fail(w, failure.status, failure.message)
+			fail(w, failure.status, "import_url_refused", failure.message)
 		} else if ctx.Err() != nil {
-			fail(w, 408, "The URL download timed out or was canceled.")
+			fail(w, 408, "url_download_timed_out")
 		} else {
-			fail(w, 422, "Oops! We couldn't download a model from that link. Make sure it's a public link and try again.")
+			fail(w, 422, "couldnt_download_model_link")
 		}
 		return
 	}
@@ -295,7 +295,7 @@ func urlGraphQL(ctx context.Context, c *http.Client, query string, out any) erro
 		Errors []json.RawMessage `json:"errors"`
 	}
 	if json.Unmarshal(b, &envelope) != nil || len(envelope.Errors) > 0 || len(envelope.Data) == 0 {
-		return importError(422, "Printables did not provide public download metadata.")
+		return importError(422, "Printables didn't share public download info for that one.")
 	}
 	return json.Unmarshal(envelope.Data, out)
 }
@@ -333,7 +333,7 @@ func urlModelPage(ctx context.Context, c *http.Client, u *url.URL) ([]urlImportF
 		}
 		var data any
 		if json.Unmarshal(b, &data) != nil {
-			return nil, true, importError(422, "MakerWorld returned invalid model metadata.")
+			return nil, true, importError(422, "Hmm, MakerWorld sent back invalid model metadata.")
 		}
 		files := urlMetadataFiles(data, u)
 		if len(files) == 0 {
@@ -354,11 +354,11 @@ func urlModelPage(ctx context.Context, c *http.Client, u *url.URL) ([]urlImportF
 	if host == "thingiverse.com" && len(urlThingID.FindStringSubmatch(u.String())) > 1 {
 		b, _, err := urlFetch(ctx, c, u.String(), "", urlMetadataLimit)
 		if err != nil {
-			return nil, true, importError(422, "Thingiverse blocks automatic downloads. Download the file and drop it here.")
+			return nil, true, importError(422, "Thingiverse blocks automatic downloads — grab the file yourself and drop it here!")
 		}
 		files := urlPageFiles(b, u)
 		if len(files) == 0 {
-			return nil, true, importError(422, "Thingiverse blocks automatic downloads. Download the file and drop it here.")
+			return nil, true, importError(422, "Thingiverse blocks automatic downloads — grab the file yourself and drop it here!")
 		}
 		return files, true, nil
 	}
@@ -481,16 +481,16 @@ func (s *Server) urlReadModels(ctx context.Context, b []byte, name string, archi
 	if len(b) >= 4 && bytes.Equal(b[:4], []byte{'P', 'K', 3, 4}) {
 		z, e := zip.NewReader(bytes.NewReader(b), int64(len(b)))
 		if e != nil {
-			return nil, importError(422, "The download is not a readable ZIP or 3MF file.")
+			return nil, importError(422, "Oops, that download isn't a readable ZIP or 3MF file.")
 		}
 		if len(z.File) > 4096 {
-			return nil, importError(413, "The archive has too many entries.")
+			return nil, importError(413, "Whoa, that archive has way too many entries!")
 		}
 		model, types := false, false
 		var total uint64
 		for _, f := range z.File {
 			if f.UncompressedSize64 > *remaining-total {
-				return nil, importError(413, "The expanded archive exceeds 200 MiB.")
+				return nil, importError(413, "Whoa, that unpacked archive goes over 200 MiB!")
 			}
 			total += f.UncompressedSize64
 			if strings.EqualFold(f.Name, "[Content_Types].xml") {
@@ -521,7 +521,7 @@ func (s *Server) urlReadModels(ctx context.Context, b []byte, name string, archi
 			return []urlImportFile{f}, e
 		}
 		if !archive {
-			return nil, importError(422, "Nested ZIP archives are not supported. Link the model file directly.")
+			return nil, importError(422, "ZIPs inside ZIPs aren't supported — link the model file directly instead!")
 		}
 		files := []urlImportFile{}
 		var expanded uint64
@@ -530,7 +530,7 @@ func (s *Server) urlReadModels(ctx context.Context, b []byte, name string, archi
 				continue
 			}
 			if len(files) >= 128 || f.UncompressedSize64 > uint64(urlImportLimit)-expanded {
-				return nil, importError(413, "The archive exceeds 128 models or 200 MiB expanded.")
+				return nil, importError(413, "Whoa, that archive has over 128 models or 200 MiB unpacked!")
 			}
 			reader, e := f.Open()
 			if e != nil {
@@ -543,7 +543,7 @@ func (s *Server) urlReadModels(ctx context.Context, b []byte, name string, archi
 			}
 			expanded += uint64(len(data))
 			if expanded > uint64(urlImportLimit) {
-				return nil, importError(413, "The expanded archive exceeds 200 MiB.")
+				return nil, importError(413, "Whoa, that unpacked archive goes over 200 MiB!")
 			}
 			entries, e := s.urlReadModels(ctx, data, path.Base(f.Name), false, remaining)
 			if e != nil {
@@ -552,13 +552,13 @@ func (s *Server) urlReadModels(ctx context.Context, b []byte, name string, archi
 			files = append(files, entries...)
 		}
 		if len(files) == 0 {
-			return nil, importError(422, "The ZIP contains no supported model files.")
+			return nil, importError(422, "Hmm, there aren't any supported model files inside that ZIP.")
 		}
 		return files, nil
 	}
 	kind := urlModelKind(b)
 	if kind == "" {
-		return nil, importError(422, "The download is not an STL, 3MF, OBJ, STEP, AMF or model ZIP. It may be a web page instead of a file.")
+		return nil, importError(422, "Oops, that doesn't look like an STL, 3MF, OBJ, STEP, AMF, or model ZIP — it might be a web page instead of a file.")
 	}
 	f, e := s.urlStoreAsset(ctx, b, urlImportName(name, kind))
 	return []urlImportFile{f}, e
@@ -581,14 +581,14 @@ func (s *Server) urlStoreAsset(ctx context.Context, b []byte, name string) (urlI
 	if _, err := os.Stat(s.workspace.assetPath(key)); err == nil {
 		return file, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return file, importError(503, "Asset storage is unavailable.")
+		return file, importError(503, "Oops, asset storage is unavailable right now.")
 	}
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPut, "/api/assets/"+key, bytes.NewReader(b))
 	req.SetPathValue("key", key)
 	response := &urlAssetResponse{header: make(http.Header)}
 	s.workspace.putAsset(response, req)
 	if response.status != 200 {
-		return file, importError(response.status, "The downloaded model could not be saved to asset storage.")
+		return file, importError(response.status, "Uh-oh, we couldn't save the downloaded model to asset storage.")
 	}
 	return file, nil
 }
@@ -619,10 +619,10 @@ func urlPrintablesDownload(ctx context.Context, c *http.Client, raw string) (str
 	printID, fileID := q.Get("pancakePrint"), q.Get("pancakeFile")
 	kind := q.Get("pancakeType")
 	if _, e = strconv.ParseUint(printID, 10, 64); e != nil {
-		return "", importError(400, "Invalid Printables model.")
+		return "", importError(400, "Hmm, that doesn't look like a valid Printables model.")
 	}
 	if _, e = strconv.ParseUint(fileID, 10, 64); e != nil || kind != "stl" && kind != "other" {
-		return "", importError(400, "Invalid Printables file.")
+		return "", importError(400, "Hmm, that doesn't look like a valid Printables file.")
 	}
 	var data struct {
 		GetDownloadLink struct {
@@ -635,7 +635,7 @@ func urlPrintablesDownload(ctx context.Context, c *http.Client, raw string) (str
 		return "", e
 	}
 	if !data.GetDownloadLink.OK || data.GetDownloadLink.Output.Link == "" {
-		return "", importError(422, "Printables did not provide a public download link for this file.")
+		return "", importError(422, "Printables didn't give a public download link for this file.")
 	}
 	return data.GetDownloadLink.Output.Link, nil
 }

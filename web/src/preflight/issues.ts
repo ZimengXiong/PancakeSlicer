@@ -1,3 +1,4 @@
+import { objectValues } from '../profiles/view';
 import * as THREE from 'three';
 import { arrangeAll, bedArea } from '../actions';
 import type { Config } from '../api/types';
@@ -5,7 +6,8 @@ import { instanceBox, objectMatrix, outsideBed } from '../plater/geometry';
 import { scaleToBuildVolume } from '../plater/objectOps';
 import { largestPlane, layOnFace, layOnFacePlanes, linearOf } from '../plater/transforms';
 import { undoable } from '../state/history';
-import { effectiveConfig, getState, printerPreset, setState, subscribeStore, type PlateObject, type State } from '../state/store';
+import { getState, setState, subscribeStore, type PlateObject, type State } from '../state/store';
+import { selectionValues } from '../profiles/view';
 import type { Doc } from '../state/history';
 import type { PreflightIn, PreflightOut } from './preflight.worker';
 import { threeReady } from '../three-runtime';
@@ -79,13 +81,15 @@ async function check(s: State) {
   const mine = ++run;
   await threeReady;
   if (mine !== run) return;
-  const process = effectiveConfig(s, 'process'), machine = printerPreset(s)?.config ?? {};
-  const area = bedArea(), height = num(machine.printable_height, 250) || 250;
+  const printer = selectionValues(s, 'machine'), print = selectionValues(s, 'process'), nozzle = s.records.printers.find((p) => p.id === s.printer)?.nozzles[0]?.diameter;
+  if (printer.state !== 'ready' || print.state !== 'ready' || !printer.status?.ok || !print.status?.ok || !nozzle) { issues = []; emit(); return; }
+  const machine = printer.values;
+  const area = bedArea(), height = num(machine.printable_height, 0);
   const out = area.length ? outsideBed(s.objects, area, height) : new Set<number>();
   const next: Issue[] = [];
   for (const o of s.objects) {
     if (o.project?.placeholder || !o.instances.length) continue;
-    const cfg = { ...process, ...o.settings };
+    const cfg = objectValues(s, o.id).values;
     const push = (kind: IssueKind, tris: Uint32Array, fix: Issue['fix'] | null) => fix && next.push({ key: `${o.id}:${kind}`, objectId: o.id, name: o.name, kind, tris, fix });
     if (o.instances.some((i) => out.has(i.id))) {
       const b = instanceBox(o, o.instances[0]), size = b.getSize(new THREE.Vector3());
@@ -93,7 +97,7 @@ async function check(s: State) {
       const fits = size.x <= Math.max(...xs) - Math.min(...xs) && size.y <= Math.max(...ys) - Math.min(...ys) && size.z <= height;
       push('bed', new Uint32Array(), fits ? { label: 'Arrange', run: () => arrangeAll(false) } : { label: 'Scale to fit', run: () => scaleToBuildVolume(o.id) });
     }
-    const a = await analysis(o, num(cfg.initial_layer_print_height, 0.2), num(cfg.support_threshold_angle, 30) || 30, num(machine.nozzle_diameter, 0.4)).catch(() => null);
+    const a = await analysis(o, num(cfg.initial_layer_print_height, 0.2), num(cfg.support_threshold_angle, 30) || 30, nozzle).catch(() => null);
     if (mine !== run) return;
     if (!a) continue;
     const point = a.height > 2 && a.contact < POINT_CONTACT_MM2;
@@ -115,7 +119,7 @@ async function check(s: State) {
 
 let run = 0, timer = 0, last: unknown[] = [];
 subscribeStore(() => {
-  const s = getState(), now = [s.objects, s.process, s.printer, s.projectPresets, s.projectPlates, s.plateIndex];
+  const s = getState(), now = [s.objects, s.resolved, s.records.printers, s.projectPlates, s.plateIndex];
   if (now.every((v, i) => v === last[i])) return;
   last = now;
   clearTimeout(timer);

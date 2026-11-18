@@ -1,5 +1,6 @@
 #pragma once
 #include "libslic3r/ExPolygon.hpp"
+#include "libslic3r/WarningCode.hpp"
 #include "libslic3r/PrintConfig.hpp"
 
 #include <cstdint>
@@ -83,6 +84,6 @@ std::string auto_comment(const ConformalPatch &patch);
 std::string explain_top_patch(const PrintObject &object, const ConformalPatch &patch);
 std::string describe_top_patch(const PrintObject &object, const ConformalPatch &patch);
 
-std::vector<std::string> object_warnings(const PrintObject &object, const ReportObject &report);
+std::vector<CodedWarning> object_warnings(const PrintObject &object, const ReportObject &report);
 
 }

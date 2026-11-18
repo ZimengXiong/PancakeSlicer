@@ -14,22 +14,23 @@ export function sendOutcome(t: Transfer): SendOutcome {
   switch (t.outcome) {
     case 'printing': return { tone: 'success', title: `Printing on ${t.name}`, detail: '' };
     case 'uploaded': return { tone: 'success', title: `Uploaded to ${t.name} (ready to start)`, detail: 'You can start the print right from your printer\'s screen.' };
-    case 'waiting_for_printer': return { tone: 'waiting', title: 'Sent! Waiting for the printer to start', detail: `${t.name} hasn't confirmed that the print started yet. Check the printer's screen before sending it again.` };
+    case 'unconfirmed': return { tone: 'waiting', title: `Not confirmed by ${t.name}`, detail: `The file is on ${t.name}, but it hasn't confirmed that the print started. Check its screen before sending again.` };
     case 'failed': return { tone: 'error', title: `Couldn't send to ${t.name}`, detail: sentence(t.error ?? '') };
     case undefined: throw new Error(`Upload ${t.id} finished without a status report from the printer.`);
   }
 }
 
-const OUTCOME_LABEL = { printing: 'Started', uploaded: 'Uploaded', waiting_for_printer: 'Not confirmed', failed: 'Send failed' } as const;
+const OUTCOME_LABEL = { printing: 'Started', uploaded: 'Uploaded', unconfirmed: 'Not confirmed', failed: 'Send failed' } as const;
 const END_LABEL = { finished: 'Finished', failed: 'Failed', cancelled: 'Cancelled' } as const;
 export const outcomeLabel = (t: Transfer, running = false) => t.job_end ? END_LABEL[t.job_end] : running ? 'Printing'
   : t.state === 'cancelled' ? 'Cancelled' : t.outcome ? OUTCOME_LABEL[t.outcome] : 'Sending';
 export const outcomeTone = (t: Transfer, running = false) => t.job_end === 'failed' || t.outcome === 'failed' ? 'error' : running && !t.job_end ? 'printing' : undefined;
 
-export const openDevice = () => setState({ tab: 'device', appDialog: null });
+import { openDevice } from '../navigation';
+export { openDevice };
 
 const SHORT_REASON: Record<string, string> = { credentials: 'check the access code', developer_mode: 'turn on Developer Mode', busy: 'the printer is busy',
-  storage: 'check the SD card', timeout: 'the printer did not answer', connection: 'cannot reach the printer', interrupted: 'the service restarted' };
+  storage: 'check the SD card', timeout: 'the printer did not answer', refused: 'the printer declined it', connection: 'cannot reach the printer', interrupted: 'the service restarted' };
 
 export function noticeSend(t: Transfer) {
   let last = '';
@@ -37,12 +38,12 @@ export function noticeSend(t: Transfer) {
     const key = `${x.state}:${x.outcome}`;
     if (key === last) return;
     last = key;
-    if (x.state === 'done' && x.outcome === 'printing') toast(`Printing on ${x.name}`, { label: 'View', run: openDevice }, 8000, 'success', true);
-    else if (x.state === 'done' && x.outcome === 'uploaded') toast(`Uploaded to ${x.name}`, { label: 'View', run: openDevice }, 6000, 'success', true);
-    else if (x.state === 'done' && x.outcome === 'waiting_for_printer') toast(`Sent to ${x.name}—waiting for the print to start`, { label: 'View', run: openDevice }, 8000, 'warning');
-    else if (x.state === 'failed' || x.state === 'cancelled') toast(x.state === 'cancelled' ? 'Upload canceled' : `Couldn't send to ${x.name}${SHORT_REASON[x.reason ?? ''] ? `: ${SHORT_REASON[x.reason!]}` : ''}`, { label: 'Retry', run: () => setState({ appDialog: 'send' }) }, 10000, 'error');
+    if (x.state === 'done' && x.outcome === 'printing') toast('printing', { name: x.name }, { action: { label: 'View', run: () => openDevice(x.printer) } });
+    else if (x.state === 'done' && x.outcome === 'uploaded') toast('uploaded', { name: x.name }, { action: { label: 'View', run: () => openDevice(x.printer) } });
+    else if (x.state === 'done' && x.outcome === 'unconfirmed') toast('print_start_unconfirmed', { name: x.name }, { action: { label: 'View', run: () => openDevice(x.printer) } });
+    else if (x.state === 'failed' || x.state === 'cancelled') (x.state === 'cancelled' ? toast('upload_canceled', undefined, { action: { label: 'Retry', run: () => setState({ appDialog: 'send' }) } }) : toast('couldnt_send_xx', { name: x.name, value: SHORT_REASON[x.reason ?? ''] ? `: ${SHORT_REASON[x.reason!]}` : '' }, { action: { label: 'Retry', run: () => setState({ appDialog: 'send' }) } }));
   };
-  const settled = (x: Transfer) => x.state !== 'uploading' && x.state !== 'starting' && x.outcome !== 'waiting_for_printer';
+  const settled = (x: Transfer) => x.state !== 'uploading' && x.state !== 'starting' && x.outcome !== 'unconfirmed';
   show(t);
   if (settled(t)) return;
   const stop = subscribeStore(() => {

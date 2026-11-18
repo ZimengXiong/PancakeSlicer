@@ -3,7 +3,7 @@
 :where(.orca-parity) .app { --canvas-chip: 36px; }
 :where(.orca-parity) .canvas-chip { width: var(--canvas-chip); height: var(--canvas-chip); color: var(--ink); background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--r-3); }
 :where(.orca-parity) .canvas-chip:hover:not(:disabled) { background: var(--hover); }
-@media (max-width: 899px), (max-width: 1199px) and (pointer: coarse), (max-width: 1199px) and (hover: none) {
+@media (max-width: 899px) {
   :where(.orca-parity) .app { height: 100dvh; width: 100%; min-width: 0; overflow: hidden; }
   :where(.orca-parity) .main { position: relative; flex-direction: row; overflow: hidden; min-width: 0; }
   :where(.orca-parity) .canvas-area { min-height: 0; flex: 1 1 0; }
@@ -14,7 +14,7 @@
   :where(.orca-parity) .app-menu-button > .app-menu-caret { display: inline-flex; }
   :where(.orca-parity) .compact-topbar .tabbar { height: 48px; gap: 4px; }
   :where(.orca-parity) .compact-topbar .tabbar-actions { gap: 4px; }
-  :where(.orca-parity) .compact-topbar .tabbar-actions > :is(.slant, .export-actions) + :is(.slant, .export-actions) { margin-left: -2px; }
+  :where(.orca-parity) .compact-topbar .tabbar-actions > :is(.slant, .side-options, .export-actions) + :is(.slant, .side-options, .export-actions) { margin-left: -2px; }
   :where(.orca-parity) .compact-topbar :is(.view-switch > .view-tab, .tabbar-actions > button) { --slant-inset: 4px; min-height: 44px; }
   :where(.orca-parity) .compact-topbar .view-switch > .view-tab { min-width: 44px; padding: 0 var(--s-3); }
   :where(.orca-parity) .compact-topbar .title-zone { padding: 0 var(--s-2); }
@@ -42,7 +42,7 @@
   :where(.orca-parity) .canvas-more { padding-inline: 8px; }
   :where(.orca-parity) .canvas-tools { left: auto; right: max(8px,env(safe-area-inset-right)); bottom: 60px; align-items: flex-end; z-index: 46; }
   :where(.orca-parity) .canvas-tools .canvas-section-panel { left: auto; right: 40px; width: max-content; max-width: calc(100vw - 64px); flex-wrap: wrap; }
-  :where(.orca-parity) .canvas-area .object-info { left: 8px; bottom: 66px; max-width: calc(100% - 16px - 48px); font-size: 12px; flex-wrap: nowrap; white-space: nowrap; overflow: hidden; }
+  :where(.orca-parity) .canvas-area .object-info { left: 8px; bottom: 66px; max-width: calc(100% - 16px - var(--canvas-chip) - 8px); font-size: 12px; flex-wrap: nowrap; column-gap: var(--s-3); white-space: nowrap; overflow: hidden; }
   :where(.orca-parity) .nav3d { display: none; }
   :where(.orca-parity) .nav-view-control { display: inline-grid; position: absolute; z-index: 7; top: 8px; left: calc(max(8px,env(safe-area-inset-left)) + var(--canvas-chip) + 4px); }
   :where(.orca-parity) .canvas-area .objects-panel { top: 8px; left: calc(max(8px,env(safe-area-inset-left)) + 2 * var(--canvas-chip) + 8px); --op-w: min(300px, calc(100% - 2 * var(--canvas-chip) - 24px)); max-height: calc(50% - 60px); }
@@ -54,7 +54,6 @@
   :where(.orca-parity) .notification, :where(.orca-parity) .toast { max-width: calc(100vw - 16px); overflow-wrap: anywhere; }
   :where(.orca-parity) .canvas-area .notifications { left: max(8px,env(safe-area-inset-left)); right: calc(max(8px,env(safe-area-inset-right)) + 48px); bottom: 60px; width: auto; max-width: 480px; margin-inline: auto; max-height: 40%; }
   :where(.orca-parity) .canvas-area:has(.object-info) .notifications { bottom: 120px; }
-  :where(.orca-parity) .saved-preferences-notice { padding: 4px max(8px,env(safe-area-inset-right)) 4px max(8px,env(safe-area-inset-left)); }
 }
 @media (max-width: 599px) {
   [data-radix-popper-content-wrapper]:has(> .pk-pop) { position: fixed !important; inset: auto 0 0 0 !important; transform: none !important; min-width: 0 !important; }
@@ -65,12 +64,12 @@
   :where(.orca-parity) .prefs-row > span:first-child { flex: 1 1 0; min-width: 0 !important; }
 }
 @media (pointer: coarse), (hover: none), (max-width: 599px) {
-  :where(.orca-parity) button:not(.check, .pf-radio, .orca-switch, .control-check, .orca-radio, .info-tip, .color-swatch, .color-trigger, .ls-plus, .notif-link), :where(.orca-parity) .dropdown, :where(.orca-parity) .text, :where(.orca-parity) [role=menuitem] { min-height: 44px; }
+  :where(.orca-parity) button:not(.check, .pf-radio, .orca-switch, .control-check, .orca-radio, .info-tip, .color-swatch, .color-trigger, .ls-plus, .notif-link, .rail-slot-use), :where(.orca-parity) .dropdown, :where(.orca-parity) .text, :where(.orca-parity) [role=menuitem] { min-height: 44px; }
   :where(.orca-parity) .icon-btn, :where(.orca-parity) .app-menu-button, :where(.orca-parity) .pk-star { min-width: 44px; }
   :where(.orca-parity) :is(.opt-line, .option-row) .opt-undo > :is(button, .icon-btn) { flex: none; width: 44px; height: 44px; margin: -12px; }
   :where(.orca-parity) .fr-drop-title, :where(.orca-parity) .fr-drop .fr-add kbd { display: none; }
   :where(.orca-parity) .fr-drop .fr-actions { margin-top: 0; }
-  :where(.orca-parity) .text, :where(.orca-parity) input, :where(.orca-parity) textarea, :where(.orca-parity) select { font-size: 16px; }
+  :root.orca-parity :is(.text, input:not([type=checkbox], [type=radio], [type=range], [type=color]), textarea, select) { font-size: 16px !important; }
   :where(.orca-parity) .pf-facet-choice, :where(.orca-parity) .select-row { min-height: 44px; align-items: center; }
   :where(.orca-parity) .pf-row-check { opacity: 1; }
   :where(.orca-parity) .orca-menu .menu-item { min-height: 44px; }
@@ -103,11 +102,7 @@
   :where(.orca-parity) .workspace-rail[data-phone=true] .sidebar > .process-section,
   :where(.orca-parity) .workspace-rail[data-phone=true] :is(.process-panel, .settings-tab, .settings-pages) { flex: none; min-height: 0; }
   :where(.orca-parity) .workspace-rail[data-phone=true] .page-body { flex: none; overflow: visible; }
-  :where(.orca-parity) .workspace-rail[data-phone=true] .page-bar { position: sticky; top: 0; z-index: 3; flex-wrap: nowrap; overflow: auto hidden; scrollbar-width: none; background: var(--panel); }
-  :where(.orca-parity) .workspace-rail[data-phone=true] .page-bar .tab-break { display: none; }
-  :where(.orca-parity) .workspace-rail[data-phone=true] .page-bar .page-tab[data-row-fill] { flex: none; }
-  :where(.orca-parity) :is(.opt-line, .option-row) .opt-label-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; overflow-wrap: normal; }
-  :where(.orca-parity) .workspace-rail[data-phone=true] .sidebar .opt-line:not(.full):has(> .opt-field .dropdown) { grid-template-columns: minmax(0, 1fr) fit-content(58%); }
+  :where(.orca-parity) .workspace-rail[data-phone=true] .page-bar { position: sticky; top: 0; z-index: 3; background: var(--panel); }
   :where(.orca-parity) .workspace-rail[data-phone=true] .sidebar .opt-line:not(.full) > .opt-field:has(.dropdown) { min-width: var(--ctl-w); }
   :where(.orca-parity) .compact-topbar .title-zone { flex: none; justify-content: flex-start; padding: 0; }
   :where(.orca-parity) .compact-topbar .project-title { grid-template-columns: auto; justify-content: start; column-gap: 0; }
@@ -152,7 +147,7 @@
   :where(.orca-parity) :is(.check, .control-check, .orca-radio, .pf-radio, .orca-switch) { flex-shrink: 0; }
   :where(.orca-parity) :is(.select-row, .lg-opt, .lg-switch, .opt-check, .orca-check-label, .pf-facet-choice) { min-height: 44px; }
   :where(.orca-parity) :is(.pk-star, .pk-clear, .lg-collapse, .tool-fold) { min-width: 44px; min-height: 44px; }
-  :where(.orca-parity) :is(.modal-close, .pf-close) { min-width: 44px; min-height: 44px; }
+  :where(.orca-parity) .modal-close { min-width: 44px; min-height: 44px; }
   :where(.orca-parity) .canvas-area .notifications .notif-close { min-width: 44px; min-height: 44px; width: 44px; height: 44px; top: 0; right: 0; }
   :where(.orca-parity) .canvas-area .notification { padding-right: 48px; min-height: 48px; }
   :where(.orca-parity) .canvas-area .notification .notif-link { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; padding-inline: 4px; }
@@ -197,4 +192,79 @@
 }
 @media (prefers-reduced-motion: reduce) {
   :where(.orca-parity) .workspace-rail { transition: none; }
+}
+
+@media (max-width: 419px) {
+  :where(.orca-parity) .compact-topbar .view-switch > .view-tab { min-width: 0; padding-inline: var(--s-2); }
+  :where(.orca-parity) .compact-topbar .tabbar-actions > :is(.btn, .btn-primary):not(.output-overflow) { padding-inline: var(--s-3); }
+}
+@media (pointer: coarse), (hover: none) {
+  :where(.orca-parity) label.modal-check, :where(.orca-parity) .send-options label.modal-check, :where(.orca-parity) :is(.modal, [role=dialog]) .form-row { min-height: 44px; }
+  :where(.orca-parity) :is(.transform-floating .xf-steps, .seg.pj-view) { --seg-h: 46px; }
+  :where(.orca-parity) :is(.info-tip, .pj-item .control-check, .ol-expand, .modal .link, .rail-slot-use, .xf-fold, .transform-floating .xf-btn) { position: relative; }
+  :where(.orca-parity) :is(.info-tip, .pj-item .control-check, .ol-expand, .modal .link, .rail-slot-use, .xf-fold, .transform-floating .xf-btn)::before {
+    content: ''; position: absolute; left: 50%; top: 50%; width: max(100%, 44px); height: max(100%, 44px); transform: translate(-50%, -50%); }
+}
+@media (max-width: 599px), (max-width: 899px) and (max-height: 500px) and (pointer: coarse), (max-width: 899px) and (max-height: 500px) and (hover: none) {
+  [data-radix-popper-content-wrapper]:has(> .transform-floating) { position: fixed !important; transform: none !important; inset: auto 0 0 0 !important; min-width: 0 !important; z-index: 40 !important; }
+  :where(.orca-parity) .transform-floating { width: 100%; max-height: min(60dvh, 340px); box-sizing: border-box; border-radius: var(--r-3) var(--r-3) 0 0; padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+  :where(.orca-parity) body:has(.transform-floating) .canvas-area :is(.object-info, .notifications, .canvas-toolbar, .canvas-tools) { visibility: hidden; }
+}
+@media (max-width: 899px) and (max-height: 500px) {
+  :where(.orca-parity) .app .canvas-area[data-viewport] .notifications { left: auto; right: calc(max(8px, env(safe-area-inset-right)) + var(--canvas-chip) + 8px); bottom: 72px; width: min(320px, 45%); margin-inline: 0; }
+  :where(.orca-parity) .app .canvas-area[data-viewport=preview] .notifications { top: 8px; bottom: calc(var(--pv-inset) + 52px + var(--s-3)); left: 250px; right: var(--pv-slider); width: auto; max-height: none; }
+  :where(.orca-parity) .canvas-area .preview .order-bar { grid-template-columns: auto minmax(0, 1fr) auto auto auto; min-height: 52px; }
+  :where(.orca-parity) .canvas-area .preview .order-bar > :is(.orca-range, .ob-transport, .ob-time, .ob-rate, .ob-seg) { grid-row: 1; }
+  :where(.orca-parity) .canvas-area .preview .order-bar > .orca-range { grid-column: 2; }
+  :where(.orca-parity) .canvas-area .preview .order-bar > .ob-time { grid-column: 3; padding-inline: var(--s-2); }
+  :where(.orca-parity) .canvas-area .preview .order-bar > .ob-rate { grid-column: 4; }
+  :where(.orca-parity) .canvas-area .preview .order-bar > .ob-seg { grid-column: 5; }
+}
+@media (max-width: 599px) { :where(.orca-parity) .canvas-area .object-info-tris { display: none; } }
+@media (min-width: 900px) and (max-width: 1199px) and (pointer: coarse), (min-width: 900px) and (max-width: 1199px) and (hover: none) {
+  :where(.orca-parity) .canvas-area[data-viewport=prepare] .notifications { max-height: calc(100% - var(--cv-band) - 220px); }
+}
+@media (pointer: coarse), (hover: none), (max-width: 599px) {
+  :root.orca-parity :is(.opt-field > .field-reset, .optgroup-headrow > .section-reset, .pf-rename, .color-trigger:not(.is-empty), .rail-changed, .pf-change > .reset-icon) { position: relative; }
+  :root.orca-parity :is(.opt-field > .field-reset, .optgroup-headrow > .section-reset, .pf-rename, .color-trigger:not(.is-empty), .rail-changed, .pf-change > .reset-icon)::before {
+    content: ''; position: absolute; left: 50%; top: 50%; width: max(100%, 44px); height: max(100%, 44px); transform: translate(-50%, -50%); }
+  :root.orca-parity .sidebar { --rail-tail: 44px; }
+  :root.orca-parity .rail-changed { height: 20px; min-height: 20px; min-width: 20px; }
+  :root.orca-parity .pf-changes-pop :is(button, .dropdown) { min-height: 44px; }
+  :root.orca-parity .sidebar .rail-row { height: auto; min-height: 44px; }
+  :root.orca-parity .layer-heights .seg { --seg-h: 44px; height: auto; }
+  :root.orca-parity .layer-heights .seg > button { min-height: 44px; }
+}
+@media (max-width: 599px), (max-width: 899px) and (max-height: 500px) {
+  [data-radix-popper-content-wrapper]:has(> :is(.pf-changes-pop, .setting-pick-pop, .color-popover)) { position: fixed !important; inset: auto 0 0 0 !important; transform: none !important; min-width: 0 !important; }
+  :root.orca-parity .orca-menu:is(.pf-changes-pop, .setting-pick-pop, .color-popover) { box-sizing: border-box; width: 100vw; max-width: 100vw; max-height: 70dvh; overflow: auto; border-radius: var(--r-3) var(--r-3) 0 0; padding-bottom: max(var(--s-2), env(safe-area-inset-bottom)); }
+  :root.orca-parity .pf-editor-summary, :root.orca-parity .pf-editor-summary * { white-space: normal; overflow: visible; text-overflow: clip; }
+}
+:where(.orca-parity) .workspace-rail { overflow-x: clip; }
+:root.orca-parity .app { overflow: clip; }
+@media (pointer: coarse), (hover: none) {
+  :where(.orca-parity) .compact-topbar .pt-status { min-width: 44px; justify-content: center; }
+  :where(.orca-parity) .compact-topbar .tabbar-actions > :is(button, .btn, .btn-primary) { min-width: 44px; }
+}
+@media (max-width: 419px) {
+  :where(.orca-parity) .compact-topbar .view-switch > .view-tab[aria-label="Library"] { display: none; }
+}
+@media (max-width: 379px) {
+  :root.orca-parity .compact-topbar .view-switch > .view-tab { padding-inline: 4px; font-size: 12px; }
+}
+@media (max-width: 899px) and (max-height: 500px) {
+  :root.orca-parity .canvas-area .objects-panel { max-height: calc(100% - 96px); }
+}
+@media (max-width: 599px) {
+  :root.orca-parity .pf-page .page-bar:not([data-rows="1"], [data-rows="2"], [data-rows="3"]) { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
+  :root.orca-parity .pf-page .page-bar:not([data-rows="1"], [data-rows="2"], [data-rows="3"]) .tab-break { display: none; }
+  :root.orca-parity .pf-page .page-bar:not([data-rows="1"], [data-rows="2"], [data-rows="3"]) .page-tab { flex: none; min-width: max-content; }
+}
+@media (max-width: 899px) { :where(.orca-parity) .rail-resizer, :where(.orca-parity) .sidebar .rail-act[aria-label^="Hide sidebar"] { display: none; } }
+:root.orca-parity { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; -webkit-tap-highlight-color: transparent; }
+:where(.orca-parity) :is(input:not([type=checkbox], [type=radio], [type=range], [type=color], [type=file]), textarea) { -webkit-appearance: none; appearance: none; }
+:where(.orca-parity) input[type=search]::-webkit-search-decoration { -webkit-appearance: none; }
+@media (max-width: 599px) {
+  :where(.orca-parity) .toast { bottom: calc(var(--s-7) + env(safe-area-inset-bottom)); }
+  :where(.orca-parity) .workspace-rail[data-phone=true] .workspace-settings-body > .sidebar { padding-bottom: env(safe-area-inset-bottom); }
 }

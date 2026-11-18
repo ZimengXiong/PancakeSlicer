@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { CameraViews } from '../plater/CameraViews';
 import { getState, isSelected } from '../state/store';
-import type { SystemPreset } from '../api/types';
+import type { PrinterPreset } from '../state/store';
 import { bedKey, buildBed, sceneColors, showBedFor } from '../plater/Bed';
 import { subscribeTheme } from '../theme';
 import { pixelRatio, watchPixelRatio } from '../plater/pixelRatio';
@@ -37,7 +37,7 @@ export class PreviewScene {
   private diffVisible = false;
   private bed: THREE.Group | null = null;
   private bedKey = '';
-  private machine: SystemPreset | undefined;
+  private machine: PrinterPreset | undefined;
   private unsubTheme = subscribeTheme(() => {
     this.renderer.setClearColor(sceneColors().background);
     this.shellMat.color.set(sceneColors().shell);
@@ -120,7 +120,7 @@ export class PreviewScene {
     this.request();
   }
 
-  setBed(machine: SystemPreset | undefined) {
+  setBed(machine: PrinterPreset | undefined) {
     this.machine = machine;
     const key = bedKey(machine);
     if (key === this.bedKey) return;

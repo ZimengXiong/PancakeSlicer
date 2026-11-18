@@ -611,7 +611,7 @@ static ExPolygons outer_inner_brim_area(Print& print,
                 areas = intersection_ex(areas, Polygons{bed});
         }
         if (clipped)
-            print.active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL,
+            print.active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, WarningCode{ "brim_clipped" },
                 I18N::translate(L("Part of the brim was clipped at the bed edge. Move the objects inward for a full brim.")));
 
     }

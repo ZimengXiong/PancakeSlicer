@@ -1,18 +1,30 @@
+import { failureText } from '../api/access';
 import { Check } from './Check';
 import { useRef, useState } from 'react';
 import type { PresetType } from '../api/types';
-import { applyImportPlans, downloadArchive, filamentAlias, filamentBundle, planImport, presetZip, printerBundle, readPresetFile, type ExportKind, type ImportPlan } from '../preset-io';
-import { getState, setState, toast, useStore } from '../state/store';
+import { applyImport, exportProfiles, planImport, type ExportKind, type ImportRow } from '../profiles/library-io';
+import { setState, toast, useStore } from '../state/store';
 import { Dropdown } from './Dropdown';
 import { Modal, ModalBody, ModalFooter, ModalTitle } from './Modal';
 import { createMachine, useMachine } from '../flow/fsm';
+import { notice, noticeText, type NoticeKind } from '../notice-codes';
 
 const TYPE_NAME: Record<PresetType, string> = { machine: 'Printer', filament: 'Filament', process: 'Process' };
 const ACCEPT = '.json,.zip,.bbscfg,.orca_printer,.orca_filament,.orca_bundle';
 const close = () => setState({ presetUx: null });
 
-type Row = ImportPlan & { checked: boolean; result?: string; ok?: boolean };
-const importable = (r: ImportPlan) => !!(r.preset || r.base || r.parsed.physical);
+type Row = ImportRow & { checked: boolean; result?: string; ok?: boolean;  added?: ImportRow['record']; addedNote?: string;
+   pick?: string };
+type Match = NonNullable<ImportRow['matches']>[number];
+function editedAt(m: Match): string {
+  if (!m.edited) return `revision ${m.revision}`;
+  const at = new Date(m.edited), time = at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return `edited ${at.toDateString() === new Date().toDateString() ? time : `${at.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${time}`}`;
+}
+const differ = (m: Match) => m.differ === 0 ? 'no settings differ' : m.differ === 1 ? '1 setting differs' : `${m.differ} settings differ`;
+const skipped = (r: ImportRow) => ({ text: noticeText(r.code!, { note: r.note }), kind: notice(r.code!).kind });
+const KIND_CLASS: Partial<Record<NoticeKind, string>> = { error: 'np-error', warning: 'np-warn-text' };
+const importable = (r: ImportRow) => r.status !== 'unchanged' && r.status !== 'skip' && !!(r.record || r.physical);
 
 type ImportState = 'empty' | 'reading' | 'review' | 'importing' | 'imported';
 type ImportEvent = { type: 'FILES' } | { type: 'PARSED'; request: number; rows: Row[] } | { type: 'READ_FAIL'; request: number; error: string }
@@ -49,9 +61,8 @@ export function ImportDialog() {
     machine.send({ type: 'FILES' });
     const request = machine.get().context.request;
     try {
-      const parsed = (await Promise.all(list.map(readPresetFile))).flat();
-      machine.send({ type: 'PARSED', request, rows: planImport(getState(), parsed).map((p) => ({ ...p, checked: p.status !== 'skip' })) });
-    } catch (e) { machine.send({ type: 'READ_FAIL', request, error: e instanceof Error ? e.message : String(e) }); }
+      machine.send({ type: 'PARSED', request, rows: (await planImport(list)).map((p) => ({ ...p, checked: importable(p), added: p.record, addedNote: p.note, pick: '' })) });
+    } catch (e) { machine.send({ type: 'READ_FAIL', request, error: failureText('Oops! Couldn\'t read those files', e) }); }
   };
 
   const run = async () => {
@@ -59,9 +70,9 @@ export function ImportDialog() {
     machine.send({ type: 'IMPORT' });
     const chosen=rows.filter(r=>r.checked && importable(r));
     try {
-      const result=await applyImportPlans(chosen);
+      const result=await applyImport(chosen);
       machine.send({ type: 'IMPORTED', rows: rows.map(row=>chosen.includes(row) ? {...row,ok:true,result:row.status === 'replace' ? 'replaced' : 'imported'} : row) });
-      toast([`Imported ${result.profiles} profiles and ${result.bases} templates`,...(result.connections?[`${result.connections} printer connection${result.connections>1?'s':''}`]:[]),...result.problems].join('\n'));
+      toast('profiles_imported', { profiles: result.profiles, connections: result.connections ?? 0, problems: result.problems.join('\n') });
     }catch(e){machine.send({ type: 'IMPORT_FAIL', rows: rows.map(row=>chosen.includes(row) ? {...row,ok:false,result:e instanceof Error ? e.message : String(e)} : row) });}
   };
 
@@ -84,17 +95,24 @@ export function ImportDialog() {
             <table className="np-table">
               <thead><tr><th><Check aria-label="Select all" disabled={done || busy} checked={rows.every((r) => r.checked || !importable(r))}
                 onCheckedChange={(next) => setRows(rows.map((r) => ({ ...r, checked: importable(r) && next })))} /></th>
-                <th>Preset</th><th>Type</th><th>Parent</th><th>{done ? 'Result' : 'Action'}</th></tr></thead>
+                <th>Preset</th><th>Type</th><th>Starts from</th><th>{done ? 'Result' : 'Action'}</th></tr></thead>
               <tbody>{rows.map((r, i) => (
-                <tr key={`${r.parsed.file}:${i}`}>
-                  <td><Check aria-label={`Import ${r.parsed.name}`} disabled={!importable(r) || done || busy} checked={r.checked}
+                <tr key={`${r.file}:${i}`}>
+                  <td><Check aria-label={`Import ${r.name}`} disabled={!importable(r) || done || busy} checked={r.checked}
                     onCheckedChange={(next) => setRows(rows.map((x, j) => (j === i ? { ...x, checked: next } : x)))} /></td>
-                  <td>{r.parsed.name}</td>
-                  <td>{r.parsed.type ? TYPE_NAME[r.parsed.type] : r.parsed.physical ? 'Physical printer' : '—'}</td>
-                  <td>{r.preset?.inherits ?? r.parsed.inherits ?? ''}</td>
-                  <td className={r.ok === false ? 'np-error' : r.status === 'replace' && !done ? 'np-warn-text' : undefined}>
-                    {done || r.ok === false ? (r.result ?? (importable(r) ? 'not selected' : `skipped: ${r.note}`))
-                      : r.status === 'skip' ? `skip: ${r.note}` : `${r.status === 'replace' ? 'overwrite' : 'import'}${r.note ? ` (${r.note})` : ''}`}
+                  <td>{r.name}</td>
+                  <td>{r.type ? TYPE_NAME[r.type] : r.physical ? 'Physical printer' : '—'}</td>
+                  <td>{r.basis ?? ''}</td>
+                  <td className={r.ok === false ? 'np-error' : r.status === 'skip' ? KIND_CLASS[skipped(r).kind] : r.status === 'replace' && !done ? 'np-warn-text' : undefined}>
+                    {done || r.ok === false ? (r.result ?? (r.status === 'unchanged' ? 'unchanged' : r.status === 'skip' ? skipped(r).text : 'not selected'))
+                      : r.status === 'unchanged' ? 'unchanged' : r.status === 'skip' ? skipped(r).text : r.pick || r.matches?.length ? r.note : `${r.status === 'replace' ? 'overwrite' : 'import'}${r.note ? ` (${r.note})` : ''}`}
+                    {r.matches && r.matches.length > 0 && !done && <Dropdown className="combo" aria-label={`What ${r.name} does`} value={r.pick ?? ''}
+                      options={[{ value: '', label: 'Add as new' }, ...r.matches.map((m) => ({ value: m.id, label: `Replace ${m.name}, ${editedAt(m)}, ${differ(m)}` }))]}
+                      onValueChange={(pick) => setRows(rows.map((x, j) => { if (j !== i) return x; const m = x.matches?.find((y) => y.id === pick);
+                        const status = !m ? 'new' as const : m.differ === 0 && m.name === x.name ? 'unchanged' as const : 'replace' as const;
+                        const note = !m ? x.addedNote : `Replaces ${m.name} (${editedAt(m)})`;
+                        return { ...x, pick, record: m ? m.record : x.added, status, note, checked: status !== 'unchanged' }; }))}/>}
+                    {r.notStored.length > 0 && <details className="import-not-stored"><summary>{r.notStored.length} not stored</summary><ul>{r.notStored.map((k) => <li key={k}>{k}</li>)}</ul></details>}
                   </td>
                 </tr>
               ))}</tbody>
@@ -112,48 +130,65 @@ export function ImportDialog() {
 
 const KINDS: [ExportKind, string][] = [
   ['printer_bundle', 'Printer bundle (.orca_printer)'], ['filament_bundle', 'Filament bundle (.orca_filament)'],
-  ['machine', 'Printers (.zip)'], ['filament', 'Filaments (.zip)'], ['process', 'Print settings (.zip)'],
+  ['printer', 'Printers (.zip)'], ['filament', 'Filaments (.zip)'], ['process', 'Print settings (.zip)'],
 ];
 
+type ExportState = 'choosing' | 'exporting' | 'failed';
+type ExportEvent = { type: 'EXPORT' } | { type: 'DONE' } | { type: 'FAIL'; error: string } | { type: 'EDIT' };
+const createExport = () => createMachine<ExportState, ExportEvent, { error: string | null }>({
+  id: 'preset-export', initial: 'choosing', strict: true, context: { error: null },
+  states: {
+    choosing: { on: { EXPORT: { target: 'exporting', action: () => ({ error: null }) }, EDIT: {} } },
+    exporting: { on: { DONE: { target: 'choosing' }, FAIL: { target: 'failed', action: (_, e) => ({ error: e.error }) }, EDIT: {} } },
+    failed: { on: { EXPORT: { target: 'exporting', action: () => ({ error: null }) }, EDIT: { target: 'choosing', action: () => ({ error: null }) } } },
+  },
+});
+
 export function ExportDialog() {
-  const userPresets = useStore((s) => s.userPresets);
+  const records = useStore((s) => s.records);
+  const [machine] = useState(createExport);
+  const { value, context: { error } } = useMachine(machine);
   const [kind, setKind] = useState<ExportKind>('printer_bundle');
   const [picked, setPicked] = useState<Set<string>>(new Set());
-  const s = getState();
-  const choices: string[] = kind === 'printer_bundle'
-    ? userPresets.filter((u) => u.type === 'machine' && !u.archived).map((u) => u.name)
-    : kind === 'filament_bundle' ? [...new Set(userPresets.filter((u) => u.type === 'filament').map((u) => filamentAlias(u.name)))]
-      : userPresets.filter((u) => u.type === kind).map((u) => u.name);
-  const selected = choices.filter((c) => picked.has(c));
-  const run = () => {
-    if (kind === 'printer_bundle') for (const printer of userPresets.filter((u) => u.type === 'machine' && !u.archived && picked.has(u.name)))
-      downloadArchive(printerBundle(s, printer));
-    else if (kind === 'filament_bundle') for (const name of selected)
-      downloadArchive(filamentBundle(s, name, userPresets.filter((u) => u.type === 'filament' && filamentAlias(u.name) === name)));
-    else downloadArchive(presetZip(userPresets.filter((u) => u.type === kind && picked.has(u.name)), kind));
-    toast(`Exported ${selected.length} ${kind.endsWith('bundle') ? 'bundle' : 'preset'}${selected.length === 1 ? '' : 's'}`);
-    close();
+  const list = kind === 'printer_bundle' || kind === 'printer' ? records.printers : kind === 'filament_bundle' || kind === 'filament' ? records.filaments : records.processes;
+  const choices = list.filter((r) => !r.archived).map((r) => ({ id: r.id, name: r.name }));
+  const selected = choices.filter((c) => picked.has(c.id));
+  const edit = (next: () => void) => { next(); machine.send({ type: 'EDIT' }); };
+  const run = async () => {
+    if (!machine.can({ type: 'EXPORT' })) return;
+    machine.send({ type: 'EXPORT' });
+    try {
+      const ids = selected.map((c) => c.id);
+      if (kind === 'printer_bundle' || kind === 'filament_bundle') for (const id of ids) await exportProfiles({ kind, ids: [id] });
+      else await exportProfiles({ kind, ids });
+      machine.send({ type: 'DONE' });
+      toast('exported_xx', { selectedCount: selected.length, value: kind.endsWith('bundle') ? 'bundle' : 'preset', value2: selected.length === 1 ? '' : 's' });
+      close();
+    } catch (e) { machine.send({ type: 'FAIL', error: e instanceof Error ? e.message : String(e) }); }
   };
+  const busy = value === 'exporting';
   return (
     <Modal size="m" className="export-dialog" label="Export profiles" onClose={close}>
       <ModalTitle title="Export profiles" onClose={close} />
       <ModalBody>
         <label className="form-row"><span>Export as</span>
-          <Dropdown className="combo" value={kind} onValueChange={(k) => { setKind(k as ExportKind); setPicked(new Set()); }} options={KINDS.map(([k, label]) => ({ value: k, label }))} /></label>
+          <Dropdown className="combo" value={kind} disabled={busy} onValueChange={(k) => edit(() => { setKind(k as ExportKind); setPicked(new Set()); })} options={KINDS.map(([k, label]) => ({ value: k, label }))} /></label>
         {choices.length === 0 ? <p>You don't have any saved profiles of this type yet.</p> : <div className="modal-pick">
           <div className="modal-pick-head">
-            <button type="button" className="link" onClick={() => setPicked(new Set(choices))}>Select all</button>
-            <button type="button" className="link" onClick={() => setPicked(new Set())}>Clear</button>
+            <button type="button" className="link" disabled={busy} onClick={() => edit(() => setPicked(new Set(choices.map((c) => c.id))))}>Select all</button>
+            <button type="button" className="link" disabled={busy} onClick={() => edit(() => setPicked(new Set()))}>Clear</button>
           </div>
           <div className="modal-pick-list" role="group" aria-label="Profiles to export">{choices.map((c) => (
-            <label key={c} className="modal-check"><Check checked={picked.has(c)}
-              onCheckedChange={(checked) => { const next = new Set(picked); if (checked) next.add(c); else next.delete(c); setPicked(next); }} /><span data-full-text={c}>{c}</span></label>
+            <label key={c.id} className="modal-check"><Check checked={picked.has(c.id)} disabled={busy}
+              onCheckedChange={(checked) => edit(() => { const next = new Set(picked); if (checked) next.add(c.id); else next.delete(c.id); setPicked(next); })} /><span data-full-text={c.name}>{c.name}</span></label>
           ))}</div>
         </div>}
+        {busy && <div role="status">Exporting…</div>}
+        {error && <p className="modal-error" role="alert">{error}</p>}
       </ModalBody>
       <ModalFooter lead={choices.length > 0 && `${selected.length} of ${choices.length}`}>
         <button type="button" className="btn" onClick={close}>Cancel</button>
-        <button type="button" className="btn-primary" disabled={!selected.length} onClick={run}>Export</button>
+        <button type="button" className="btn-primary" data-output disabled={!selected.length || busy} onClick={() => void run()}>Export</button>
       </ModalFooter>
     </Modal>
   );

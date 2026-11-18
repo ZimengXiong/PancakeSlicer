@@ -1,19 +1,16 @@
 import { submissionHeaders } from '../flow/submission';
-import { bootstrapAccessToken, mutation, responseError } from './access';
+import { bootstrapAccessToken, failureCode, mutation, responseError } from './access';
 import { attachFiles, postJob } from './blobs';
-import { noteCapabilities, readHealth } from './health';
+import { readHealth } from './health';
 import { followJobStream, type JobStreamEvent } from './job-stream';
-import { expandCatalog } from './compact-catalog';
-import { catalogWorker, onWorkerFailure, workerId } from './worker';
-import type { CatalogIn, CatalogOut } from './catalog.worker';
-import type { Config, JobRequest, JobStatus, PresetCatalog, ProgressEvent } from './types';
+import type { Config, JobRequest, JobStatus, ProgressEvent } from './types';
+import { DEMO, NO_ENGINE } from '../demo/config';
 
 export interface Api {
   mock: boolean;
-  presets(vendor: string, models: string[], update?: (c: PresetCatalog) => void, names?: string[]): Promise<PresetCatalog>;
   submit(req: JobRequest, signal?: AbortSignal, onUpload?: (fraction: number) => void): Promise<string>;
   status(id: string): Promise<JobStatus>;
-  events(id: string, on: { progress(e: ProgressEvent): void; done(s: JobStatus): void; error(msg: string): void; log?(stream: string, line: string): void; result?(s: JobStatus): void }): () => void;
+  events(id: string, on: { progress(e: ProgressEvent): void; done(s: JobStatus): void; error(msg: string, code: string): void; log?(stream: string, line: string): void; result?(s: JobStatus): void }): () => void;
   cancel(id: string): Promise<void>;
   downloadUrl(id: string): string;
   movesUrl(id: string): string;
@@ -38,40 +35,22 @@ export function parseProgress(data: string): ProgressEvent | null {
 
 const statusRequests = new Map<string, Promise<JobStatus>>();
 
+function isTerminalState(data: string) {
+  try { return ['done', 'failed', 'canceled'].includes(JSON.parse(data)?.state); } catch { return false; }
+}
+
+const refusal = (code: string, message: string) => Object.assign(new Error(message), { code });
+
 const realApi: Api = {
   mock: false,
-  presets(vendor, models, update, names) {
-    const worker = catalogWorker();
-    const id = workerId();
-    return new Promise((resolve, reject) => {
-      let answered = false;
-      const cleanup = () => { worker.removeEventListener('message', on); unsubscribe(); };
-      const fail = (error: Error) => { cleanup(); if (!answered) reject(error); };
-      const on = (e: MessageEvent<CatalogOut>) => {
-        const m = e.data;
-        if (m.id !== id) return;
-        if (m.type === 'catalog') {
-          const catalog = expandCatalog(m.catalog);
-          if (answered) update?.(catalog);
-          else resolve(catalog);
-          answered = true;
-        } else if (m.type === 'done') cleanup();
-        else if (m.type === 'error') fail(new Error(m.message));
-      };
-      const unsubscribe = onWorkerFailure(fail);
-      worker.addEventListener('message', on);
-      worker.postMessage({ id, vendor, models, ...(names ? { names } : {}), engine: { options: toolFeatures.dump_options === true, presets: toolFeatures.dump_presets === true } } satisfies CatalogIn);
-    });
-  },
-
   async submit(req, signal, onUpload) {
+    if (DEMO) throw new Error(NO_ENGINE);
     const fd = new FormData();
     await attachFiles(fd, req.files, signal, onUpload);
-    const { printer, print, filaments } = req.library;
-    if (!printer) throw new Error('Pick a printer first to get started.');
-    if (!print) throw new Error('Pick a print profile first.');
-    if (!filaments.length || filaments.some((f) => !f)) throw new Error('Please pick a filament for each slot before continuing.');
-    fd.append('library', JSON.stringify({ ...req.library, project: req.overrides }));
+    const { printer, print } = req.library;
+    if (!printer) throw refusal('slice_refused', 'Pick a printer first to get started.');
+    if (!print) throw refusal('slice_refused', 'Pick a print profile first.');
+    fd.append('library', JSON.stringify({ ...req.library, project: req.project }));
     if (req.plate_index !== undefined) fd.append('plate_index', String(req.plate_index));
     if (req.plate) fd.append('plate', JSON.stringify({ ...req.plate, objects: req.plate.objects.map((o) => ({ ...o,
       ...(o.settings ? { settings: o.settings } : {}),
@@ -103,7 +82,7 @@ const realApi: Api = {
   },
   events(id, on) {
     let finished = false, disposed = false, checking = false, resulted = false, last = -1;
-    let reason: string | undefined, stop = () => {}, retry: ReturnType<typeof setTimeout> | undefined;
+    let reason: string | undefined, reasonCode: string | undefined, stop = () => {}, retry: ReturnType<typeof setTimeout> | undefined;
     const close = () => { finished = true; stop(); clearTimeout(retry); };
     const finish = async (reconnect = false) => {
       if (finished || checking) return;
@@ -111,17 +90,17 @@ const realApi: Api = {
       try {
         const s = await realApi.status(id);
         if (disposed) return;
-        if (!['done', 'failed', 'cancelled', 'interrupted', 'stale'].includes(s.state)) {
+        if (s.state === 'queued' || s.state === 'running') {
           retry = setTimeout(reconnect ? follow : () => void finish(), 1000);
           return;
         }
         close();
         if (s.state === 'done') on.done(s);
-        else on.error(s.error ?? `job ${s.state}`);
+        else on.error(s.error ?? `job ${s.state}`, s.error_code ?? (s.state === 'canceled' ? 'job_canceled' : 'slice_failed'));
       } catch (e) {
         if (!disposed) {
           close();
-          on.error(reason ?? String(e));
+          on.error(reason ?? String(e), reasonCode ?? failureCode(e));
         }
       } finally {
         checking = false;
@@ -134,7 +113,7 @@ const realApi: Api = {
         case 'message': case 'progress': case 'state': {
           const p = parseProgress(e.data);
           if (p) on.progress(p);
-          if (/"state"\s*:\s*"(done|failed|canceled)"/.test(e.data)) void finish();
+          if (isTerminalState(e.data)) void finish();
           return;
         }
         case 'queue':
@@ -158,7 +137,9 @@ const realApi: Api = {
           return;
         case 'done': case 'end': case 'complete': case 'failed': case 'error_event':
           try {
-            reason = JSON.parse(e.data).error || reason;
+            const data = JSON.parse(e.data);
+            reason = data.error || reason;
+            reasonCode = data.error_code || reasonCode;
           } catch {
           }
           void finish();
@@ -172,14 +153,13 @@ const realApi: Api = {
     };
   },
   async cancel(id) {
-    await mutation(`/api/jobs/${id}`, { method: 'DELETE' });
+    await (await mutation(`/api/jobs/${id}`, { method: 'DELETE' })).text();
   },
   downloadUrl: (id) => `/api/jobs/${id}/download`,
   movesUrl: (id) => `/api/jobs/${id}/moves`,
 };
 
 
-export let toolFeatures: Record<string, unknown> = {};
 export interface SurfaceArtifactManifest {
   validated: boolean;
   preview_ready?: boolean;
@@ -192,14 +172,10 @@ export interface SurfaceArtifactManifest {
   wave_modes?: string[];
 }
 export let toolArtifactManifest: SurfaceArtifactManifest | undefined;
-export function applyHealth(health: { tool_features?: Record<string, unknown>; artifact_manifest?: SurfaceArtifactManifest }) {
-  if (!health.tool_features) return;
-  toolFeatures = health.tool_features;
-  noteCapabilities(health.tool_features);
+export function applyHealth(health: { artifact_manifest?: SurfaceArtifactManifest }) {
   toolArtifactManifest = health.artifact_manifest;
 }
-const validatedSurface = (feature: 'curved_tops' | 'nonplanar_wave') => toolFeatures[feature] === true
-  && (toolArtifactManifest?.preview_ready ?? toolArtifactManifest?.validated) === true
+const validatedSurface = (feature: 'curved_tops' | 'nonplanar_wave') => (toolArtifactManifest?.preview_ready ?? toolArtifactManifest?.validated) === true
   && /^[a-f0-9]{64}$/i.test(toolArtifactManifest?.binary_sha256 ?? '')
   && /^[a-f0-9]{64}$/i.test(toolArtifactManifest?.resources_sha256 ?? '')
   && toolArtifactManifest?.features?.[feature] === true;
@@ -207,16 +183,16 @@ export const canCurvedTops = () => validatedSurface('curved_tops');
 export const canSurfaceWaves = (mode = 'whole') => validatedSurface('nonplanar_wave') && toolArtifactManifest?.wave_modes?.includes(mode) === true;
 
 export function surfaceConfigBlocker(config: Config): string | undefined {
-  if (String(config.nonplanar_mode) === 'nonplanar_top' && !canCurvedTops()) return 'Curved layers require a newer version of the slicing engine.';
+  if (String(config.nonplanar_mode) === 'nonplanar_top' && !canCurvedTops()) return 'Curved layers aren\'t validated in this engine build.';
   const wave = String(config.nonplanar_wave ?? 'off');
-  if (wave !== 'off' && !canSurfaceWaves(wave)) return 'Rippled top surfaces require a newer version of the slicing engine.';
+  if (wave !== 'off' && !canSurfaceWaves(wave)) return 'Rippled top surfaces aren\'t validated in this engine build.';
 }
 
 function guardedApi(api: Api): Api {
   return { ...api, async submit(request, signal, onUpload) {
     if (request.output !== '3mf' && !request.force_planar) {
       const objects = [...request.plate?.objects ?? [], ...request.project_edits?.filter((e) => e.op === 'add_object') ?? []];
-      const configs: Config[] = [request.overrides, request.project_settings ?? {},
+      const configs: Config[] = [request.project.machine ?? {}, request.project.process ?? {}, ...request.project.filaments ?? [], request.project_settings ?? {},
         ...request.plate?.plates?.map((p) => p.settings) ?? [],
         ...objects.flatMap((o) => [o.settings ?? {}, ...o.volumes?.map((v) => v.settings ?? {}) ?? [], ...o.ranges?.map((r) => r.settings) ?? []]),
         ...request.project_edits?.flatMap((e) => 'settings' in e ? [e.settings ?? {}] : []) ?? []];
@@ -228,10 +204,6 @@ function guardedApi(api: Api): Api {
     return api.submit(request, signal, onUpload);
   } };
 }
-export const canLoadStep = () => toolFeatures.step === true;
-export const canEditProject = () => toolFeatures.edit === true;
-export const canForcePlanar = () => toolFeatures.force_planar === true;
-export const canCalibrate = () => toolFeatures.calib === true;
 
 export async function connect(timeoutMs = 1500): Promise<Api> {
   bootstrapAccessToken();
@@ -239,7 +211,7 @@ export async function connect(timeoutMs = 1500): Promise<Api> {
     const r = await readHealth(timeoutMs);
     const type = r.headers.get('content-type') ?? '';
     if (r.ok && type.includes('json')) {
-      applyHealth(await r.json() as { tool_features?: Record<string, unknown>; artifact_manifest?: SurfaceArtifactManifest });
+      applyHealth(await r.json() as { artifact_manifest?: SurfaceArtifactManifest });
       return guardedApi(realApi);
     }
   } catch {

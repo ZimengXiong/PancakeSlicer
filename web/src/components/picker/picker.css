@@ -62,3 +62,4 @@
   :where(.orca-parity) .pk-rail button, :where(.orca-parity) .pk-option, :where(.orca-parity) .pk-star, :where(.orca-parity) .pk-foot button { min-height: 44px; }
   :where(.orca-parity) .pk-star { width: 44px; }
 }
+:where(.orca-parity) .pk-option.is-muted :is(.pk-head, .pk-tail, .pk-meta) { color: var(--ink-3); }

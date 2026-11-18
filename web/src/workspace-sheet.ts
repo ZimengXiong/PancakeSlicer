@@ -5,8 +5,8 @@ import { resolvePreset, type State } from './state/store';
 export const printerReady = (s: State) => { const r = s.printer ? resolvePreset(s, 'machine', s.printer) : undefined; return !!r?.base && !r.error; };
 
 export { narrowQuery, useNarrow } from './breakpoints';
-export const phoneSheetQuery = window.matchMedia('(max-width: 599px), (max-width: 899px) and (max-height: 500px) and (pointer: coarse), (max-width: 899px) and (max-height: 500px) and (hover: none)');
-export const overlayRailQuery = window.matchMedia('(max-width: 899px), (max-width: 1199px) and (pointer: coarse), (max-width: 1199px) and (hover: none)');
+export const phoneSheetQuery = window.matchMedia('(max-width: 599px), (max-width: 899px) and (max-height: 500px)');
+export const overlayRailQuery = window.matchMedia('(max-width: 899px)');
 const subscribePlacement = (listener: () => void) => {
   phoneSheetQuery.addEventListener('change', listener);
   overlayRailQuery.addEventListener('change', listener);

@@ -55,7 +55,7 @@ double planner_segment_rate(double configured, GCodeFlavor flavor, bool bbl_prin
 constexpr double ConformalWipe  = 1.;
 constexpr double ConformalMinSegment = 0.05;
 constexpr double ConformalMinPath = 0.1;
-constexpr double ConformalPrime = 0.;
+constexpr double ConformalPrime = 0.5;
 constexpr double ConformalBelowFirstLayerTolerance = 0.005;
 
 struct ConformalEmitParams

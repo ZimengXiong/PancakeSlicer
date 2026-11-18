@@ -144,7 +144,7 @@ export default function NonplanarCalibDialog() {
       setResult({ ...result, 0: { rows: [['Head', newId], ['Body moved', `${fit.shift.toFixed(2)} mm`], ['Steepest plane', `${fit.slopeCap.toFixed(1)}°`],
         [`Relief at ${STEPS[STEPS.length - 1].slope}°`, `${fit.band.toFixed(2)} mm`], ['Gantry floor', `${fit.gantryFloor.toFixed(1)} mm`]] } });
     } catch (e) {
-      toast(`Oops! Couldn't save your calibrated print head.\n${e instanceof Error ? e.message : String(e)}`);
+      toast('couldnt_save_calibrated_print', { detail: e instanceof Error ? e.message : String(e) });
     }
   };
   const writeTilt = () => {
@@ -163,9 +163,9 @@ export default function NonplanarCalibDialog() {
     const job = getState().job, log = job.calibLog;
     const verified = Number(logValue(log, 'calib_verifier_first_touch')), model = Number(logValue(log, 'calib_model_first_touch'));
     if (job.calib !== 'nonplanar-verifier' || job.state !== 'done' || job.stale || !Number.isFinite(verified) || !Number.isFinite(model))
-      return toast('Click Generate and slice the clearance test plate first.');
+      return toast('click_generate_slice_clearance');
     const expected = verifyHead || 'generic-conservative';
-    if (logValue(log, 'calib_head') !== expected) return toast(`That plate was sliced with ${logValue(log, 'calib_head')}—please generate and slice it again using ${expected}.`);
+    if (logValue(log, 'calib_head') !== expected) return toast('plate_was_sliced_generate', { value: logValue(log, 'calib_head'), expected });
     const measured = lastClean + 1;
     setResult({ ...result, 3: { rows: [['First touch, clearance check', firstTouchText(verified)], ['First touch, head model', firstTouchText(model)],
       ['First touch, your print', firstTouchText(measured)], ['Clearance check', verified === measured ? 'Agrees' : 'Disagrees']],

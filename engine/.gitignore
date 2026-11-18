@@ -41,6 +41,8 @@ src/OrcaSlicer-doc/
 **/.flatpak-builder/
 *.no-debug.yml
 resources/profiles/user/default
+# Built by nonplanar_slice_tool --flatten-catalog (scripts/webapp/build_all.sh).
+resources/catalog/
 *.code-workspace
 deps_src/build/
 test.js
@@ -70,3 +72,9 @@ GEMINI.md
 **/AGENTS.md
 
 /web/dist-demo/
+# The demo's 3DBenchy model, generated from resources/handy_models/3DBenchy.drc by web/demo-build.ts.
+/web/src/demo/fixtures/assets/sha256-3c44402d72219918df03d3f83bc93765fd0585ae0213a8d3724eec0ecdcfedd0.gz
+# The demo's sample slice, made by the engine at demo build (web/demo-sample.ts).
+/web/src/demo/fixtures/sample/
+# The demo's catalog slice, cut from the engine's catalog at demo build (web/demo-sample.ts).
+/web/src/demo/fixtures/catalog.json.gz

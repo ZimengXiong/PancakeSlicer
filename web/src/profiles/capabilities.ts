@@ -1,5 +1,6 @@
 import table from '../../../server/method_capabilities.json';
 import type { Config } from '../api/types';
+import { DEMO } from '../demo/config';
 
 export interface MethodArtifact {
   validated?: boolean; preview_ready?: boolean; print_qualified?: boolean;
@@ -10,8 +11,7 @@ export interface MethodArtifact {
 export interface MethodContext {
   printer: { known: boolean; config: Config; axes?: readonly string[] };
   effectiveConfig?: Config;
-  engine: { features: Readonly<Record<string, unknown>>; artifact_manifest?: MethodArtifact;
-    modeValues?: readonly string[] };
+  engine: { artifact_manifest?: MethodArtifact };
 }
 export type MethodRecovery = 'change_method' | 'repair_printer' | 'update_engine';
 export interface MethodAvailability {
@@ -47,8 +47,7 @@ export function deriveMethodAvailability(context: MethodContext): MethodAvailabi
       if (disabled) reason = disabled;
       else if (!known) { reason = 'Check your printer\'s axes, kinematics, and nozzle settings before using this slicing method.'; recovery = 'repair_printer'; }
       else if (rule.hardware === 'rotary' && !rotary) reason = 'This slicing method requires a printer with rotary axes configured.';
-      else if (engine.features.dump_options !== true || rule.target === 'mode' && !engine.modeValues?.includes(rule.id)
-        || rule.feature && engine.features[rule.feature] !== true) { reason = 'The current slicing engine doesn\'t support this method.'; recovery = 'update_engine'; }
+      else if (DEMO) {  }
       else if (rule.readiness && (!verified || artifact?.features?.[rule.readiness as 'curved_tops' | 'nonplanar_wave'] !== true
         || rule.target === 'wave' && !artifact?.wave_modes?.includes(rule.id))) { reason = 'This slicing method isn\'t available in the current engine build.'; recovery = 'update_engine'; }
     }

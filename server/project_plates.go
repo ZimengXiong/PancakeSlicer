@@ -2,16 +2,13 @@ package main
 
 import (
 	"archive/zip"
-	"context"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
 	"math"
-	"os/exec"
 	"strconv"
 	"strings"
-	"time"
 )
 
 type projectPlate struct {
@@ -145,17 +142,4 @@ func readProjectLayout(file string) (projectLayout, error) {
 	}
 	out.Width, out.Depth = b.max[0]-b.min[0], b.max[1]-b.min[1]
 	return out, nil
-}
-
-func probePlateIndex(c Config) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, c.Tool, "--plate-index", "0")
-	configureKill(cmd)
-	cmd.WaitDelay = 5 * time.Second
-	out, _ := cmd.CombinedOutput()
-	if !strings.Contains(string(out), "--plate-index expects a positive 1-based integer") {
-		return fmt.Errorf("tool lacks --plate-index contract")
-	}
-	return nil
 }

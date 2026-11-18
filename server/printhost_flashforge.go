@@ -109,7 +109,7 @@ func sendFlashforge(ctx context.Context, u *upload) (string, error) {
 		return "", netError(err, "the printer")
 	}
 	if _, err := c.command("M29", 2*time.Minute); err != nil {
-		return "", fmt.Errorf("The Flashforge printer didn't confirm it saved %s: %w", name, err)
+		return "", fmt.Errorf("Hmm, the Flashforge printer didn't confirm it saved %s: %w", name, err)
 	}
 	if !u.start {
 		return "Uploaded " + name + " to " + u.printer.Name + ".", nil
@@ -151,9 +151,9 @@ func flashforgeReply(resp *http.Response) error {
 	}
 	if reply.Code != 0 {
 		if strings.Contains(strings.ToLower(reply.Message), "access code") {
-			return &connError{"access_code", "The printer rejected the check code—double-check the serial number and check code in Connection settings."}
+			return &connError{"access_code", "Oops! The printer rejected that check code — double-check your serial number and check code in Connection settings."}
 		}
-		return fmt.Errorf("The printer declined the request: %s", cmpOr(reply.Message, fmt.Sprintf("code %d", reply.Code)))
+		return fmt.Errorf("Oops, the printer turned down that request: %s", cmpOr(reply.Message, fmt.Sprintf("code %d", reply.Code)))
 	}
 	return nil
 }
@@ -178,7 +178,7 @@ func sendFlashforgeAPI(ctx context.Context, u *upload, name string) (string, err
 	if err != nil {
 		return "", err
 	}
-	req, err = multipartFile(ctx, base+"/uploadGcode", "gcodeFile", name, u.size, progressReader{io.LimitReader(u.file, u.size), u.progress}, nil)
+	req, err = multipartUpload(ctx, base+"/uploadGcode", "gcodeFile", name, u.size, progressReader{io.LimitReader(u.file, u.size), u.progress}, nil)
 	if err != nil {
 		return "", err
 	}
@@ -319,7 +319,7 @@ func testFlashforge(ctx context.Context, p *PrinterConfig, secret string) Printe
 			return PrinterTest{Stage: "access_code", Message: err.Error()}
 		}
 	} else if serial := flashforgeField(info, "SN"); p.Serial != "" && serial != "" && !strings.EqualFold(serial, p.Serial) {
-		return PrinterTest{Stage: "serial", Message: "That printer reports serial number " + serial + ", not " + p.Serial + "."}
+		return PrinterTest{Stage: "serial", Message: "Hmm, that printer reports serial number " + serial + ", not " + p.Serial + "."}
 	}
 	return PrinterTest{OK: true, Stage: "ok", Message: "Connected to " + cmpOr(model, "the Flashforge printer"), Model: model}
 }

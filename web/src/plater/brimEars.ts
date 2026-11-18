@@ -1,12 +1,13 @@
+import { objectValues } from '../profiles/view';
 import * as THREE from 'three';
-import { effectiveConfig, getState, markStale, printerPreset, setState, type PlateObject, type State } from '../state/store';
+import { effectiveConfig, getState, markStale, setState, type PlateObject, type State } from '../state/store';
 import { undoable } from '../state/history';
 import { instanceMatrix } from './geometry';
 
 export type Ear = NonNullable<PlateObject['brimEars']>[number];
 
 export function defaultEarRadius(s: State = getState()): number {
-  const nozzle = Number([printerPreset(s)?.config.nozzle_diameter].flat()[0]) || 0.4;
+  const nozzle = s.records.printers.find((p) => p.id === s.printer)?.nozzles[0]?.diameter ?? 0;
   const w = String(effectiveConfig(s, 'process').initial_layer_line_width ?? '0');
   const width = w.endsWith('%') ? (parseFloat(w) / 100) * nozzle : parseFloat(w) || nozzle;
   return Math.min(100, Math.max(0.1, width * 8));
@@ -103,7 +104,7 @@ export function autoGenerate(o: PlateObject, maxAngle: number, detection: number
   setEars(o.id, ears, 'Auto generate brim ear');
 }
 
-export const brimPainted = (s: State, o: PlateObject) => String({ ...effectiveConfig(s, 'process'), ...o.settings }.brim_type ?? '') === 'painted';
+export const brimPainted = (s: State, o: PlateObject) => String(objectValues(s, o.id).values.brim_type ?? '') === 'painted';
 
 export interface EarsUi { radius: number; maxAngle: number; detection: number; selected: number[] }
 let ui: EarsUi = { radius: 0, maxAngle: 125, detection: 1, selected: [] };

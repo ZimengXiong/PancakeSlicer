@@ -96,7 +96,7 @@ func (st *workspaceStore) folderWrite(w http.ResponseWriter, r *http.Request, ac
 			return
 		}
 		if in.ExpectedRevision != d.FolderRevision {
-			workspaceFailure(w, 409, "revision_conflict", "Folders changed in another window. Reload and try again.", "reload_and_reapply", d.FolderRevision)
+			workspaceFailure(w, 409, "revision_conflict", "Heads up — folders changed in another window! Reload and try again.", "reload_and_reapply", d.FolderRevision)
 			return
 		}
 		now := time.Now().UnixMilli()
@@ -110,48 +110,48 @@ func (st *workspaceStore) folderWrite(w http.ResponseWriter, r *http.Request, ac
 			name, ok := folderName(stringOr(in.Name))
 			switch {
 			case !workspaceID(in.ID) || in.ID == "move":
-				invalid("A new stable folder ID is required.")
+				invalid("We need a fresh, stable folder ID here.")
 				return
 			case d.Folders[in.ID].ID != "":
-				invalid("This folder ID already exists.")
+				invalid("Oops, that folder ID already exists.")
 				return
 			case !ok:
-				invalid("A folder name is 1 to 120 characters.")
+				invalid("Folder names need to be 1 to 120 characters.")
 				return
 			case len(d.Folders) >= maxFolders:
-				invalid("A library holds at most 1000 folders.")
+				invalid("Whoa, a library can hold up to 1,000 folders max!")
 				return
 			case folderDepth(d, parent, "") < 0 || folderDepth(d, parent, "") >= maxFolderDepth:
-				invalid("The parent folder is missing or nested too deeply.")
+				invalid("Oops, the parent folder is missing or nested a bit too deep.")
 				return
 			case folderNameTaken(d, parent, name, ""):
-				workspaceFailure(w, 409, "folder_name_taken", "A folder with this name already exists here.", "rename", d.FolderRevision)
+				workspaceFailure(w, 409, "folder_name_taken", "There's already a folder with that name here!", "rename", d.FolderRevision)
 				return
 			}
 			d.Folders[in.ID] = workspaceFolder{in.ID, name, parent, 1, now, now}
 		case "update":
 			f, exists := d.Folders[in.ID]
 			if !exists {
-				workspaceFailure(w, 404, "folder_missing", "This folder no longer exists.", "reload_and_reapply", d.FolderRevision)
+				workspaceFailure(w, 404, "folder_missing", "Hmm, that folder isn't around anymore.", "reload_and_reapply", d.FolderRevision)
 				return
 			}
 			if in.Name != nil {
 				name, ok := folderName(*in.Name)
 				if !ok {
-					invalid("A folder name is 1 to 120 characters.")
+					invalid("Folder names need to be 1 to 120 characters.")
 					return
 				}
 				f.Name = name
 			}
 			if parentSet {
 				if depth := folderDepth(d, parent, in.ID); depth < 0 || depth >= maxFolderDepth {
-					invalid("A folder cannot move into itself, a missing folder or too deep.")
+					invalid("A folder can't move into itself, a missing folder, or too deep!")
 					return
 				}
 				f.ParentID = parent
 			}
 			if folderNameTaken(d, f.ParentID, f.Name, in.ID) {
-				workspaceFailure(w, 409, "folder_name_taken", "A folder with this name already exists here.", "rename", d.FolderRevision)
+				workspaceFailure(w, 409, "folder_name_taken", "There's already a folder with that name here!", "rename", d.FolderRevision)
 				return
 			}
 			f.Revision++
@@ -160,7 +160,7 @@ func (st *workspaceStore) folderWrite(w http.ResponseWriter, r *http.Request, ac
 		case "delete":
 			f, exists := d.Folders[in.ID]
 			if !exists {
-				workspaceFailure(w, 404, "folder_missing", "This folder no longer exists.", "reload_and_reapply", d.FolderRevision)
+				workspaceFailure(w, 404, "folder_missing", "Hmm, that folder isn't around anymore.", "reload_and_reapply", d.FolderRevision)
 				return
 			}
 			delete(d.Folders, in.ID)
@@ -184,7 +184,7 @@ func (st *workspaceStore) folderWrite(w http.ResponseWriter, r *http.Request, ac
 		case "move":
 			target := stringOr(in.FolderID)
 			if target != "" && d.Folders[target].ID == "" {
-				workspaceFailure(w, 404, "folder_missing", "The destination folder no longer exists.", "reload_and_reapply", d.FolderRevision)
+				workspaceFailure(w, 404, "folder_missing", "Oops, the destination folder isn't around anymore.", "reload_and_reapply", d.FolderRevision)
 				return
 			}
 			if len(in.ProjectIDs) == 0 || len(in.ProjectIDs) > 10000 {
@@ -195,7 +195,7 @@ func (st *workspaceStore) folderWrite(w http.ResponseWriter, r *http.Request, ac
 			for _, raw := range in.ProjectIDs {
 				id, err := canonicalWorkspaceProject(d, raw)
 				if _, exists := d.Projects[id]; err != nil || !exists {
-					workspaceFailure(w, 404, "project_missing", "A project to move no longer exists.", "reload_and_reapply", d.FolderRevision)
+					workspaceFailure(w, 404, "project_missing", "Hmm, a project you're trying to move isn't around anymore.", "reload_and_reapply", d.FolderRevision)
 					return
 				}
 				ids = append(ids, id)

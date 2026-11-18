@@ -3,6 +3,8 @@ import { refreshProjects } from '../flow/project';
 import { projectId } from '../persist/identity';
 import { jsonWrite, serviceJson } from '../persist/service';
 
+export const FOLDER_NAME_MAX = 120;
+
 export interface Folder { id: string; name: string; parentId?: string; revision: number; createdAt: number; updatedAt: number }
 export type FoldersSnapshot = { state: 'loading' | 'ready' | 'failed'; revision: number; folders: readonly Folder[]; error: string | null };
 

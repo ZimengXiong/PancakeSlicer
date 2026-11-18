@@ -1375,85 +1375,6 @@
       "source": "src/slic3r/GUI/Tab.cpp:4879"
     },
     {
-      "title": "Dependencies",
-      "icon": "advanced",
-      "groups": [
-        {
-          "title": "Compatible printers",
-          "options": [
-            "compatible_printers",
-            "compatible_printers_condition"
-          ],
-          "lines": [
-            {
-              "options": [
-                "compatible_printers"
-              ],
-              "source": "src/slic3r/GUI/Tab.cpp:4931",
-              "manual": true,
-              "widget": "preset compatibility selector",
-              "modes": {
-                "compatible_printers": "Advanced"
-              }
-            },
-            {
-              "options": [
-                "compatible_printers_condition"
-              ],
-              "source": "src/slic3r/GUI/Tab.cpp:4937",
-              "overrides": {
-                "compatible_printers_condition": {
-                  "full_width": true
-                }
-              },
-              "modes": {
-                "compatible_printers_condition": "Advanced"
-              }
-            }
-          ],
-          "source": "src/slic3r/GUI/Tab.cpp:4930",
-          "icon": "param_dependencies_printers"
-        },
-        {
-          "title": "Compatible process profiles",
-          "options": [
-            "compatible_prints",
-            "compatible_prints_condition"
-          ],
-          "lines": [
-            {
-              "options": [
-                "compatible_prints"
-              ],
-              "source": "src/slic3r/GUI/Tab.cpp:4940",
-              "manual": true,
-              "widget": "preset compatibility selector",
-              "modes": {
-                "compatible_prints": "Advanced"
-              }
-            },
-            {
-              "options": [
-                "compatible_prints_condition"
-              ],
-              "source": "src/slic3r/GUI/Tab.cpp:4946",
-              "overrides": {
-                "compatible_prints_condition": {
-                  "full_width": true
-                }
-              },
-              "modes": {
-                "compatible_prints_condition": "Advanced"
-              }
-            }
-          ],
-          "source": "src/slic3r/GUI/Tab.cpp:4939",
-          "icon": "param_dependencies_presets"
-        }
-      ],
-      "source": "src/slic3r/GUI/Tab.cpp:4929"
-    },
-    {
       "title": "Notes",
       "icon": "custom-gcode_note",
       "groups": [
@@ -1602,10 +1523,6 @@
     "filament_multitool_ramming": "Advanced",
     "filament_multitool_ramming_volume": "Advanced",
     "filament_multitool_ramming_flow": "Advanced",
-    "compatible_printers": "Advanced",
-    "compatible_printers_condition": "Advanced",
-    "compatible_prints": "Advanced",
-    "compatible_prints_condition": "Advanced",
     "filament_notes": "Advanced"
   },
   "removed_keys": [

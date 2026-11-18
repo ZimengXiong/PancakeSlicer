@@ -45,6 +45,6 @@ export async function exportStl(selection = false, multi = false) {
     }
     save(new Blob([zipSync(files, { level: 0 })], { type: 'application/zip' }), `${stem(s.projectName ?? s.objects[0].name)}.zip`);
   } catch (e) {
-    toast(`Oops! Export failed: ${e instanceof Error ? e.message : e}`);
+    toast('export_failed', { detail: e instanceof Error ? e.message : e });
   }
 }

@@ -30,7 +30,7 @@ func duetConnect(ctx context.Context, h *hostSession, base *url.URL) (string, er
 	switch reply.Err {
 	case 0:
 	case 1:
-		return "", errors.New("The Duet board rejected the password—double-check it in your printer's Connection settings.")
+		return "", &connError{"access_code", "The Duet board rejected the password—double-check it in your printer's Connection settings."}
 	case 2:
 		return "", errors.New("The Duet board has no open connection slots—close an open Duet web tab and try again.")
 	default:

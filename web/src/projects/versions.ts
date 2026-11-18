@@ -1,3 +1,4 @@
+import { documentStrip } from '../profiles/slots';
 import { useSyncExternalStore } from 'react';
 import type { StoredDocBase } from '../persist/backend';
 import { plateSignature } from '../slice-input';
@@ -79,7 +80,7 @@ async function showSlice(id: string, v: ProjectVersion, request: number) {
   } catch (e) {
     const current = versionView.get().context.request === request;
     versionView.send({ type: 'SLICE_FAIL', request });
-    if (current) toast(`Oops! Couldn't load slice preview: ${errorText(e)}`);
+    if (current) toast('couldnt_load_slice_preview', { detail: errorText(e) });
   }
 }
 
@@ -99,7 +100,7 @@ export async function viewVersion(v: ProjectVersion) {
   } catch (e) {
     const wanted = versionWanted(request);
     versionView.send({ type: 'FAIL', request });
-    if (wanted) toast(errorText(e));
+    if (wanted) toast('versions_failed', { detail: errorText(e) });
   }
 }
 export async function backToLatest() {
@@ -112,11 +113,12 @@ export async function restoreVersion() {
   if (!v || !id) return;
   override = { id, change: [{ key: `restore:${v.until}`, label: 'Restored' }] };
   try {
-    await post(`${path(id)}/seal`, { revision: project.get().context.revision }).catch(() => null);
+    await flushProject();
+    await post(`${path(id)}/seal`, { revision: project.get().context.revision });
     await restoreProjectVersion();
     await attachSlice(finishedJob());
   } catch (e) {
-    toast(errorText(e));
+    toast('versions_failed_2', { detail: errorText(e) });
   }
   void refreshHistory(id);
 }
@@ -212,7 +214,7 @@ export function versionSetup(id: string, v: ProjectVersion): Promise<VersionSetu
       .then((summary) => {
         const doc = summary?.doc ?? {}, picture = summary?.meta?.thumbnail;
         return { printer: profileName('machine', doc.printer), process: profileName('process', doc.process),
-          filaments: Array.isArray(doc.filamentSlots) ? doc.filamentSlots.map((k, i) => ({ name: profileName('filament', k), colour: slotColour({ ...getState(), ...doc } as State, i) })) : [],
+          filaments: (({ filaments, colours } = documentStrip(doc) ?? { filaments: [], colours: [] }) => filaments.map((k, i) => ({ name: profileName('filament', k), colour: colours[i] ?? slotColour(getState(), i) })))(),
           picture: typeof picture === 'string' && picture.startsWith('data:image/') ? picture : undefined };
       });
     found.catch(() => setups.delete(key));

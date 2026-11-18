@@ -1,15 +1,17 @@
-import { Component, useEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
+import { bootFolders, bootProjects } from '../boot-shape';
+import { HeldText, Skeleton } from '../components/Skeleton';
+import { Component, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type DragEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import { ActionMenu, type MenuEntry } from '../components/Menu';
 import { Check } from '../components/Check';
 import { Dropdown } from '../components/Dropdown';
 import { confirmDialog } from '../components/Ask';
 import { toast } from '../state/store';
-import { projectListSnapshot, refreshProjects, subscribeProjectList, useProject } from '../flow/project';
+import { openWithUnsaved, projectListSnapshot, refreshProjects, subscribeProjectList, useProject } from '../flow/project';
 import { useMachine } from '../flow/fsm';
 import { projectsOps, runProjectsOp } from '../flow/projects-ops';
 import { createSelection, reduceSelection, selectedVisible, type SelectionEvent } from '../profiles/selection';
 import { deleteProject, duplicateProject, listTrash, openProject, useProjects, type ListedProject } from './api';
-import { childFolders, createFolder, deleteFolder, folderPath, folderTree, moveFolder, moveProjects, renameFolder, useFolders, type Folder } from './folders';
+import { childFolders, createFolder, deleteFolder, FOLDER_NAME_MAX, folderPath, folderTree, moveFolder, moveProjects, renameFolder, useFolders, type Folder } from './folders';
 import { fileVerbs, newProjectFrom } from './verbs';
 import { setProjectsQuery, useProjectsQuery } from './query';
 import { projectStore, type ProjectCommandStatus, type ProjectStore } from '../persist/backend';
@@ -62,7 +64,7 @@ const sorters: Record<Sort,(a:ProjectMeta,b:ProjectMeta)=>number> = {
 async function exportProject(p:ProjectMeta) {
   if(!await confirmDialog('Export 3MF',`Open “${p.name}” and export it?`,['Export','Cancel']))return;
   try {const flow=await import('../flow/project');await flow.openProject(p.id);if(flow.project.get().context.id!==p.id || ['missing','failed','opening'].includes(flow.project.get().value))throw new Error('Oops! We couldn\'t open that project.');await (await import('../actions')).saveProject();}
-  catch(error){toast(`Oops! Export failed: ${message(error)}`);}
+  catch(error){toast('export_failed', { detail: message(error) });}
 }
 
 function Thumb({p}:{p:ProjectMeta}) {
@@ -74,8 +76,11 @@ function FolderName({f,editing,done}:{f:Folder;editing:boolean;done(name:string|
   const settled=useRef(false);
   useEffect(()=>{if(editing)settled.current=false;},[editing]);
   const finish=(name:string|null)=>{if(settled.current)return;settled.current=true;done(name);};
-  return editing ? <input className="text pj-folder-input" autoFocus defaultValue={f.name} aria-label="Folder name" onFocus={e=>e.currentTarget.select()} onClick={e=>e.stopPropagation()}
-    onBlur={e=>finish(e.currentTarget.value)} onKeyDown={e=>{e.stopPropagation();if(e.key==='Enter')finish(e.currentTarget.value);else if(e.key==='Escape')finish(null);}}/> : <span className="pj-name">{f.name}</span>;
+  const [length,setLength]=useState(f.name.length),tooLong=length>FOLDER_NAME_MAX,errorId=useId();
+  return editing ? <span className="pj-folder-edit"><input className="text pj-folder-input" autoFocus defaultValue={f.name} aria-label="Folder name" aria-invalid={tooLong} aria-describedby={tooLong?errorId:undefined}
+    onFocus={e=>e.currentTarget.select()} onClick={e=>e.stopPropagation()} onChange={e=>setLength(e.currentTarget.value.trim().length)}
+    onBlur={e=>finish(tooLong?null:e.currentTarget.value)} onKeyDown={e=>{e.stopPropagation();if(e.key==='Enter'){if(!tooLong)finish(e.currentTarget.value);}else if(e.key==='Escape')finish(null);}}/>
+    {tooLong && <span className="control-error" id={errorId} role="status">Keep the name to {FOLDER_NAME_MAX} characters (now {length}).</span>}</span> : <span className="pj-name">{f.name}</span>;
 }
 function Star({on}:{on:boolean}) {
   return <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden><path d="m12 3.5 2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9L12 3.5Z" fill={on?'currentColor':'none'} stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/></svg>;
@@ -128,6 +133,21 @@ class Boundary extends Component<{children:ReactNode},{failed:boolean}> {
   componentDidCatch(error:unknown){console.warn('Projects',error);}
   render(){return this.state.failed ? <div className="projects"><div className="pj-empty" role="alert"><strong>Projects unavailable</strong><button type="button" className="btn" onClick={()=>{refreshProjects();this.setState({failed:false});}}>Retry</button></div></div> : this.props.children;}
 }
+function ProjectsSkeleton({ view, home }: { view: string; home: boolean }) {
+  const count = bootProjects(), rows = Array.from({ length: Math.min(count ?? Infinity, view === 'list' ? 8 : 12) }, (_, i) => i);
+  const folders = home ? [...bootFolders()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })) : [];
+  return <div className="pj-scroll" role="status" aria-busy="true" aria-label="Loading projects">
+    {folders.length > 0 && <div className="pj-tiles" aria-hidden="true">{folders.map((name, i) => <div key={i} className="pj-tile"><button type="button" className="pj-tile-open" disabled tabIndex={-1}><span className="pj-tile-text">
+      <HeldText className="pj-name" text={name}/><HeldText className="pj-sub" text="0 projects"/></span></button><button type="button" className="icon-btn pj-icon" disabled tabIndex={-1}/></div>)}</div>}
+    {home && rows.length > 0 && <div className="pj-section"><h2>Recent</h2><button type="button" className="link" disabled tabIndex={-1}>Show all</button></div>}
+    {view === 'list'
+      ? <div className="pj-list">{rows.map((i) => <div key={i} className="pj-item pj-skel"><span className="pj-cell"><span className="pj-mini"><Skeleton block width="100%" height="100%"/></span></span>
+          <span className="pj-cell pj-title"><Skeleton width="50%" height={12}/></span><span className="pj-cell"><Skeleton width={48} height={10}/></span><span className="pj-cell"><Skeleton width={72} height={10}/></span><span/></div>)}</div>
+      : <div className="pj-grid">{rows.map((i) => <div key={i} className="pj-item pj-skel"><div className="pj-thumb"><Skeleton block width="100%" height="100%"/></div>
+          <div className="pj-meta"><span className="pj-name"><Skeleton width="60%" height={12} style={{ margin: '3px 0' }}/></span><span className="pj-sub"><Skeleton width="45%" height={10} style={{ margin: '3px 0' }}/></span></div></div>)}</div>}
+  </div>;
+}
+
 export default function ProjectsView(){return <Boundary><Projects/></Boundary>;}
 
 function Projects() {
@@ -200,7 +220,7 @@ function Projects() {
         catch(error){failed.push(`${entry.name}: ${message(error)}`);}
       }
       setError(failed.length?`${restored} restored, ${failed.length} not confirmed (${failed.join('; ')}). Undo stays available.`:null);
-      if(restored)toast(`${restored} ${restored===1?'project':'projects'} restored`);
+      if(restored)toast('restored_2', { restored, value: restored===1?'project':'projects' });
     }finally{void loadTrash();}
   };
   const restore=(entries:readonly ProjectUndo[])=>runProjectsOp('restoring',()=>restoreEntries(entries));
@@ -210,7 +230,7 @@ function Projects() {
     await runProjectsOp('retrying',async()=>{
       if(!trashRestores.has(p.id))trashRestores.set(p.id,p.revision);
       setError(null);
-      try{await (await import('../flow/project')).restoreArchivedProject(p.id,trashRestores.get(p.id));trashRestores.delete(p.id);toast(`${p.name} restored`);}
+      try{await (await import('../flow/project')).restoreArchivedProject(p.id,trashRestores.get(p.id));trashRestores.delete(p.id);toast('restored_3', { name: p.name });}
       catch(error){setError(`Couldn't finish restoring: ${message(error)}`);}
       finally{void loadTrash();}
     },p.id);
@@ -241,13 +261,15 @@ function Projects() {
   },command.operationId);
   const remove=async(ids:readonly string[],ask=true)=>{
     const targets=(list??[]).filter(p=>ids.includes(p.id));if(projectsOps.get().value!=='idle' || !targets.length || targets.some(p=>blocked(p.id)))return;
-    if(ask && !await confirmDialog(targets.length===1?'Move to Trash?':`Move ${targets.length} projects to Trash?`,names(targets),['Move to Trash','Cancel'],true))return;
+    const unsaved=targets.find(p=>openWithUnsaved(p.id));
+    if(unsaved && !await confirmDialog('Discard your unsaved changes?',`Heads up! ${unsaved.name} is open with unsaved changes — moving it to Trash will discard them.`,['Discard and move to Trash','Cancel'],true))return;
+    if(ask && !unsaved && !await confirmDialog(targets.length===1?'Move to Trash?':`Move ${targets.length} projects to Trash?`,names(targets),['Move to Trash','Cancel'],true))return;
     await runProjectsOp('deleting',async()=>{
     setError(null);const undo:ProjectUndo[]=[],failed:string[]=[];
     for(const p of targets){const run=await deleteProject(p.id);if(run){const entry={id:p.id,name:p.name,run};undo.push(entry);projectUndos.set(p.id,entry);}else failed.push(p.name);}
       setSelection(s=>reduceSelection(s,{type:'SYNC',scope:'projects',visible:visible.filter(id=>!undo.some(p=>p.id===id))}));
-      if(failed.length)setError(`Moved ${undo.length} to Trash, but ${failed.length} couldn't be moved: ${failed.join(', ')}.`);
-      if(undo.length)toast(`${undo.length===1?undo[0].name:`${undo.length} projects`} moved to Trash`,{label:'Undo',run:()=>void restore(undo)},10000);
+      if(failed.length && undo.length)setError(`Moved ${undo.length} to Trash, but ${failed.length} couldn't be moved: ${failed.join(', ')}.`);
+      if(undo.length)toast('moved_trash', { value: undo.length===1?undo[0].name:`${undo.length} projects` }, { action: {label:'Undo',run:()=>void restore(undo)} });
     });
   };
   const onKey=(e:KeyboardEvent)=>{
@@ -291,7 +313,7 @@ function Projects() {
   const move=async(ids:readonly string[],folder:string|null)=>{
     if(!ids.length)return;
     const name=folder?folders.find(f=>f.id===folder)?.name ?? 'folder':'Unsorted';
-    try{await moveProjects(ids,folder);toast(`${ids.length===1?(list?.find(p=>p.id===ids[0])?.name ?? 'Project'):`${ids.length} projects`} moved to ${name}`);if(ids.length>1)dispatch({type:'CLEAR'});}
+    try{await moveProjects(ids,folder);toast('moved', { value: ids.length===1?(list?.find(p=>p.id===ids[0])?.name ?? 'Project'):`${ids.length} projects`, name });if(ids.length>1)dispatch({type:'CLEAR'});}
     catch(error){setError(`Oops! Couldn't move item: ${message(error)}`);}
   };
   const uniqueName=(parent:string|null)=>{const taken=new Set(childFolders(folders,parent).map(f=>f.name.toLocaleLowerCase()));let name='New folder';for(let n=2;taken.has(name.toLocaleLowerCase());n++)name=`New folder ${n}`;return name;};
@@ -301,7 +323,7 @@ function Projects() {
   };
   const named=(f:Folder)=>async(name:string|null)=>{
     setEditing(null);const next=name?.trim();if(!next || next===f.name)return;
-    try{await renameFolder(f.id,next);}catch(error){setError(`Oops! Couldn't rename: ${message(error)}`);}
+    try{await renameFolder(f.id,next);setError(null);}catch(error){setError(`Oops! Couldn't rename: ${message(error)}`);}
   };
   const nest=async(id:string,parent:string|null)=>{
     const f=folders.find(x=>x.id===id);if(!f || (f.parentId ?? null)===parent || id===parent)return;
@@ -330,7 +352,7 @@ function Projects() {
     const n=counts.inFolder.get(f.id) ?? 0,inner=childFolders(folders,f.id).length;
     const detail=[`${count(n,'project moves','projects move')} to Unsorted.`,inner?`${count(inner,'folder moves','folders move')} up a level.`:''].filter(Boolean).join(' ');
     if(!await confirmDialog(`Delete “${f.name}”?`,detail,['Delete folder','Cancel'],true))return;
-    try{await deleteFolder(f.id);if(place.kind==='folder' && place.id===f.id)go(f.parentId?{kind:'folder',id:f.parentId}:{kind:'home'});toast(`${f.name} deleted`);}
+    try{await deleteFolder(f.id);if(place.kind==='folder' && place.id===f.id)go(f.parentId?{kind:'folder',id:f.parentId}:{kind:'home'});toast('deleted', { name: f.name });}
     catch(error){setError(`Oops! Couldn't delete: ${message(error)}`);}
   };
   const moveEntries=(ids:readonly string[]):MenuEntry[]=>{
@@ -358,13 +380,13 @@ function Projects() {
     {label:'Duplicate',disabled:blocked(p.id),action:()=>void duplicateProject(p.id)},
     {label:'Move to',sub:moveEntries(dragIds(p.id))},
     {label:favorites.has(p.id)?'Remove from favorites':'Add to favorites',disabled:!prefsLoaded,action:()=>toggleFavorite(p.id)},
-    {label:'Export 3MF…',action:()=>void exportProject(p)},
+    {label:'Export 3MF…',output:true,action:()=>void exportProject(p)},
     'sep',
     {label:'Move to Trash',shortcut:'Del',disabled:busy || blocked(p.id),action:()=>void remove(selected.length>1 && selected.includes(p.id)?selected:[p.id])},
   ];
   const crumbs=placeFolder?folderPath(folders,placeFolder.id):[];
   const title=searching?'Search':placeFolder?placeFolder.name:inTrash?'Trash':PLACES.find(x=>x.kind===place.kind)?.label ?? 'Home';
-  const loading=inTrash?!trash && !trashError:!list;
+  const loading=inTrash?!trash && !trashError:!list || place.kind==='home' && folderState.state==='loading';
   const failed=inTrash?trashError:status.state==='failed'?status.error:folderState.state==='failed'?folderState.error:null;
   const empty=inTrash?'Trash is empty':place.kind==='favorites'?'No favorites':place.kind==='recent'?'Nothing edited this week':place.kind==='unsorted'?'Nothing unsorted':placeFolder?'Drag projects here':'No projects yet';
   const item=(p:ProjectMeta)=><Item key={p.id} p={p} view={view} trash={inTrash} current={!inTrash && p.id===current} selected={selectedSet.has(p.id)} selecting={selected.length>0} focused={p.id===focusKey} favorite={favorites.has(p.id)} canFavorite={prefsLoaded} renaming={renaming===p.id} blocked={blocked(p.id) || retrying===p.id}
@@ -389,7 +411,7 @@ function Projects() {
   return <div className={`projects${dragging?` dragging-${dragging}`:''}`} onDragOver={e=>{if(e.dataTransfer.types.includes('Files'))e.preventDefault();}} onDrop={onDrop}><div className="pj-layout">
     {railOpen && <div className="pj-scrim" aria-hidden onClick={closeRail}/>}
     <nav className="pj-side" id="pj-rail" aria-label="Projects" data-open={railOpen} onKeyDown={e=>{if(railOpen && e.key==='Escape'){e.stopPropagation();closeRail();}}}>
-      {PLACES.map(x=>railItem(x.kind,x.label,place.kind===x.kind && !searching,x.kind==='home'?undefined:counts[x.kind],()=>go({kind:x.kind}),x.kind==='unsorted'?{folder:null}:x.kind==='home'?{folder:null}:undefined))}
+      {PLACES.filter(x=>x.kind!=='recent').map(x=>railItem(x.kind,x.label,place.kind===x.kind && !searching,x.kind==='home'?undefined:counts[x.kind],()=>go({kind:x.kind}),x.kind==='unsorted'?{folder:null}:x.kind==='home'?{folder:null}:undefined))}
       <div className="pj-tree" role="tree" aria-label="Folders">
         {tree.map(({folder:f,depth})=>{const has=childFolders(folders,f.id).length>0,open=!collapsed.has(f.id),on=place.kind==='folder' && place.id===f.id && !searching;
           return <div key={f.id} className="pj-node" role="treeitem" aria-level={depth+1} aria-expanded={has?open:undefined} aria-selected={on} style={{paddingLeft:`${depth*12}px`}}
@@ -421,11 +443,11 @@ function Projects() {
       {error && <div className="pj-line" role="alert"><span>{error}</span><button type="button" className="btn-ghost" onClick={()=>setError(null)}>Dismiss</button></div>}
       {commands.map(command=>{
         const pending=command.state==='preparing' || command.state==='sending',name=list?.find(p=>p.id===command.id)?.name ?? trash?.find(p=>p.id===command.id)?.name ?? command.name ?? 'Project';
-        const state=pending?'Saving…':command.state==='acknowledged'?'Saved':command.state==='conflict'?`Changed elsewhere: ${command.error}`:`Not saved: ${command.error}`;
+        const state=pending?'Saving…':command.state==='acknowledged'?'Saved':command.held?command.error:command.state==='conflict'?`Changed elsewhere: ${command.error}`:`Not saved: ${command.error}`;
         return <div className={`pj-line${command.state==='failed'||command.state==='conflict'?' bad':''}`} key={command.operationId} aria-busy={pending} role="status">
           <span><strong>{commandVerb[command.kind]} {name}</strong><Sep/>{state}</span>
           {!pending && (command.kind!=='restore' || projectUndos.has(command.id) || trashRestores.has(command.id)) && <button type="button" className="btn" disabled={writing} onClick={()=>void retry(command)}>{command.state==='acknowledged'?'Finish':'Retry'}</button>}
-          {command.state==='conflict' && <button type="button" className="btn-ghost" disabled={writing} onClick={()=>void dismiss(command)}>Dismiss</button>}
+          {(command.state==='conflict' || command.held) && <button type="button" className="btn-ghost" disabled={writing} onClick={()=>void dismiss(command)}>Dismiss</button>}
         </div>;
       })}
       {!!projectUndos.size && !inTrash && <div className="pj-line"><span>{projectUndos.size} moved to Trash</span><button type="button" className="btn" disabled={writing} onClick={()=>void restore([...projectUndos.values()])}>{ops.value==='restoring'?'Restoring…':'Undo'}</button></div>}
@@ -434,7 +456,7 @@ function Projects() {
         <button type="button" className="btn-ghost" disabled={busy || selected.some(blocked)} onClick={()=>void remove(selected)}>Move to Trash</button>
         <button type="button" className="btn-ghost pj-clear" onClick={()=>dispatch({type:'CLEAR'})}>Clear</button>
       </div>}
-      {loading ? <div className="pj-empty" role="status">Loading…</div>
+      {loading ? <ProjectsSkeleton view={view} home={place.kind==='home'}/>
         : <div className="pj-scroll scroll-fade">
           {tiles}
           {place.kind==='home' && !searching && shown.length>0 && <div className="pj-section"><h2>Recent</h2><button type="button" className="link" onClick={()=>go({kind:'recent'})}>Show all</button></div>}

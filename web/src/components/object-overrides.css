@@ -12,3 +12,16 @@
 :where(.orca-parity) .field-mixed-values { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 :where(.orca-parity) .range-editor { display: grid; gap: var(--s-2); padding: var(--s-2) var(--space-section) var(--s-3); }
 :where(.orca-parity) .range-tools { display: flex; gap: var(--s-2); }
+:where(.orca-parity) .ol-settings { border-top: 1px solid var(--line); padding: var(--s-1) 0 var(--s-2); }
+:where(.orca-parity) .ol-settings-head { display: flex; align-items: center; gap: var(--s-2); min-height: 28px; padding: 0 var(--s-2) 0 var(--s-3); color: var(--ink-2); font: var(--t-small); }
+:where(.orca-parity) .ol-settings-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:where(.orca-parity) .ol-settings .opt-line { --ctl-w: 120px; padding-inline: var(--s-3); }
+:where(.orca-parity) .setting-pick-pop { width: 260px; padding: var(--s-2); display: grid; gap: var(--s-2); }
+:where(.orca-parity) .setting-pick-list { display: grid; max-height: 260px; overflow: auto; }
+:where(.orca-parity) .setting-pick-list > .menu-item { justify-content: flex-start; text-align: left; }
+:where(.orca-parity) .object-settings-count { margin-left: var(--s-3); color: var(--accent-text); font: var(--t-small); font-weight: 400; }
+:where(.orca-parity) .object-settings-panel { position: absolute; top: calc(100% + var(--s-2)); left: -1px; z-index: 1; display: flex; flex-direction: column; box-sizing: border-box; overflow: hidden;
+  background: var(--raised); border: 1px solid var(--line); border-radius: var(--r-3); box-shadow: var(--shadow-pop); color: var(--ink); outline: 0; }
+:where(.orca-parity) .object-settings-head { flex: none; display: flex; align-items: center; gap: var(--s-3); min-height: var(--h-compact); padding: var(--s-2) var(--s-2) var(--s-2) var(--s-4); border-bottom: 1px solid var(--line); }
+:where(.orca-parity) .object-settings-head > h2 { flex: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--t-title); }
+:where(.orca-parity) .object-settings-body { flex: 1; min-height: 0; padding: 0; overflow: auto; overscroll-behavior: contain; }

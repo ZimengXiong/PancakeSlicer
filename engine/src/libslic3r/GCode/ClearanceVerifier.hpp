@@ -2,6 +2,7 @@
 #include "libslic3r/Nonplanar/HeadEnvelope.hpp"
 #include "libslic3r/BoundingBox.hpp"
 #include "libslic3r/Point.hpp"
+#include "libslic3r/PrintConfig.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -9,6 +10,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <typeindex>
 #include <vector>
 
 namespace Slic3r {
@@ -104,21 +106,21 @@ struct ClearanceReport
 ClearanceReport verify_clearance(const GCodeProcessorResult &result, const ClearanceParams &params,
                                  const ToolKinematics &kinematics,
                                  const std::function<void()> &throw_if_canceled = {});
-// Answers a repeated verify_clearance() from the last sweep while the moves, joints and parameters are bit-identical.
-// Rotary kinematics always sweep afresh.
 class ClearanceMemo
 {
 public:
     ClearanceReport verify(const GCodeProcessorResult &result, const ClearanceParams &params, const ToolKinematics &kinematics,
                            const std::function<void()> &throw_if_canceled = {});
 private:
-    static void fingerprint(const GCodeProcessorResult &result, std::vector<std::array<uint32_t, 8>> &moves,
-                            std::vector<std::array<uint64_t, 5>> &joints);
+    using MoveKey = std::array<uint32_t, 9>;
+    static void fingerprint(const GCodeProcessorResult &result, std::vector<MoveKey> &moves, std::vector<std::array<uint64_t, 5>> &joints);
     bool                                 m_valid = false;
     ClearanceParams                      m_params;
+    std::type_index                      m_kinematics = typeid(void);
     ClearanceReport                      m_report;
-    std::vector<std::array<uint32_t, 8>> m_moves, m_scratch_moves;
+    std::vector<MoveKey>                 m_moves, m_scratch_moves;
     std::vector<std::array<uint64_t, 5>> m_joints, m_scratch_joints;
+    std::vector<unsigned char>           m_states, m_scratch_states;
 };
 class TableGuard
 {
@@ -135,4 +137,7 @@ private:
 };
 void mark_clearance_override(const Print &print, GCodeProcessorResult &result);
 void check_export_clearance(Print &print, GCodeProcessorResult &result);
+
+NonplanarMode print_clearance_mode(const Print &print);
+ClearanceParams clearance_params(const PrintConfig &config, NonplanarMode mode, bool contact_bar);
 }

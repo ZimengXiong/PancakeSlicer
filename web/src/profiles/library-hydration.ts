@@ -1,53 +1,31 @@
 import type { PresetType } from '../api/types';
 import type { State } from '../state/store';
-import { findProfile, profileKey } from './identity';
-import { catalogKey, normalizeUserPreset, resolveProfile } from './model';
-import { selectCompatibility } from './compatibility';
-import type { ProfileLibraryDocument, ProfileRecovery } from './ownership';
+import type { ProfileRecovery } from './ownership';
+import { getRecord, recordKey, type LibraryRecords, type PrinterRecord } from './records';
+import { slotFilaments } from './slots';
 
-export interface ProfileLibraryHydration {
-  patch: Partial<State>;
-  requiresAdoption: boolean;
-}
-export function prepareProfileLibraryHydration(s: State, document: ProfileLibraryDocument, options:{restoreStartupPlaceholder?:boolean}={}):ProfileLibraryHydration {
-  const userPresets=document.profiles.map(normalizeUserPreset),ids=userPresets.map(profileKey);
-  if(new Set(ids).size!==ids.length)throw new Error('Oops! Your library has duplicate profile IDs. Export a backup copy before running recovery.');
-  let next:State={...s,userPresets,printerLibrary:document.printers,profileLibraryRevision:document.revision};
-  const patch:Partial<State>={userPresets,printerLibrary:document.printers,profileLibraryRevision:document.revision};
-  for(const type of ['machine','process','filament'] as const){
-    const key=type==='machine'?'machines':type==='process'?'processes':'filaments',incoming=document.catalog?.filter(p=>p.type===type) ?? [];
-    if(incoming.length){patch[key]=[...s[key].filter(p=>!incoming.some(b=>catalogKey(b)===catalogKey(p))),...incoming];next={...next,[key]:patch[key]};}
+const kindOf = (type: PresetType) => type === 'machine' ? 'printer' as const : type === 'process' ? 'process' as const : 'filament' as const;
+export function prepareProfileLibraryHydration(s: State, records: LibraryRecords, options: { startup?: boolean; remembered?: string } = {}): Partial<State> {
+  const ids = [...records.printers, ...records.filaments, ...records.processes].map((r) => r.id);
+  if (new Set(ids).size !== ids.length) throw new Error('Oops! Your library has duplicate profile IDs. Export a backup copy before running recovery.');
+  const find = (type: PresetType, key: string) => key ? getRecord(records, recordKey(kindOf(type), key)) as { id: string; archived?: unknown } | undefined
+    ?? (type === 'filament' ? records.filaments.find((f) => f.aliases?.includes(key)) : undefined) : undefined;
+  const live = records.printers.filter((p) => !p.archived);
+  let printer = s.printer, process = s.process;
+  if (options.startup && !s.profileSnapshots) {
+    const remembered = options.remembered ? find('machine', options.remembered) : undefined;
+    printer = remembered && !remembered.archived ? remembered.id : live.length === 1 ? live[0].id : '';
   }
-  const differs=(id:string)=>JSON.stringify(s.printerLibrary.setups[id])!==JSON.stringify(document.printers.setups[id]);
-  const authoredSetups=Object.keys(s.printerLibrary.setups).filter(differs);
-  if(authoredSetups.some(id=>id!==s.printer || !options.restoreStartupPlaceholder)){
-    return {patch:Object.fromEntries(Object.entries(patch).filter(([key])=>['machines','processes','filaments'].includes(key))),requiresAdoption:true};
+  const record = printer ? find('machine', printer) as PrinterRecord | undefined : undefined;
+  if (record && !record.archived && !s.profileSnapshots) process = record.process ?? (options.startup ? '' : process);
+  else if (options.startup && !s.profileSnapshots && !find('process', process)) process = '';
+  const filamentSlots = slotFilaments({ records, printer });
+  const recoveries: ProfileRecovery[] = [];
+  for (const [type, key] of [['machine', printer], ['process', process], ...filamentSlots.map((key) => ['filament', key])] as [PresetType, string][]) {
+    if (!key) continue;
+    const found = find(type, key);
+    if (!found) recoveries.push({ type, key, reason: 'missing-profile' });
+    else if (found.archived) recoveries.push({ type, key, reason: 'archived' });
   }
-  const owned=(type:PresetType)=>userPresets.filter(p=>p.type===type && !p.archived && p.kind!=='master' && (p as {baseRole?:string}).baseRole!=='base-only').sort((a,b)=>profileKey(a).localeCompare(profileKey(b)));
-  const recoveries:ProfileRecovery[]=[];
-  const selected=(type:PresetType,key:string):string=>{
-    const known=findProfile(next,type,key);
-    if(known)return profileKey(known);
-    const wrappers=owned(type).filter(p=>p.base?.name===key && !p.parent && !Object.keys(p.overlay ?? p.overrides).length);
-    if(wrappers.length===1)return profileKey(wrappers[0]);
-    return key;
-  };
-  next.printer=s.profileSnapshots ? s.printer : selected('machine',s.printer);
-  const printers=owned('machine');
-  if(!next.printer || options.restoreStartupPlaceholder && !s.profileSnapshots && !findProfile(next,'machine',next.printer))next.printer=printers.length===1 ? printers[0].id ?? '' : '';
-  const setup=document.printers.setups[next.printer];
-  next.process=s.profileSnapshots ? s.process : selected('process',s.process);
-  next.filamentSlots=s.profileSnapshots ? s.filamentSlots : s.filamentSlots.map(key=>selected('filament',key));
-  if(setup && !s.profileSnapshots){
-    next={...next,process:setup.processId ?? next.process,filamentSlots:setup.slots.map(slot=>slot.materialId),slotColours:[],filamentEdits:structuredClone(setup.tuning),mixes:structuredClone(setup.mixes)};
-  }else if(!s.profileSnapshots && (!s.printer || options.restoreStartupPlaceholder)){
-    if(!findProfile(next,'process',next.process))next.process=owned('process').find(p=>selectCompatibility(next,'process',profileKey(p)).ok)?.id ?? '';
-    if(!next.filamentSlots.length)next.filamentSlots=owned('filament').filter(p=>selectCompatibility(next,'filament',profileKey(p)).ok).slice(0,1).map(profileKey);
-  }
-  for(const [type,key] of [['machine',next.printer],['process',next.process],...next.filamentSlots.map(key=>['filament',key])] as [PresetType,string][]){
-    const resolved=resolveProfile(next,type,key);
-    if(resolved.issue)recoveries.push({type,key,reason:resolved.issue.code,snapshot:resolved.source?.snapshot});
-    else if(type!=='machine' && !selectCompatibility(next,type,key).ok)recoveries.push({type,key,reason:'incompatible',snapshot:resolved.source?.snapshot});
-  }
-  return {patch:{...patch,printer:next.printer,process:next.process,filamentSlots:next.filamentSlots,slotColours:next.slotColours,filamentEdits:next.filamentEdits,mixes:next.mixes,profileRecoveries:recoveries},requiresAdoption:false};
+  return { records, profileLibraryRevision: records.revision, printer, process, profileRecoveries: recoveries };
 }

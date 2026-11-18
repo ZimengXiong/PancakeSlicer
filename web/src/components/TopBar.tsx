@@ -1,6 +1,7 @@
 import { openUrlImport } from '../url-import';
+import { openLibrary } from '../navigation';
 import { preloadable } from '../preloadable';
-import { DEMO } from '../demo/config';
+import { DEMO, NO_ENGINE, SAMPLE_JOB } from '../demo/config';
 import { hasWhatYouCanDo } from './what-you-can-do-page';
 import { ProjectTitle } from '../projects/ProjectTitle';
 import { MenuButton, type MenuEntry } from './Menu';
@@ -26,7 +27,6 @@ import { openGcode } from '../preview/jump';
 import { subscribeVisibleToolpaths, visibleToolpaths } from '../preview/visible';
 import { toggleViewOption, useViewOptions } from '../plater/viewOptions';
 import { toggleNonplanarView, useNonplanarView } from '../patch-preview';
-import { canCalibrate, canLoadStep } from '../api/client';
 import { toggleSidebar, useSidebarHidden } from '../sidebar';
 import { printerReady, showSettings } from '../workspace-sheet';
 import { useTier } from '../breakpoints';
@@ -35,6 +35,8 @@ import { PrintingChip } from '../printers/PrintingChip';
 import { sliceAndCompare } from '../compare';
 import { sliceAllMethods, useMethods } from '../methods';
 import { settingsChangedSinceSlice } from '../compare-settings';
+import { useMachine } from '../flow/fsm';
+import { choicePending, OFFER_UNDECIDED, projectSlots } from '../flow/project-slots';
 
 type MenuItem = MenuEntry;
 function Menu({title, items}: {title: string; items: MenuItem[]}) { return <MenuButton label={title} items={items} className="menu-title" />; }
@@ -53,8 +55,7 @@ export function TopBar() {
   const [archive, setArchive] = useState<File[] | null>(null);
   useSyncExternalStore(subscribeHistory, historyVersion);
   const undoLabel = undoName(), redoLabel = redoName();
-  const exportDrc = useStore((st) => !!st.features.export_drc);
-  const generic3mf = useStore((st) => !!st.features.export_generic_3mf);
+  const undecided = useMachine(projectSlots, (m) => choicePending(m.value, m.context.offer));
   const exportEnabled = useStore(canExport);
   const plates = useStore((s) => s.projectPlates.length > 1);
   const plateTools = useStore(canAddPlate);
@@ -64,7 +65,6 @@ export function TopBar() {
   const hasProjectObjects = useStore((s) => s.objects.length > 0 || s.projectPlates.some((p) => p.objects.length > 0));
   const hasSel = useStore((s) => !!s.selected);
   const hasProject = useStore((s) => !!s.project);
-  const brimEarsKeys = useStore((s) => !!s.features.brim_ears);
   const hasMeshes = useStore((s) => s.objects.some((o) => !o.project?.placeholder));
   const pasteEnabled = useStore(canPaste);
   const mock = useStore((s) => s.api?.mock);
@@ -83,22 +83,22 @@ export function TopBar() {
           { label: 'Open project…', shortcut: `${MOD}+O`, action: openProjectDialog, tip: 'Open a project file' },
           { label: 'Recent projects', action: showProjects },
           'sep',
-          { label: canLoadStep() ? 'Import 3MF/STL/STEP/OBJ…' : 'Import 3MF/STL/OBJ…', shortcut: `${MOD}+I`, action: openFileDialog, tip: 'Load a model' },
+          { label: 'Import 3MF/STL/STEP/OBJ…', shortcut: `${MOD}+I`, action: openFileDialog, tip: 'Load a model' },
           { label: 'Import from URL…', action: () => openUrlImport() },
           { label: 'Import ZIP archive…', action: () => void import('./ArchiveDialog').then((m) => m.importZipArchive(setArchive)), tip: 'Load models contained within a ZIP archive' },
           { label: 'Open G-code…', action: () => openGcode(), tip: 'Open a G-code file' },
           { label: 'Import profiles…', action: () => setState({ presetUx: { kind: 'import' } }), tip: 'Load printer, filament and process profiles' },
           'sep',
           { label: exportLabel, shortcut: `${MOD}+G`, action: download, disabled: !exportEnabled, tip: stale ? STALE_RESULT_TIP : exportTip },
-          ...(plates ? [{ label: 'Export sliced files for all plates', action: () => void exportAll(), disabled: !exportAllEnabled, tip: 'Export sliced files for all plates' }] : []),
-          ...(hasPrinters ? [{ label: 'Send…', action: () => setState({ appDialog: 'send' }), disabled: !exportEnabled, tip: 'Upload the sliced file to a printer' }] : []),
-          { label: 'Export all objects as one STL', action: () => void exportStl(false), disabled: !hasMeshes, tip: 'Export all objects as one STL' },
-          { label: 'Export all objects as STLs', action: () => void exportStl(true), disabled: !hasMeshes, tip: 'Export all objects as STLs' },
-          ...(exportDrc ? [{ label: 'Export all objects as one DRC', action: () => void import('../plater/exportModel').then((m) => m.exportModel('drc')), disabled: !hasMeshes, tip: 'Export all objects as one DRC' }] : []),
-          ...(generic3mf ? [{ label: 'Export generic 3MF', action: () => void import('../plater/exportModel').then((m) => m.exportModel('generic3mf')), disabled: !hasMeshes, tip: 'Export a standard 3MF file for other slicers' }] : []),
-          { label: 'Export toolpaths as OBJ', disabled: !toolpaths || tab !== 'preview', tip: 'Export toolpaths as OBJ',
+          ...(plates ? [{ label: 'Export sliced files for all plates', output: true, action: () => void exportAll(), disabled: !exportAllEnabled, tip: 'Export sliced files for all plates' }] : []),
+          ...(hasPrinters ? [{ label: 'Send…', output: true, action: () => setState({ appDialog: 'send' }), disabled: !exportEnabled || undecided, tip: undecided ? OFFER_UNDECIDED : 'Upload the sliced file to a printer' }] : []),
+          { label: 'Export all objects as one STL', output: true, action: () => void exportStl(false), disabled: !hasMeshes, tip: 'Export all objects as one STL' },
+          { label: 'Export all objects as STLs', output: true, action: () => void exportStl(true), disabled: !hasMeshes, tip: 'Export all objects as STLs' },
+          { label: 'Export all objects as one DRC', output: true, action: () => void import('../plater/exportModel').then((m) => m.exportModel('drc')), disabled: !hasMeshes, tip: 'Export all objects as one DRC' },
+          { label: 'Export generic 3MF', output: true, action: () => void import('../plater/exportModel').then((m) => m.exportModel('generic3mf')), disabled: !hasMeshes, tip: 'Export a standard 3MF file for other slicers' },
+          { label: 'Export toolpaths as OBJ', output: true, disabled: !toolpaths || tab !== 'preview', tip: 'Export toolpaths as OBJ',
             action: () => void import('../preview/objExport').then((m) => m.exportToolpathsObj(exportName || 'toolpaths')) },
-          { label: 'Export profiles…', action: () => setState({ presetUx: { kind: 'export' } }), tip: 'Export profiles to files' },
+          { label: 'Export profiles…', output: true, action: () => setState({ presetUx: { kind: 'export' } }), tip: 'Export profiles to files' },
         ];
   const devReset = useDevReset();
   const update = useUpdate();
@@ -109,7 +109,7 @@ export function TopBar() {
     if (!next || next === name) return;
     if (projectId && projectState !== 'blank') void renameProject(projectId, next); else setState({ projectName: next });
   };
-  const appItems: MenuItem[] = [{label:`PancakeSlicer v${APP_VERSION}`,header:true} as MenuItem,...(update ? [{label:`Update available: v${update.version}`,action:()=>openUpdate(update)} as MenuItem] : []),{label:'About PancakeSlicer',action:()=>setState({appDialog:'about'})},{label:'Report a problem…',action:reportProblem},'sep',{label:'Add model…',action:openFileDialog},{label:'File',sub:fileItems},{label:'Settings',action:()=>{if(tab==='projects'||tab==='device')setState({tab:'prepare'});showSettings();}},{label:'Projects',action:showProjects},{label:'Rename project…',action:()=>void renameHere(),disabled:tab==='projects'},{label:'Setup',action:()=>openSetup('printer')},{label:'Profiles',action:()=>setState({presetUx:{kind:'presets',type:'machine'}})},'sep',...(devReset ? [{label:'Start over',action:()=>void startOver().catch(()=>{})} as MenuItem,'sep' as const] : []),{label: 'Edit', sub: [
+  const appItems: MenuItem[] = [{label:`PancakeSlicer v${APP_VERSION}`,header:true} as MenuItem,...(update ? [{label:`Update available: v${update.version}`,action:()=>openUpdate(update)} as MenuItem] : []),{label:'About PancakeSlicer',action:()=>setState({appDialog:'about'})},{label:'Report a problem…',action:reportProblem},'sep',{label:'Add model…',action:openFileDialog},{label:'File',sub:fileItems},{label:'Settings',action:()=>{if(tab!=='prepare'&&tab!=='preview')setState({tab:'prepare'});showSettings();}},{label:'Projects',action:showProjects},{label:'Rename project…',action:()=>void renameHere(),disabled:tab==='projects'},{label:'Setup',action:()=>openSetup('printer')},{label:'Library',action:()=>openLibrary('machine')},'sep',...(devReset ? [{label:'Start over',action:()=>void startOver().catch(()=>{})} as MenuItem,'sep' as const] : []),{label: 'Edit', sub: [
           { label: undoLabel ? `Undo ${undoLabel}` : 'Undo', shortcut: `${MOD}+Z`, action: undo, disabled: !undoLabel },
           { label: redoLabel ? `Redo ${redoLabel}` : 'Redo', shortcut: `${MOD}+Y`, action: redo, disabled: !redoLabel },
           ...(undoLabel || redoLabel ? [{ label: 'History', sub: [
@@ -147,7 +147,7 @@ export function TopBar() {
           { label: 'Show 3D Navigator', role: 'menuitemcheckbox', checked: view.navigator, action: () => toggleViewOption('navigator'), tip: 'Show the 3D orientation cube in Prepare and Preview' },
           { label: 'Show gridlines', role: 'menuitemcheckbox', checked: view.gridlines, action: () => toggleViewOption('gridlines'), tip: 'Show gridlines on the build plate' },
           'sep',
-          { label: 'Show labels', shortcut: brimEarsKeys ? `${MOD}+E` : 'E', role: 'menuitemcheckbox', checked: view.labels, action: () => toggleViewOption('labels'), tip: 'Show object name labels in the 3D view' },
+          { label: 'Show labels', shortcut: `${MOD}+E`, role: 'menuitemcheckbox', checked: view.labels, action: () => toggleViewOption('labels'), tip: 'Show object name labels in the 3D view' },
           { label: 'Show overhang', role: 'menuitemcheckbox', checked: view.overhang, action: () => toggleViewOption('overhang'), tip: 'Highlight steep overhangs on models in the 3D view' },
           { label: 'Show non-planar surfaces', role: 'menuitemcheckbox', checked: nonplanarView, action: toggleNonplanarView, tip: "Preview which top surfaces will print curved and check their slope angles against your print head's clearance." },
           { label: 'Show edges', role: 'menuitemcheckbox', checked: view.edges, action: () => toggleViewOption('edges'), tip: "Highlight sharp model edges so contours are easier to see." },
@@ -156,7 +156,7 @@ export function TopBar() {
           { label: 'Show center of mass', role: 'menuitemcheckbox', checked: view.com, action: () => toggleViewOption('com'), tip: 'Show each object\'s center of mass in the 3D view' },
           { label: 'Show axes', role: 'menuitemcheckbox', checked: view.axes, action: () => toggleViewOption('axes'), tip: 'Show the X, Y, and Z axes at the bed origin' },
           { label: 'Show wireframe', shortcut: `${MOD}+Shift+Enter`, role: 'menuitemcheckbox', checked: view.wireframe, action: () => toggleViewOption('wireframe'), tip: 'Show mesh wireframes in the 3D view' },
-        ]}, ...(canCalibrate() ? [{label: 'Calibration', sub: [
+        ]}, ...(true ? [{label: 'Calibration', sub: [
           { label: 'Temperature', action: () => setState({ calibDialog: 'temperature' }), tip: 'Temperature Calibration' },
           { label: 'Max flowrate', action: () => setState({ calibDialog: 'max-flowrate' }), tip: 'Max flowrate' },
           { label: 'Pressure advance', action: () => setState({ calibDialog: 'pressure-advance' }), tip: 'Pressure advance' },
@@ -174,7 +174,6 @@ export function TopBar() {
         ]} as MenuItem] : []), {label: 'Help', sub: [
           ...(hasWhatYouCanDo ? [{ label: 'What you can do', action: () => setState({ appDialog: 'what' }), tip: 'Take a visual tour of PancakeSlicer\'s features' }] : []),
           { label: 'Keyboard shortcuts', shortcut: '?', action: () => setState({ appDialog: 'shortcuts' }), tip: 'Show the list of keyboard shortcuts' },
-          { label: 'Setup', action: () => openSetup('printer'), tip: 'Printer, connection and filaments' },
         ]}];
   return <header className="topbar compact-topbar">
     <div className="topbar-project-context"><MenuButton className="app-menu-button" label="Application menu" items={appItems}><img src="/logo.svg" width={20} height={20} alt="" draggable={false}/><Caret className="app-menu-caret"/></MenuButton>
@@ -183,7 +182,7 @@ export function TopBar() {
     {update && <button type="button" className="update-pill" aria-label={`Update available: v${update.version}`} onClick={() => openUpdate(update)}><span>Update</span></button>}
     </div>
     {(DEMO || mock) && <span className="mock-badge">Demo</span>}
-    {DEMO && <DemoResultNotice/>}
+    {DEMO && <SampleSliceLabel/>}
     {tab !== 'projects' && <TabBar/>}
     {tab === 'projects' && <div id="topbar-slot" className="topbar-slot"/>}
     {archive && <Suspense fallback={null}><ArchiveDialog files={archive} close={() => setArchive(null)} /></Suspense>}
@@ -203,7 +202,8 @@ export function TabBar() {
   const busy = job.state === 'running' || job.state === 'submitting';
   const exportEnabled = useStore(canExport);
   const exportLabel = useStore(outputKind) === 'gcode.3mf' ? 'Export sliced file' : 'Export G-code';
-  const printer = useStore(printerReady);
+  const undecided = useMachine(projectSlots, (m) => choicePending(m.value, m.context.offer));
+  const printer = useStore(printerReady) && !undecided;
   const hasPrinters = useStore((s) => s.printerConnections.enabled);
   const plates = useStore((s) => s.projectPlates.length > 1);
   const saved = useProject((p) => p.value === 'editing' || p.value === 'saved' || p.value === 'saving');
@@ -223,9 +223,9 @@ export function TabBar() {
     ...(folded ? [sliceMethods] : []),
     ...(folded && changed ? [{label: 'Slice and compare', action: compareSlice, disabled: !printer || busy || !!outside, tip: 'Slice with your updated settings and compare side by side with the previous slice'}] : []),
     ...(folded ? [{label: exportLabel, action: download, disabled: !exportEnabled, tip: job.stale ? STALE_RESULT_TIP : 'Slice the plate first'}] : []),
-    ...(!wide && hasPrinters ? [{label: 'Send to printer', action: () => setState({appDialog: 'send'}), disabled: !exportEnabled}] : []),
+    ...(!wide && hasPrinters ? [{label: 'Send to printer', action: () => setState({appDialog: 'send'}), disabled: !exportEnabled || undecided}] : []),
     ...(tier === 'phone' && saved ? [{label: 'Version history', action: toggleHistory} satisfies MenuEntry] : []),
-    ...(!wide && plates ? [{label: 'Slice all plates', action: () => void sliceAll(), disabled: !printer || busy}, {label: 'Export all plates', action: () => void exportAll(), disabled: !exportAllEnabled}] : []),
+    ...(!wide && plates ? [{label: 'Slice all plates', action: () => void sliceAll(), disabled: !printer || busy}, {label: 'Export all plates', output: true, action: () => void exportAll(), disabled: !exportAllEnabled}] : []),
   ];
   return (
     <div className="tabbar">
@@ -239,10 +239,16 @@ export function TabBar() {
         <button type="button" aria-label="Device" aria-pressed={tab === 'device'} className="view-tab" onClick={() => setState({ tab: 'device' })}>
           <span>Device</span>
         </button>
+        <button type="button" aria-label="Library" aria-pressed={tab === 'library'} className="view-tab" onClick={() => setState({ tab: 'library' })}>
+          <span>Library</span>
+        </button>
       </div>
       <div className="title-zone"><ProjectTitle/></div>
       <div className="tabbar-actions">
         <PrintingChip/>
+        {undecided && !DEMO && <span className="demo-result-notice" role="note" data-offer-undecided>{OFFER_UNDECIDED}</span>}
+        {DEMO ? <><span className="demo-result-notice" role="note">{NO_ENGINE}</span>
+          <button className={sliceClass} disabled>{tier === 'phone' ? 'Slice' : 'Slice plate'}</button></> : <>
         {allSlice ? (
           <button className={sliceClass} style={progress} disabled={!printer || busy} onClick={() => void sliceAll()}>Slice all</button>
         ) : (
@@ -250,10 +256,11 @@ export function TabBar() {
             {tier === 'phone' ? 'Slice' : 'Slice plate'}
           </button>
         )}
-        {!folded && <SideOptions className={ready ? 'btn' : 'btn-primary'} options={wide && plates ? ['Slice all', 'Slice plate'] : []} value={sliceMode} onChange={setSliceMode}
+        {!folded && <SideOptions className={ready ? 'btn' : 'btn-primary'} options={wide && plates ? ['Slice all', 'Slice plate'] : []} value={sliceMode}
+          onChange={(v) => { setSliceMode(v); if (v === 'Slice all') void sliceAll(); else void slice(); }}
           actions={[sliceMethods]} disabled={!printer || busy || (!plates && !hasObjects)} />}
         {!allSlice && !folded && changed && <button className="btn slant" disabled={!printer || busy || !!outside} onClick={compareSlice}>Slice and compare</button>}
-        {!folded && <span className="export-actions">{allExport ? (
+        {!folded && <span className="export-actions" data-output>{allExport ? (
           <button className={exportClass} disabled={!exportAllEnabled} onClick={() => void exportAll()}>Export all sliced plates</button>
         ) : (
           <button className={exportClass} disabled={!exportEnabled} onClick={download}>
@@ -261,20 +268,19 @@ export function TabBar() {
           </button>
         )}
         {wide && plates && <SideOptions options={[exportLabel, 'Export all sliced plates']} value={allExport ? 'Export all sliced plates' : exportLabel}
-          onChange={(v) => setExportMode(v === 'Export all sliced plates' ? 'all' : 'plate')} />}
+          onChange={(v) => { const all = v === 'Export all sliced plates'; setExportMode(all ? 'all' : 'plate'); if (all) void exportAll(); else download(); }} />}
         {wide && hasPrinters && (
-          <button className="btn slant" disabled={!exportEnabled} onClick={() => setState({ appDialog: 'send' })}>
+          <button className="btn slant" disabled={!exportEnabled || undecided} onClick={() => setState({ appDialog: 'send' })}>
             Send
           </button>
         )}
         </span>}
         {more.length > 0 && <MenuButton className="btn slant output-overflow" label="More output actions" items={more}><Glyph name="more"/></MenuButton>}
+        </>}
       </div>
     </div>
   );
 }
-
-function DemoResultNotice() {
-  const done = useStore(s => s.job.state === 'done' && s.tab !== 'projects');
-  return done ? <span className="demo-result-notice" role="status">Demo: showing pre-sliced result</span> : null;
+function SampleSliceLabel() {
+  return useStore((s) => s.job.id === SAMPLE_JOB && s.tab !== 'projects') ? <span className="demo-result-notice" role="status">Sample slice</span> : null;
 }

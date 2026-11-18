@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"log"
 	"maps"
 	"math"
 	"net"
@@ -15,25 +17,59 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
 type workspaceStore struct {
-	mu     sync.Mutex
-	root   string
-	cached *workspaceData
-	stamp  [2]int64
-	views  map[string]any
-	leases map[string]*projectLease
+	mu             sync.Mutex
+	root           string
+	cached         *workspaceData
+	stamp          [2]int64
+	views          map[string]any
+	leases         map[string]*projectLease
+	watch          sync.Mutex
+	sessionChanged chan struct{}
 }
+
+func (st *workspaceStore) sessionWritten() {
+	st.watch.Lock()
+	if st.sessionChanged != nil {
+		close(st.sessionChanged)
+	}
+	st.sessionChanged = make(chan struct{})
+	st.watch.Unlock()
+}
+
+func (st *workspaceStore) sessionWait() <-chan struct{} {
+	st.watch.Lock()
+	defer st.watch.Unlock()
+	if st.sessionChanged == nil {
+		st.sessionChanged = make(chan struct{})
+	}
+	return st.sessionChanged
+}
+
+func (st *workspaceStore) sessionRevision() uint64 {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	d, err := st.read()
+	if err != nil {
+		return 0
+	}
+	return d.Values["session"].Revision
+}
+
 type workspaceProject struct {
 	Record   json.RawMessage `json:"record"`
 	Archived bool            `json:"archived,omitempty"`
 	Revision uint64          `json:"revision"`
 	Folder   string          `json:"folder,omitempty"`
+	Versions *versionIndex   `json:"versions,omitempty"`
 }
 type workspaceDraft struct {
 	ID        string          `json:"id"`
@@ -62,6 +98,13 @@ type workspaceData struct {
 	Folders        map[string]workspaceFolder  `json:"folders,omitempty"`
 	FolderRevision uint64                      `json:"folderRevision,omitempty"`
 	Migrations     map[string]int64            `json:"migrations,omitempty"`
+	Problems       map[string]workspaceProblem `json:"problems,omitempty"`
+}
+
+type workspaceProblem struct {
+	Code    string `json:"code"`
+	File    string `json:"file"`
+	Message string `json:"message"`
 }
 
 func newWorkspaceData() *workspaceData {
@@ -91,8 +134,41 @@ func (st *workspaceStore) read() (*workspaceData, error) {
 	if err != nil {
 		return nil, err
 	}
+	d, err := decodeWorkspace(raw)
+	if err != nil {
+		return nil, err
+	}
+	before := len(d.Migrations)
+	ran, err := migrateWorkspace(d, time.Now(), st.root)
+	if err != nil {
+		return nil, fmt.Errorf("workspace migration: %w (nothing was recorded; it runs again on the next read)", err)
+	}
+	if len(ran) > 0 {
+		stamp := time.Now().UTC().Format("20060102T150405Z")
+		backup := fmt.Sprintf("workspace.v%d.%s.json", d.Schema, stamp)
+		if err := writeBackup(filepath.Join(st.root, backup), raw); err != nil {
+			return nil, fmt.Errorf("workspace migration: the backup %s could not be written, nothing changed: %w", backup, err)
+		}
+		encoded, err := d.encode()
+		if err == nil {
+			_, err = decodeWorkspace(encoded)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("workspace migration %v: the result does not read back, nothing changed (backup %s): %w", ran, backup, err)
+		}
+		if err := st.save(d); err != nil {
+			return nil, err
+		}
+		log.Printf("workspace: ran migrations %v (%d recorded before), backup %s", ran, before, backup)
+		return d, nil
+	}
+	st.cached, st.stamp, st.views = d.clone(), fileStamp(info), nil
+	return d, nil
+}
+
+func decodeWorkspace(raw []byte) (*workspaceData, error) {
 	var d workspaceData
-	if err = json.Unmarshal(raw, &d); err != nil {
+	if err := json.Unmarshal(raw, &d); err != nil {
 		return nil, err
 	}
 	if d.Schema != 1 || d.Projects == nil || d.Drafts == nil || d.Values == nil || d.Operations == nil || d.Adoptions == nil || d.Aliases == nil {
@@ -112,17 +188,10 @@ func (st *workspaceStore) read() (*workspaceData, error) {
 			}
 			continue
 		}
-		if _, err := projectRecord(project.Record, id, project.Revision); err != nil {
+		if _, err := projectRecord(project.Record, id); err != nil {
 			return nil, fmt.Errorf("Saved project %s has corrupted data: %w", id, err)
 		}
 	}
-	if migrateWorkspace(&d, time.Now()) {
-		if err := st.save(&d); err != nil {
-			return nil, err
-		}
-		return &d, nil
-	}
-	st.cached, st.stamp, st.views = d.clone(), fileStamp(info), nil
 	return &d, nil
 }
 func durableJSON(path string, value any) error {
@@ -132,28 +201,92 @@ func durableJSON(path string, value any) error {
 	}
 	return durableWrite(path, raw)
 }
-func durableWrite(path string, raw []byte) error {
+
+var durableWrites sync.Map
+
+func durableWrite(path string, raw []byte) error { return durableWriteVia(path, path+".tmp", raw) }
+
+func writeBackup(path string, raw []byte) error {
+	kind := strings.TrimSuffix(path, ".json")
+	kind = kind[:strings.LastIndexByte(kind, '.')]
+	return durableWriteVia(path, kind+".backup.tmp", raw)
+}
+
+func durableWriteVia(path, tmp string, raw []byte) error {
+	lock, _ := durableWrites.LoadOrStore(tmp, &sync.Mutex{})
+	lock.(*sync.Mutex).Lock()
+	defer lock.(*sync.Mutex).Unlock()
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(filepath.Dir(path), ".workspace-*")
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return err
 	}
-	defer os.Remove(f.Name())
 	_, err = f.Write(raw)
 	if err == nil {
 		err = f.Sync()
 	}
 	err = errors.Join(err, f.Close())
-	if err != nil {
-		return err
+	if err == nil {
+		err = os.Rename(tmp, path)
 	}
-	if err := os.Rename(f.Name(), path); err != nil {
+	if err != nil {
+		os.Remove(tmp)
 		return err
 	}
 	return syncWorkspaceDirectory(filepath.Dir(path))
 }
+
+const legacyTempPrefix = ".workspace-"
+
+func removeLegacyTemps(dataDir string) error {
+	workspaceRoot := filepath.Join(dataDir, "workspace")
+	dirs := []string{dataDir, filepath.Join(dataDir, "printers"), filepath.Join(dataDir, "nonplanar", "heads"), workspaceRoot}
+	versions, err := os.ReadDir(filepath.Join(workspaceRoot, "versions"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	for _, v := range versions {
+		if v.IsDir() {
+			dir := filepath.Join(workspaceRoot, "versions", v.Name())
+			dirs = append(dirs, dir, filepath.Join(dir, "records"))
+		}
+	}
+	removed := 0
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasPrefix(entry.Name(), legacyTempPrefix) {
+				continue
+			}
+			path := filepath.Join(dir, entry.Name())
+			info, err := entry.Info()
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if err := os.Remove(path); errors.Is(err, os.ErrNotExist) {
+				continue
+			} else if err != nil {
+				return err
+			}
+			removed++
+			log.Printf("storage migration: removed %s (%d bytes, %s), a temporary file an earlier version's write left when killed before its rename", path, info.Size(), info.ModTime().UTC().Format(time.RFC3339))
+		}
+	}
+	log.Printf("storage migration: removed %d leftover temporary files from %d directories under %s", removed, len(dirs), dataDir)
+	return nil
+}
+
 func syncWorkspaceDirectory(path string) error {
 	if runtime.GOOS == "windows" {
 		return nil
@@ -297,12 +430,12 @@ func workspaceError(code, message, recovery string, revision uint64) map[string]
 func workspaceDecode(w http.ResponseWriter, r *http.Request, v any) bool {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<20))
 	if err := dec.Decode(v); err != nil {
-		workspaceFailure(w, 400, "invalid_document", "The saved document is invalid or exceeds 64 MiB.", "export_and_repair", 0)
+		workspaceFailure(w, 400, "invalid_document", "Oops, the saved document is invalid or over 64 MiB.", "export_and_repair", 0)
 		return false
 	}
 	var extra any
 	if dec.Decode(&extra) != io.EOF {
-		workspaceFailure(w, 400, "invalid_document", "Expected one JSON document.", "export_and_repair", 0)
+		workspaceFailure(w, 400, "invalid_document", "Expected one JSON document here.", "export_and_repair", 0)
 		return false
 	}
 	return true
@@ -318,10 +451,25 @@ func (st *workspaceStore) locked(w http.ResponseWriter, fn func(*workspaceData))
 	defer st.mu.Unlock()
 	d, err := st.read()
 	if err != nil {
-		workspaceFailure(w, 503, "workspace_unavailable", "Saved work could not be read. Keep your current document and retry the service.", "retry_storage", 0)
+		workspaceFailure(w, 503, "workspace_unavailable", "Oops! Couldn't read saved work ("+storageCause(err)+"). Hang on to your current document and try the service again.", "retry_storage", 0)
 		return
 	}
 	fn(d)
+}
+
+func storageCause(err error) string {
+	log.Printf("storage: %v", err)
+	switch {
+	case errors.Is(err, syscall.ENOSPC):
+		return "the disk is full: no space left on device"
+	case errors.Is(err, syscall.EROFS):
+		return "the storage is read-only"
+	case errors.Is(err, fs.ErrPermission):
+		return "permission denied"
+	case errors.Is(err, fs.ErrNotExist):
+		return "a stored file is missing"
+	}
+	return "a storage error; the service log has the details"
 }
 
 func (st *workspaceStore) view(w http.ResponseWriter, fn func(*workspaceData)) {
@@ -332,12 +480,12 @@ func (st *workspaceStore) view(w http.ResponseWriter, fn func(*workspaceData)) {
 }
 func workspaceReplay(w http.ResponseWriter, d *workspaceData, op, digest string) bool {
 	if op == "" || len(op) > 200 {
-		workspaceFailure(w, 400, "operation_required", "A stable operationId is required for safe retry.", "retry_same_operation", 0)
+		workspaceFailure(w, 400, "operation_required", "We need a stable operationId to retry safely.", "retry_same_operation", 0)
 		return true
 	}
 	if old, ok := d.Operations[op]; ok {
 		if old.Digest != digest {
-			workspaceFailure(w, 409, "operation_conflict", "This operationId was used for different data.", "reload_and_reapply", 0)
+			workspaceFailure(w, 409, "operation_conflict", "Heads up — this operationId was already used for different data.", "reload_and_reapply", 0)
 		} else {
 			writeJSON(w, 200, json.RawMessage(old.Response))
 		}
@@ -347,15 +495,26 @@ func workspaceReplay(w http.ResponseWriter, d *workspaceData, op, digest string)
 }
 func (st *workspaceStore) commit(w http.ResponseWriter, d *workspaceData, op, digest string, response any) bool {
 	raw, _ := json.Marshal(response)
-	putReceipt(d.Operations, op, workspaceReceipt{Digest: digest, Response: raw})
+	putReceipt(d.Operations, op, workspaceReceipt{Digest: digest, Response: raw}, func(r workspaceReceipt) uint64 { return r.Seq },
+		func(r workspaceReceipt, seq uint64) workspaceReceipt { r.Seq = seq; return r })
 	if err := st.save(d); err != nil {
-		workspaceFailure(w, 507, "workspace_write_failed", "Saved work could not be committed. Your draft must be kept; free storage and retry the same operation.", "free_storage_and_retry", 0)
+		workspaceFailure(w, 507, "workspace_write_failed", "Uh-oh, couldn't save your work ("+storageCause(err)+"). Keep your draft safe, free up a bit of storage, and retry!", "free_storage_and_retry", 0)
 		return false
 	}
 	writeJSON(w, 200, response)
 	return true
 }
-func projectRecord(raw json.RawMessage, id string, revision uint64) (json.RawMessage, error) {
+
+func withRecord(p workspaceProject, id string, raw json.RawMessage, revision uint64) (workspaceProject, error) {
+	record, err := projectRecord(raw, id)
+	if err != nil {
+		return p, err
+	}
+	p.Record, p.Revision = record, revision
+	return p, nil
+}
+
+func projectRecord(raw json.RawMessage, id string) (json.RawMessage, error) {
 	var record map[string]json.RawMessage
 	if json.Unmarshal(raw, &record) != nil || record == nil {
 		return nil, errors.New("record is required")
@@ -375,7 +534,7 @@ func projectRecord(raw json.RawMessage, id string, revision uint64) (json.RawMes
 		return nil, errors.New("project thumbnail must be an image data URL, another string or null")
 	}
 	meta["id"], _ = json.Marshal(id)
-	meta["revision"], _ = json.Marshal(revision)
+	delete(meta, "revision")
 	delete(meta, "folderId")
 	delete(meta, "change")
 	record["meta"], _ = json.Marshal(meta)
@@ -397,6 +556,30 @@ func (st *workspaceStore) checkAssets(record json.RawMessage) error {
 	}
 	return nil
 }
+
+func servedRecord(p workspaceProject) json.RawMessage {
+	var record map[string]json.RawMessage
+	var meta map[string]json.RawMessage
+	if json.Unmarshal(p.Record, &record) != nil || json.Unmarshal(record["meta"], &meta) != nil || meta == nil {
+		return p.Record
+	}
+	meta["revision"], _ = json.Marshal(p.Revision)
+	record["meta"], _ = json.Marshal(meta)
+	var b bytes.Buffer
+	b.WriteByte('{')
+	for i, key := range sortedKeys(record) {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		k, _ := json.Marshal(key)
+		b.Write(k)
+		b.WriteByte(':')
+		b.Write(record[key])
+	}
+	b.WriteByte('}')
+	return b.Bytes()
+}
+
 func projectMeta(p workspaceProject) json.RawMessage {
 	var record map[string]json.RawMessage
 	json.Unmarshal(p.Record, &record)
@@ -409,6 +592,7 @@ func projectMeta(p workspaceProject) json.RawMessage {
 		meta["thumbnail"], _ = json.Marshal(thumbnailURL(id, thumbnail))
 		rememberThumbnail(id, thumbnail)
 	}
+	meta["revision"], _ = json.Marshal(p.Revision)
 	meta["folderId"] = json.RawMessage("null")
 	if p.Folder != "" {
 		meta["folderId"], _ = json.Marshal(p.Folder)
@@ -492,14 +676,14 @@ func (st *workspaceStore) register(mux *http.ServeMux) {
 				return
 			}
 			if p.Record == nil {
-				workspaceFailure(w, 410, "project_archived", "This project was deleted and has no retained document. Its deletion marker prevents stale writers from recreating it.", "open_projects", p.Revision)
+				workspaceFailure(w, 410, "project_archived", "This project was deleted and doesn't have a saved document left — its deletion marker keeps stale writers from bringing it back.", "open_projects", p.Revision)
 				return
 			}
 			if p.Archived && r.URL.Query().Get("archived") != "1" {
-				workspaceFailure(w, 410, "project_archived", "This project is in Trash. Restore it before editing.", "restore_project", p.Revision)
+				workspaceFailure(w, 410, "project_archived", "This project is in the Trash! Restore it first before editing.", "restore_project", p.Revision)
 				return
 			}
-			writeJSON(w, 200, json.RawMessage(p.Record))
+			writeJSON(w, 200, servedRecord(p))
 		})
 	})
 	mux.HandleFunc("PUT /api/projects/{id}", func(w http.ResponseWriter, r *http.Request) { st.projectWrite(w, r, "save") })
@@ -521,7 +705,7 @@ func (st *workspaceStore) register(mux *http.ServeMux) {
 		st.view(w, func(d *workspaceData) {
 			v, ok := d.Drafts[r.PathValue("id")]
 			if !ok {
-				workspaceFailure(w, 404, "draft_missing", "Recovery draft not found.", "open_projects", 0)
+				workspaceFailure(w, 404, "draft_missing", "Hmm, couldn't find that recovery draft.", "open_projects", 0)
 				return
 			}
 			writeJSON(w, 200, v)
@@ -529,8 +713,9 @@ func (st *workspaceStore) register(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("PUT /api/drafts/{id}", st.putDraft)
 	mux.HandleFunc("DELETE /api/drafts/{id}", st.deleteDraft)
-	for _, kind := range []string{"session", "preferences"} {
-		mux.HandleFunc("GET /api/"+kind, func(w http.ResponseWriter, r *http.Request) {
+	for _, value := range []struct{ kind, method string }{{"session", "PATCH"}, {"preferences", "PUT"}} {
+		kind := value.kind
+		mux.HandleFunc("GET /api/"+value.kind, func(w http.ResponseWriter, r *http.Request) {
 			st.view(w, func(d *workspaceData) {
 				v := d.Values[kind]
 				if v.Document == nil {
@@ -539,11 +724,7 @@ func (st *workspaceStore) register(mux *http.ServeMux) {
 				writeJSON(w, 200, v)
 			})
 		})
-		method := "PUT"
-		if kind == "session" {
-			method = "PATCH"
-		}
-		mux.HandleFunc(method+" /api/"+kind, func(w http.ResponseWriter, r *http.Request) { st.putValue(w, r, kind) })
+		mux.HandleFunc(value.method+" /api/"+value.kind, func(w http.ResponseWriter, r *http.Request) { st.putValue(w, r, kind) })
 	}
 	mux.HandleFunc("PUT /api/assets/{key}", st.putAsset)
 	mux.HandleFunc("GET /api/assets/{key}", st.getAsset)
@@ -603,29 +784,28 @@ func (st *workspaceStore) projectWrite(w http.ResponseWriter, r *http.Request, a
 		if action != "duplicate" && st.leaseConflict(w, id, r.Header.Get(sessionHeader), p.Revision) {
 			return
 		}
-		if p.Revision != in.ExpectedRevision {
-			workspaceFailure(w, 409, "revision_conflict", "Another writer changed this project. Reload or keep a separate copy.", "reload_and_reapply", p.Revision)
-			return
-		}
 		if state := workspaceProjectStateOf(p, exists); !workspaceProjectActions[state][action] {
 			switch state {
 			case projectAbsent:
 				workspaceFailure(w, 404, "project_missing", "Project not found.", "open_projects", 0)
 			case projectTombstone:
-				workspaceFailure(w, 410, "project_archived", "This deleted project has no retained document to restore. Keep its deletion marker and open another project.", "open_projects", p.Revision)
+				workspaceFailure(w, 410, "project_archived", "This deleted project doesn't have a saved document to restore. Keep its deletion marker and open another project!", "open_projects", p.Revision)
 			case projectTrashed:
-				workspaceFailure(w, 410, "project_archived", "This project is in Trash. Restore it before saving.", "restore_project", p.Revision)
+				workspaceFailure(w, 410, "project_archived", "This project is in the Trash! Restore it first before saving.", "restore_project", p.Revision)
 			default:
-				workspaceFailure(w, 409, "project_not_archived", "This project is not in Trash.", "open_project", p.Revision)
+				workspaceFailure(w, 409, "project_not_archived", "This project isn't in the Trash!", "open_project", p.Revision)
 			}
 			return
 		}
-		next := p
-		next.Revision++
+		if p.Revision != in.ExpectedRevision {
+			workspaceFailure(w, 409, "revision_conflict", "Heads up — someone else changed this project! Reload it or keep a separate copy.", "reload_and_reapply", p.Revision)
+			return
+		}
+		next, revision := p, p.Revision+1
 		var err error
 		switch action {
 		case "save":
-			next.Record, err = projectRecord(in.Record, id, next.Revision)
+			next, err = withRecord(p, id, in.Record, revision)
 			if err == nil {
 				err = st.checkAssets(next.Record)
 			}
@@ -646,24 +826,33 @@ func (st *workspaceStore) projectWrite(w http.ResponseWriter, r *http.Request, a
 				} else if _, alias := d.Aliases[in.NewID]; alias {
 					err = errors.New("That project ID is already in use.")
 				} else {
-					id = in.NewID
-					next.Revision = 1
+					id, revision = in.NewID, 1
 				}
 			}
 			if err == nil {
-				next.Record, err = projectRecord(raw, id, next.Revision)
+				next, err = withRecord(p, id, raw, revision)
 			}
 		case "archive":
+			next, err = withRecord(p, id, p.Record, revision)
 			next.Archived = true
-			next.Record, err = projectRecord(p.Record, id, next.Revision)
 		case "restore":
+			next, err = withRecord(p, id, p.Record, revision)
 			next.Archived = false
-			next.Record, err = projectRecord(p.Record, id, next.Revision)
 		}
 		if err != nil {
 			workspaceFailure(w, 400, "project_invalid", err.Error(), "export_and_repair", p.Revision)
 			return
 		}
+		sha, err := st.keepRecord(id, next.Record)
+		if err != nil {
+			workspaceFailure(w, 507, "workspace_write_failed", "Uh-oh, couldn't save your work ("+storageCause(err)+"). Keep your draft safe, free up a bit of storage, and retry!", "free_storage_and_retry", p.Revision)
+			return
+		}
+		change := map[string][]versionChange{"save": recordChange(in.Record), "rename": {{Key: "name", Label: "Renamed to " + in.Name}}, "duplicate": {{Label: "Copied"}}}[action]
+		if action == "duplicate" {
+			next.Versions = nil
+		}
+		next.Versions = withVersion(next, next.Revision, sha, next.Record, change, action, time.Now().UnixMilli())
 		d.Projects[id] = next
 		response := any(map[string]any{"revision": next.Revision, "operationId": in.OperationID})
 		if action == "duplicate" {
@@ -675,29 +864,29 @@ func (st *workspaceStore) projectWrite(w http.ResponseWriter, r *http.Request, a
 		if action == "save" {
 			st.claimLease(id, r.Header.Get(sessionHeader))
 		}
-		switch action {
-		case "save":
-			st.recordVersion(id, next.Revision, next.Record, recordChange(in.Record), action)
-		case "rename":
-			st.recordVersion(id, next.Revision, next.Record, []versionChange{{Key: "name", Label: "Renamed to " + in.Name}}, action)
-		case "duplicate":
-			st.recordVersion(id, next.Revision, next.Record, []versionChange{{Label: "Copied"}}, action)
-		}
+		st.pruneVersionFiles(id, next.Versions)
 	})
 }
+
+type draftRef struct {
+	ID       string `json:"id"`
+	Sequence uint64 `json:"sequence"`
+}
+
 func (st *workspaceStore) putDraft(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		OperationID string          `json:"operationId"`
 		Sequence    uint64          `json:"sequence"`
 		Document    json.RawMessage `json:"document"`
 		Metadata    json.RawMessage `json:"metadata"`
+		Supersedes  []draftRef      `json:"supersedes"`
 	}
 	if !workspaceDecode(w, r, &in) {
 		return
 	}
 	id := r.PathValue("id")
-	if !workspaceID(id) || len(in.Document) == 0 {
-		workspaceFailure(w, 400, "draft_invalid", "A stable draft ID and document are required.", "keep_draft", 0)
+	if !workspaceID(id) || len(in.Document) == 0 || slices.ContainsFunc(in.Supersedes, func(s draftRef) bool { return s.ID == id || !workspaceID(s.ID) }) {
+		workspaceFailure(w, 400, "draft_invalid", "We need a stable draft ID and document here.", "keep_draft", 0)
 		return
 	}
 	if err := st.checkAssets(in.Document); err != nil {
@@ -710,10 +899,16 @@ func (st *workspaceStore) putDraft(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if old, ok := d.Drafts[id]; ok && in.Sequence <= old.Sequence {
-			workspaceFailure(w, 409, "draft_conflict", "A newer recovery draft exists. Keep both versions before resolving.", "recover_draft", old.Sequence)
+			workspaceFailure(w, 409, "draft_conflict", "There's a newer recovery draft! Keep both versions before sorting it out.", "recover_draft", old.Sequence)
 			return
 		}
 		d.Drafts[id] = workspaceDraft{id, in.Sequence, in.Document, in.Metadata, time.Now().UnixMilli()}
+		for _, s := range in.Supersedes {
+			if old, ok := d.Drafts[s.ID]; ok && old.Sequence <= s.Sequence {
+				delete(d.Drafts, s.ID)
+				log.Printf("workspace: draft %s retired, taken over by %s", s.ID, id)
+			}
+		}
 		st.commit(w, d, in.OperationID, digest, map[string]any{"sequence": in.Sequence, "operationId": in.OperationID})
 	})
 }
@@ -725,13 +920,13 @@ func (st *workspaceStore) deleteDraft(w http.ResponseWriter, r *http.Request) {
 	}
 	st.locked(w, func(d *workspaceData) {
 		id := r.PathValue("id")
-		if d.Drafts[id].Sequence > through {
-			workspaceFailure(w, 409, "draft_conflict", "A newer recovery draft was kept.", "recover_draft", d.Drafts[id].Sequence)
+		if draft, ok := d.Drafts[id]; !ok || draft.Sequence > through {
+			w.WriteHeader(204)
 			return
 		}
 		delete(d.Drafts, id)
 		if err := st.save(d); err != nil {
-			workspaceFailure(w, 507, "workspace_write_failed", "Recovery draft could not be removed.", "retry_storage", 0)
+			workspaceFailure(w, 507, "workspace_write_failed", "Oops! Couldn't remove the recovery draft.", "retry_storage", 0)
 			return
 		}
 		w.WriteHeader(204)
@@ -757,14 +952,16 @@ func (st *workspaceStore) putValue(w http.ResponseWriter, r *http.Request, kind 
 		}
 		v := d.Values[kind]
 		if v.Revision != in.ExpectedRevision {
-			failure := workspaceError("revision_conflict", "Another writer changed saved "+kind+". Reload before applying changes.", "reload_and_reapply", v.Revision)
+			failure := workspaceError("revision_conflict", "Heads up — someone else changed saved "+kind+". Reload before applying your changes!", "reload_and_reapply", v.Revision)
 			failure["document"] = v.Document
 			writeJSON(w, 409, failure)
 			return
 		}
 		v = workspaceValue{v.Revision + 1, in.Document}
 		d.Values[kind] = v
-		st.commit(w, d, in.OperationID, digest, map[string]any{"revision": v.Revision, "operationId": in.OperationID})
+		if st.commit(w, d, in.OperationID, digest, map[string]any{"revision": v.Revision, "operationId": in.OperationID}) && kind == "session" {
+			st.sessionWritten()
+		}
 	})
 }
 func (st *workspaceStore) assetPath(key string) string {
@@ -773,17 +970,17 @@ func (st *workspaceStore) assetPath(key string) string {
 func (st *workspaceStore) putAsset(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
 	if key == "" || len(key) > 1024 {
-		workspaceFailure(w, 400, "asset_invalid", "A valid asset key is required.", "reimport_asset", 0)
+		workspaceFailure(w, 400, "asset_invalid", "We need a valid asset key here.", "reimport_asset", 0)
 		return
 	}
 	dir := filepath.Join(st.root, "assets")
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		workspaceFailure(w, 507, "asset_write_failed", "Asset storage is unavailable.", "free_storage_and_retry", 0)
+		workspaceFailure(w, 507, "asset_write_failed", "Oops, asset storage is unavailable right now.", "free_storage_and_retry", 0)
 		return
 	}
 	f, err := os.CreateTemp(dir, ".asset-*")
 	if err != nil {
-		workspaceFailure(w, 507, "asset_write_failed", err.Error(), "free_storage_and_retry", 0)
+		workspaceFailure(w, 507, "asset_write_failed", "Oops, couldn't store that file ("+storageCause(err)+").", "free_storage_and_retry", 0)
 		return
 	}
 	defer os.Remove(f.Name())
@@ -797,14 +994,14 @@ func (st *workspaceStore) putAsset(w http.ResponseWriter, r *http.Request) {
 	var timeout net.Error
 	switch {
 	case errors.As(err, &tooLarge):
-		workspaceFailure(w, 413, "asset_too_large", "The model exceeds 512 MiB.", "reimport_asset", 0)
+		workspaceFailure(w, 413, "asset_too_large", "Whoa, that model is over 512 MiB!", "reimport_asset", 0)
 		return
 	case errors.As(err, &timeout) && timeout.Timeout():
 		w.Header().Set("Connection", "close")
-		workspaceFailure(w, 408, "asset_upload_timeout", "The model upload stalled. Retry.", "retry_same_asset", 0)
+		workspaceFailure(w, 408, "asset_upload_timeout", "Oops, the model upload stalled out — give it another try!", "retry_same_asset", 0)
 		return
 	case err != nil:
-		workspaceFailure(w, 400, "asset_upload_failed", "The model upload did not complete. Retry.", "retry_same_asset", 0)
+		workspaceFailure(w, 400, "asset_upload_failed", "Oops, the model upload didn't finish — give it another try!", "retry_same_asset", 0)
 		return
 	}
 	digest := hex.EncodeToString(hash.Sum(nil))
@@ -816,18 +1013,18 @@ func (st *workspaceStore) putAsset(w http.ResponseWriter, r *http.Request) {
 		_, copyErr := io.Copy(h, old)
 		old.Close()
 		if copyErr != nil || hex.EncodeToString(h.Sum(nil)) != digest {
-			workspaceFailure(w, 409, "asset_conflict", "This asset key already contains different bytes. Preserve the original key and use a new key for the edited asset.", "reimport_asset", 0)
+			workspaceFailure(w, 409, "asset_conflict", "Heads up — this asset key already holds different bytes. Keep the original key and use a new one for the edited asset!", "reimport_asset", 0)
 			return
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
-		workspaceFailure(w, 503, "asset_unavailable", "The existing asset could not be checked.", "retry_storage", 0)
+		workspaceFailure(w, 503, "asset_unavailable", "Oops! Couldn't check the existing asset.", "retry_storage", 0)
 		return
 	} else if err = os.Rename(f.Name(), path); err != nil {
-		workspaceFailure(w, 507, "asset_write_failed", "Asset could not be committed.", "free_storage_and_retry", 0)
+		workspaceFailure(w, 507, "asset_write_failed", "Uh-oh, couldn't save that asset.", "free_storage_and_retry", 0)
 		return
 	}
 	if err := syncWorkspaceDirectory(dir); err != nil {
-		workspaceFailure(w, 507, "asset_write_failed", "Asset directory could not be synced. Retry the same bytes.", "retry_same_asset", 0)
+		workspaceFailure(w, 507, "asset_write_failed", "Uh-oh, couldn't sync the asset folder — retry with the exact same bytes!", "retry_same_asset", 0)
 		return
 	}
 	w.Header().Set("X-Content-SHA256", digest)
@@ -837,13 +1034,13 @@ func (st *workspaceStore) getAsset(w http.ResponseWriter, r *http.Request) {
 	path := st.assetPath(r.PathValue("key"))
 	f, err := os.Open(path)
 	if err != nil {
-		workspaceFailure(w, 404, "asset_missing", "The original model asset is missing.", "reimport_asset", 0)
+		workspaceFailure(w, 404, "asset_missing", "Oops, the original model asset is missing.", "reimport_asset", 0)
 		return
 	}
 	defer f.Close()
 	h := sha256.New()
 	if _, err = io.Copy(h, f); err != nil {
-		workspaceFailure(w, 503, "asset_unavailable", "The model asset could not be read.", "retry_storage", 0)
+		workspaceFailure(w, 503, "asset_unavailable", "Oops! Couldn't read the model asset.", "retry_storage", 0)
 		return
 	}
 	sum := hex.EncodeToString(h.Sum(nil))
@@ -854,7 +1051,7 @@ func (st *workspaceStore) getAsset(w http.ResponseWriter, r *http.Request) {
 	f.Seek(0, io.SeekStart)
 	stat, err := f.Stat()
 	if err != nil {
-		workspaceFailure(w, 503, "asset_unavailable", "The model asset could not be read.", "retry_storage", 0)
+		workspaceFailure(w, 503, "asset_unavailable", "Oops! Couldn't read the model asset.", "retry_storage", 0)
 		return
 	}
 	if serveAssetGzip(w, r, f, stat.Size(), sum) {

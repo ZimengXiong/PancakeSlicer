@@ -284,10 +284,8 @@ func init() {
 		if _, err := cacheForManager(m); err != nil {
 			log.Printf("result cache unavailable: %v", err)
 		}
-		for _, current := range []string{presetCacheDir(m), stageCacheDir(m)} {
-			if current == "" {
-				continue
-			}
+		_ = os.RemoveAll(filepath.Join(m.cfg.JobRoot, "preset-cache"))
+		if current := stageCacheDir(m); current != "" {
 			entries, _ := os.ReadDir(filepath.Dir(current))
 			for _, e := range entries {
 				if e.Name() != filepath.Base(current) {
@@ -347,21 +345,7 @@ func cacheForManager(m *JobManager) (*managerResultCache, error) {
 	return state, nil
 }
 
-func presetCacheDir(m *JobManager) string {
-	if !m.cfg.Features.PresetCache {
-		return ""
-	}
-	state, err := cacheForManager(m)
-	if err != nil || state == nil {
-		return ""
-	}
-	return filepath.Join(m.cfg.JobRoot, "preset-cache", state.cache.artifact[:16]+"-"+state.resources[:16])
-}
-
 func stageCacheDir(m *JobManager) string {
-	if !m.cfg.Features.StageCache {
-		return ""
-	}
 	state, err := cacheForManager(m)
 	if err != nil || state == nil {
 		return ""
@@ -405,6 +389,7 @@ func restoreJobResult(m *JobManager, j *Job, args []string) bool {
 	if state == nil {
 		return false
 	}
+	args = keyArgs(j, args)
 	normalized := make([]string, len(args))
 	for i, arg := range args {
 		normalized[i] = strings.ReplaceAll(arg, j.Dir, "<job>")

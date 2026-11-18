@@ -772,7 +772,6 @@ protected:
     bool                                defer_planar_material(const ExtrusionEntity &entity, const std::string &description,
                                                               double speed, std::string &gcode, std::vector<ExtrusionPath> *curved_current = nullptr);
     void                                queue_advanced_conformal(const Print &print);
-    void                                band_curved_tops(const Print &print);
     std::string                         curved_level_marker(const Print &print, double z);
     std::string                         emit_deferred_material(int slot, unsigned int extruder_id);
     std::string                         emit_deferred_before_layer(unsigned int extruder_id);

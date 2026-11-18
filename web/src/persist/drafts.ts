@@ -1,15 +1,15 @@
 import type { StoredDocBase } from './backend';
-import { projectId } from './identity';
 import { putAsset, readAsset, requireWorkspaceService, routeKey, serviceRequest } from './service';
-import { createMachine, type Machine } from '../flow/fsm';
 import { captureProjectWire, prepareOnce, projectJson as serviceJson, projectWrite } from './project-wire';
+import { projectId } from './identity';
 export interface ProjectFailure {
   kind: 'conflict' | 'deleted' | 'quota' | 'unavailable' | 'interrupted' | 'decode';
   name: string; message: string; projectId: string; expectedRevision: number;
 }
 export interface ProjectDraftMeta {
   id: string; owner: string; projectId: string; sequence: number; baseRevision: number;
-  name: string; objects: number; updatedAt: number; kind: 'dirty' | 'snapshot'; failure: ProjectFailure | null;
+  name: string; objects: number; updatedAt: number; kind: 'dirty'; failure: ProjectFailure | null;
+  editedAt?: number;
 }
 export interface ProjectDraft extends ProjectDraftMeta { doc: StoredDocBase; blobs: Record<string, Blob> }
 export interface ProjectDraftStore {
@@ -17,80 +17,25 @@ export interface ProjectDraftStore {
   listMetadata(projectId?: string): Promise<ProjectDraftMeta[]>;
   load(id: string): Promise<ProjectDraft | null>;
   asset(key: string): Promise<Blob | null>;
-  put(draft: ProjectDraft): Promise<void>;
+  put(draft: ProjectDraft, supersedes?: readonly DraftRef[]): Promise<void>;
   remove(id: string, throughSequence: number): Promise<void>;
 }
+export interface DraftRef { id: string; sequence: number }
 export interface ProjectDraftMutationSnapshot {
-  readonly pending: number; readonly revision: number; readonly error: string | null;
+  readonly pending: number; readonly error: string | null;
 }
-type MutationMessage = { writer: string; token: string; id: string; phase: 'begin' | 'end'; error?: string } | { writer: string; phase: 'bye' };
-const writer = projectId(), mutations = new Map<string, { writer: string; id: string }>(), failedMutations = new Map<string, string>();
-const publishMutations = () => {
-  mutationSnapshot = { pending: mutations.size, revision: mutationSnapshot.revision + 1, error: failedMutations.values().next().value ?? null };
-  mutationListeners.forEach((listener) => listener());
-};
-const lockName = (id: string) => `drafts-writer:${id}`;
-type WriterEvent = { type: 'BEGIN' } | { type: 'BYE' } | { type: 'LOCK_GONE' };
-const writers = new Map<string, Machine<'live' | 'gone', WriterEvent, Record<string, never>>>();
-function remoteWriter(id: string) {
-  let m = writers.get(id);
-  if (!m) writers.set(id, m = createMachine<'live' | 'gone', WriterEvent, Record<string, never>>({ id: 'draft-writer', initial: 'live', strict: true, context: {}, states: {
-    live: { on: { BEGIN: {}, BYE: 'gone', LOCK_GONE: 'gone' } },
-    gone: { entry: () => {
-      for (const [token, entry] of mutations) if (entry.writer === id) mutations.delete(token);
-      for (const key of failedMutations.keys()) if (key.startsWith(`${id}/`)) failedMutations.delete(key);
-      writers.delete(id); publishMutations();
-    }, on: { BEGIN: 'live', BYE: {}, LOCK_GONE: {} } },
-  } }));
-  return m;
-}
-export async function settleDraftWriters(): Promise<void> {
-  const remote = new Set([...mutations.values()].map((entry) => entry.writer).filter((id) => id !== writer));
-  for (const key of failedMutations.keys()) { const id = key.slice(0, key.indexOf('/')); if (id !== writer) remote.add(id); }
-  if (!remote.size || typeof navigator === 'undefined' || !navigator.locks) return;
-  const state = await navigator.locks.query(), held = new Set([...(state.held ?? []), ...(state.pending ?? [])].map((lock) => lock.name));
-  for (const id of remote) if (!held.has(lockName(id))) remoteWriter(id).send({ type: 'LOCK_GONE' });
-}
-const mutationListeners = new Set<() => void>();
-let mutationSerial = 0, mutationSnapshot: ProjectDraftMutationSnapshot = { pending: 0, revision: 0, error: null };
-let mutationChannel: BroadcastChannel | null = null;
-const receiveMutation = (message: MutationMessage) => {
-  if (!message || typeof message.writer !== 'string') return;
-  if (message.phase === 'bye') { if (message.writer !== writer) remoteWriter(message.writer).send({ type: 'BYE' }); return; }
-  if (typeof message.token !== 'string' || typeof message.id !== 'string') return;
-  const failureKey = `${message.writer}/${message.id}`;
-  if (message.phase === 'begin') {
-    if (message.writer !== writer) remoteWriter(message.writer).send({ type: 'BEGIN' });
-    mutations.set(message.token, { writer: message.writer, id: message.id });
-  } else if (message.phase === 'end') {
-    mutations.delete(message.token);
-    if (typeof message.error === 'string') failedMutations.set(failureKey, message.error); else failedMutations.delete(failureKey);
-  } else return;
-  publishMutations();
-};
-if (typeof window !== 'undefined') {
-  if (typeof BroadcastChannel !== 'undefined') {
-    mutationChannel = new BroadcastChannel('orca.project-drafts');
-    mutationChannel.onmessage = (event) => { if (event.data?.writer !== writer) receiveMutation(event.data); };
-    window.addEventListener('pagehide', () => {
-      if (![...mutations.values()].some((entry) => entry.writer === writer)) mutationChannel?.postMessage({ writer, phase: 'bye' } satisfies MutationMessage);
-    });
-  }
-  void navigator.locks?.request(lockName(writer), () => new Promise<never>(() => {})).catch(() => {});
-}
+let pending = 0, mutationSnapshot: ProjectDraftMutationSnapshot = { pending: 0, error: null };
+const failures = new Map<string, string>();
+const publishMutations = () => { mutationSnapshot = { pending, error: failures.values().next().value ?? null }; };
 export const projectDraftMutationSnapshot = (): ProjectDraftMutationSnapshot => mutationSnapshot;
-export const subscribeProjectDraftMutations = (listener: () => void) => { mutationListeners.add(listener); return () => { mutationListeners.delete(listener); }; };
 export function beginProjectDraftMutation(id: string): (error?: unknown) => void {
-  const token = `${writer}.${++mutationSerial}`;
-  const announce = (message: MutationMessage) => {
-    receiveMutation(message);
-    if (mutationChannel) mutationChannel.postMessage(message);
-  };
-  announce({ writer, token, id, phase: 'begin' });
+  pending++; publishMutations();
   let ended = false;
   return (error) => {
     if (ended) return; ended = true;
-    announce({ writer, token, id, phase: 'end', ...(error === undefined ? {} : { error: error instanceof Error ? error.message : String(error) }) });
+    pending--;
+    if (error === undefined) failures.delete(id); else failures.set(id, error instanceof Error ? error.message : String(error));
+    publishMutations();
   };
 }
 async function mutate<T>(id: string, operation: () => Promise<T>): Promise<T> {
@@ -102,8 +47,8 @@ interface ServiceDraft { id: string; sequence: number; document: Omit<ProjectDra
 function validMetadata(meta: ProjectDraftMeta | undefined): meta is ProjectDraftMeta {
   return !!meta && typeof meta.id === 'string' && typeof meta.projectId === 'string' && typeof meta.owner === 'string' &&
     typeof meta.name === 'string' && Number.isSafeInteger(meta.sequence) && meta.sequence >= 0 &&
-    Number.isSafeInteger(meta.baseRevision) && meta.baseRevision >= 0 && Number.isFinite(meta.updatedAt) &&
-    Number.isSafeInteger(meta.objects) && meta.objects >= 0 && (meta.kind === 'dirty' || meta.kind === 'snapshot') &&
+    Number.isSafeInteger(meta.baseRevision) && meta.baseRevision >= 0 && Number.isFinite(meta.updatedAt) && (meta.editedAt === undefined || Number.isFinite(meta.editedAt)) &&
+    Number.isSafeInteger(meta.objects) && meta.objects >= 0 && meta.kind === 'dirty' &&
     (meta.failure === null || !!meta.failure && ['conflict', 'deleted', 'quota', 'unavailable', 'interrupted', 'decode'].includes(meta.failure.kind) &&
       typeof meta.failure.name === 'string' && typeof meta.failure.message === 'string' && meta.failure.projectId === meta.projectId && Number.isSafeInteger(meta.failure.expectedRevision));
 }
@@ -139,9 +84,9 @@ const serviceDraftStore: ProjectDraftStore = {
     if (!blob) throw new Error(`Oops! A 3D model file needed for recovery is missing: ${key}`);
     return blob;
   },
-  put: (draft) => mutate(draft.id, async () => {
+  put: (draft, supersedes = []) => mutate(draft.id, async () => {
     const { blobs: _blobs, ...document } = draft;
-    const payload = { sequence: draft.sequence, document, metadata: draftMetadata(draft) };
+    const payload = { sequence: draft.sequence, document, metadata: draftMetadata(draft), supersedes };
     const capture = await captureProjectWire(payload);
     const key = `${draft.id}/${draft.sequence}/${capture.digest}`;
     const preparation = prepareOnce(pendingDrafts, key, async () => projectWrite(await capture.draft(projectId())));
@@ -152,14 +97,14 @@ const serviceDraftStore: ProjectDraftStore = {
       if (!(blob instanceof Blob)) throw new Error(`Oops! A 3D model file in this draft is missing: ${key}`);
       await putAsset(key, blob);
     }
-    const ack = await serviceJson<{sequence:number}>(draftPath(draft.id), request);
+    const ack = await serviceJson<{sequence:number}>(draftPath(draft.id), request, false, 'project');
     if (!ack || ack.sequence !== draft.sequence) throw new Error('Oops! The server returned an unexpected response while saving your draft.');
     acknowledged.set(draft.id, Math.max(acknowledged.get(draft.id) ?? 0, ack.sequence));
     if (pendingDrafts.get(key) === preparation) pendingDrafts.delete(key);
   }),
   remove: (id, throughSequence) => mutate(id, async () => {
     if ((acknowledged.get(id) ?? 0) > throughSequence) return;
-    try { await serviceRequest(`${draftPath(id)}?throughSequence=${throughSequence}`, { method: 'DELETE' }, true); }
+    try { await (await serviceRequest(`${draftPath(id)}?throughSequence=${throughSequence}`, { method: 'DELETE' }, true))?.text(); }
     catch (error) {
       if ((error as {status?:number}).status === 409) return;
       throw error;

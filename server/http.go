@@ -21,18 +21,21 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 	"unicode"
+
+	"github.com/OrcaSlicer/OrcaSlicer/server/resolve"
 )
 
 type Server struct {
 	cfg           Config
 	jobs          *JobManager
-	presets       *PresetIndex
-	libraryV4     *libraryStore
+	catalog       *resolve.Catalog
+	library       *libraryStore
 	workspace     *workspaceStore
 	sends         *SendManager
 	blobs         *blobStore
@@ -42,8 +45,24 @@ type Server struct {
 	filamentSlots *filamentSlotStore
 }
 
-func NewServer(c Config, jobs *JobManager, presets *PresetIndex) http.Handler {
-	s := &Server{cfg: c, jobs: jobs, presets: presets, libraryV4: &libraryStore{dir: c.DataDir}, sends: NewSendManager(c.PrinterStore), filamentSlots: newFilamentSlotStore(filepath.Join(c.DataDir, "printers"))}
+func NewServer(c Config, jobs *JobManager, catalog *resolve.Catalog) http.Handler {
+	s := &Server{cfg: c, jobs: jobs, catalog: catalog, library: &libraryStore{dir: c.DataDir}, sends: NewSendManager(c.PrinterStore), filamentSlots: newFilamentSlotStore(filepath.Join(c.DataDir, "printers"))}
+	s.library.swap, s.library.catalog = catalog.Swap, catalog
+	s.library.extruders = func(variant string) int {
+		if v := catalog.VariantByID(variant); v != nil {
+			return v.Extruders
+		}
+		return 1
+	}
+	s.library.toolheads = func(vendor, model string, nozzle float64) int {
+		return s.library.extruders(catalog.Variant(model, nozzle))
+	}
+	if _, err := os.Stat(filepath.Join(c.DataDir, libraryFile)); err == nil {
+		if _, err := s.libraryDocument(); err != nil {
+			log.Printf("profile library: %v", err)
+		}
+		s.library.reportLoad()
+	}
 	s.reconcileStoredConnections("startup")
 	desktopReadyNonce := os.Getenv("ORCA_DESKTOP_READY_NONCE")
 	healthProbe := newEngineHealth(c)
@@ -77,6 +96,8 @@ func NewServer(c Config, jobs *JobManager, presets *PresetIndex) http.Handler {
 	mux.HandleFunc("GET /api/about", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, buildAbout(c))
 	})
+	mux.HandleFunc("POST /api/access", s.saveAccess)
+	mux.HandleFunc("DELETE /api/access", s.forgetAccess)
 	mux.HandleFunc("POST /api/jobs", s.createJob)
 	mux.HandleFunc("POST /api/patch-preview", s.createJob)
 	mux.HandleFunc("POST /api/top-surfaces", s.topSurfaces)
@@ -95,9 +116,10 @@ func NewServer(c Config, jobs *JobManager, presets *PresetIndex) http.Handler {
 	mux.HandleFunc("GET /api/jobs/{id}/exploded/{name}", s.exploded)
 	mux.HandleFunc("POST /api/jobs/{id}/send", s.sendJob)
 	mux.HandleFunc("GET /api/jobs/{id}/send", s.getSend)
+	mux.HandleFunc("GET /api/jobs/{id}/send/plan", s.getSendPlan)
 	mux.HandleFunc("POST /api/jobs/{id}/send/cancel", s.cancelSend)
 	mux.HandleFunc("GET /api/printer-connections", s.listConnections)
-	mux.HandleFunc("GET /api/printer-connections/events", s.connectionEvents)
+	mux.HandleFunc("GET /api/events", s.liveEvents)
 	mux.HandleFunc("GET /api/printer-connections/{printer}/camera", s.printerCameras)
 	mux.HandleFunc("GET /api/printer-connections/{printer}/job-thumbnail", s.printerJobThumbnail)
 	mux.HandleFunc("GET /api/printer-connections/{printer}/camera/{camera}", s.printerCamera)
@@ -108,21 +130,17 @@ func NewServer(c Config, jobs *JobManager, presets *PresetIndex) http.Handler {
 	mux.HandleFunc("POST /api/printer-connections/{printer}/adopt", s.adoptConnection)
 	mux.HandleFunc("POST /api/printer-connections/{printer}/legacy", s.importLegacyConnection)
 	mux.HandleFunc("POST /api/printer-connections/{printer}/ams", s.amsConnection)
+	mux.HandleFunc("POST /api/printer-connections/{printer}/tray", s.setTray)
 	mux.HandleFunc("POST /api/printer-connections/{printer}/control", s.controlConnection)
 	mux.HandleFunc("POST /api/printer-connections/{printer}/device", s.deviceControl)
 	mux.HandleFunc("GET /api/printer-sends", s.listSends)
 	s.printerSlotRoutes(mux)
-	mux.HandleFunc("GET /api/presets", s.listPresets)
-	s.printerCatalogRoutes(mux)
+	s.catalogRoutes(mux)
 	s.updateRoutes(mux)
-	mux.HandleFunc("GET /api/filament-catalog", s.filamentCatalog)
 	s.libraryRoutes(mux)
+	s.libraryIORoutes(mux)
 	mux.HandleFunc("POST /api/resolve", s.postResolve)
-	options := c.Options
-	if options == nil {
-		options = cacheResponse(optionData)
-	}
-	registerOptions(mux, options, devResetEnabled())
+	registerOptions(mux, c.Options, s.catalog, devResetEnabled())
 	if devResetEnabled() {
 		mux.HandleFunc("POST /api/dev/reset", s.devReset)
 	}
@@ -130,8 +148,10 @@ func NewServer(c Config, jobs *JobManager, presets *PresetIndex) http.Handler {
 	mux.HandleFunc("GET /api/emboss-fonts", s.embossFonts)
 	mux.HandleFunc("GET /api/user-heads", s.listUserHeads)
 	mux.HandleFunc("POST /api/user-heads", s.saveUserHead)
-	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { fail(w, 404, "Unknown API endpoint.") })
-	mux.Handle("/", spaFiles(c.StaticDir, c.Resources))
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { fail(w, 404, "unknown_api_endpoint") })
+	mux.HandleFunc("GET /api/boot", s.getBoot)
+	mux.HandleFunc("POST /api/slot-offer", s.postSlotOffer)
+	mux.Handle("/", spaFiles(c.StaticDir, c.Resources, s.bootScript))
 	if c.Metrics {
 		mux.HandleFunc("GET /metrics", s.metrics)
 	}
@@ -143,27 +163,49 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(value)
 }
-func fail(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]string{"error": message})
+
+func jobUsedSlots(r *http.Request, slots int, sent []int) ([]int, error) {
+	if plate := r.FormValue("plate"); plate != "" {
+		used, err := resolve.PlateUsedSlots([]byte(plate), slots)
+		if err != nil {
+			return nil, errors.New("The plate needs at least one model on it.")
+		}
+		return used, nil
+	}
+	var files []struct {
+		Name string `json:"name"`
+	}
+	json.Unmarshal([]byte(r.FormValue("files")), &files)
+	if len(files) > 0 && strings.EqualFold(filepath.Ext(files[0].Name), ".3mf") {
+		if len(sent) > 0 && !slices.ContainsFunc(sent, func(n int) bool { return n < 1 || n > slots }) {
+			return sent, nil
+		}
+		all := make([]int, slots)
+		for i := range all {
+			all[i] = i + 1
+		}
+		return all, nil
+	}
+	return []int{1}, nil
 }
 
-func (s *Server) listPresets(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	vendor, names := q.Get("vendor"), q["name"]
-	if vendor == "" || len(names) == 0 {
-		fail(w, 400, "presets are read by vendor and name=…")
-		return
+func (s *Server) jobPlateSettings(r *http.Request) []byte {
+	if plate := r.FormValue("plate"); plate != "" {
+		return []byte(plate)
 	}
-	v, err := s.presets.namesResponse(vendor, names)
-	if errors.Is(err, os.ErrNotExist) {
-		fail(w, 404, "Unrecognized printer brand.")
-		return
+	var files []struct {
+		Name   string `json:"name"`
+		SHA256 string `json:"sha256"`
 	}
+	json.Unmarshal([]byte(r.FormValue("files")), &files)
+	if len(files) == 0 || !strings.EqualFold(filepath.Ext(files[0].Name), ".3mf") || !blobDigest.MatchString(files[0].SHA256) {
+		return nil
+	}
+	data, err := os.ReadFile(s.blobs.path(files[0].SHA256))
 	if err != nil {
-		fail(w, 500, err.Error())
-		return
+		return nil
 	}
-	v.serve(w, r, "presets.json", "application/json", catalogCache, time.Time{})
+	return archivePlate(data)
 }
 
 func presetDisplayName(name string) string {
@@ -201,12 +243,12 @@ func (b *uploadBody) Read(p []byte) (int, error) {
 func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	key, err := submissionKey(r.URL.Path, r.Header.Get("Idempotency-Key"))
 	if err != nil {
-		fail(w, 400, err.Error())
+		fail(w, 400, "http_invalid", err.Error())
 		return
 	}
 	existing, finish, err := s.jobs.reserve(r.Context(), key)
 	if err != nil {
-		fail(w, 408, err.Error())
+		fail(w, 408, "http_timeout", err.Error())
 		return
 	}
 	if existing != nil {
@@ -234,13 +276,13 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	if r.ContentLength > s.cfg.MaxUploadSize {
-		fail(w, http.StatusRequestEntityTooLarge, "Oops! That upload is larger than the server's maximum file size limit.")
+		fail(w, http.StatusRequestEntityTooLarge, "upload_larger_than_servers")
 		return
 	}
 	controller := http.NewResponseController(w)
 	deadline := time.Now().Add(uploadIdleTimeout)
 	if err := controller.SetReadDeadline(deadline); err != nil {
-		fail(w, 500, "Couldn't set an upload timeout on the server.")
+		fail(w, 500, "couldnt_set_upload_timeout")
 		return
 	}
 	defer controller.SetReadDeadline(time.Time{})
@@ -260,70 +302,73 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		if errors.As(err, &timeout) && timeout.Timeout() {
 			status = http.StatusRequestTimeout
 			w.Header().Set("Connection", "close")
-			fail(w, status, "Oops! The upload took too long and timed out.")
+			fail(w, status, "upload_took_too_long")
 			return
 		}
-		fail(w, status, "Invalid file upload: "+err.Error())
+		fail(w, status, "invalid_file_upload", err.Error())
 		return
 	}
-	req := JobRequest{Orient: r.FormValue("operation") == "orient" || r.FormValue("operation") == "orient-scores", Vendor: r.FormValue("vendor"), Printer: r.FormValue("printer"), Process: r.FormValue("process"), Filaments: r.MultipartForm.Value["filament[]"], Output: r.FormValue("output"), Filename: r.FormValue("filename")}
+	req := JobRequest{Orient: r.FormValue("operation") == "orient" || r.FormValue("operation") == "orient-scores", Output: r.FormValue("output"), Filename: r.FormValue("filename")}
 	if v := r.Header.Get(sessionHeader); len(v) <= 256 {
 		req.Session = v
 	}
 	if v := r.Header.Get("X-Slice-Group"); len(v) <= 256 {
 		req.SliceGroup = v
 	}
-	var resolved *sliceConfig
-	if raw := r.FormValue("library"); raw != "" {
-		var in resolveRequest
-		profiles, err := s.libraryV4Profiles()
+	var resolved *resolve.SliceConfig
+	if raw := r.FormValue("library"); raw == "" {
+		fail(w, 400, "job_names_library_printer")
+		return
+	} else {
+		var in resolve.Request
+		lib, err := s.libraryDocument()
 		if err == nil {
 			err = json.Unmarshal([]byte(raw), &in)
 		}
 		if err == nil {
-			resolved, err = s.resolveProfiles(profiles, in)
+			in.UsedSlots, err = jobUsedSlots(r, len(in.Filaments), in.UsedSlots)
+			in.Saving = r.FormValue("output") == "3mf" && r.FormValue("operation") == ""
+			in.PlateNonplanar = resolve.PlateNonplanar(s.jobPlateSettings(r))
+		}
+		meshing := len(in.Filaments) == 0 && r.FormValue("output") == "3mf" && r.FormValue("plate") == "" && r.FormValue("operation") == ""
+		if err == nil && meshing {
+			resolved, err = s.catalog.Meshing(lib, in)
+		} else if err == nil {
+			resolved, err = s.catalog.Job(lib, in)
 		}
 		if err != nil {
-			libraryFailure(w, 422, "resolve_failed", err.Error(), "choose_profiles", 0)
+			code := "resolve_failed"
+			if resolve.ErrorCode(err) == "slot_unpicked" {
+				code = "slot_unpicked"
+			}
+			libraryFailure(w, 422, code, err.Error(), "choose_profiles", 0)
 			return
 		}
-		req.Vendor, req.Printer, req.Process, req.Filaments = resolved.Engine.Vendor, resolved.Engine.Printer, resolved.Engine.Process, resolved.Engine.Filaments
+		req.Printer, req.Process, req.Filaments = resolved.Engine.Printer, resolved.Engine.Process, resolved.Engine.Filaments
 		req.Library = &in
 	}
 	switch op := r.FormValue("operation"); op {
 	case "", "orient":
 	case "orient-scores":
-		if !s.cfg.Features.OrientScores {
-			fail(w, 400, "Auto-orient requires a slicing engine with --orient-scores support.")
-			return
-		}
 		req.OrientScores = true
 	case "arrange":
-		if !s.cfg.Features.Arrange {
-			fail(w, 400, "Auto-arrange requires a slicing engine with --arrange-only support.")
-			return
-		}
 		req.Arrange, req.ArrangeNoRotation = true, r.FormValue("arrange_rotation") == "0"
 		if raw := r.FormValue("arrange_spacing"); raw != "" {
 			v, err := strconv.ParseFloat(raw, 64)
 			if err != nil || v < 0 || v > 100 || math.IsNaN(v) {
-				fail(w, 400, "Object spacing must be between 0 and 100 mm.")
+				fail(w, 400, "object_spacing_must_between")
 				return
 			}
 			req.ArrangeSpacing = v
 		}
 		if raw := r.FormValue("arrange_multi_materials"); raw != "" {
-			if !s.cfg.Features.ArrangeMaterials || raw != "0" && raw != "1" {
-				fail(w, 400, "arrange_multi_materials must be 0 or 1 and requires a tool with --arrange-multi-materials")
+			if raw != "0" && raw != "1" {
+				fail(w, 400, "arrange_multi_materials_must")
 				return
 			}
 			req.ArrangeMaterials = raw
 		}
 	case "repair", "simplify":
-		if op := r.FormValue("operation"); op == "repair" && !s.cfg.Features.MeshRepair || op == "simplify" && !s.cfg.Features.MeshSimplify {
-			fail(w, 400, "Fix Model and Simplify Model require a slicing engine with mesh repair and simplification support.")
-			return
-		}
 		req.MeshOp = r.FormValue("operation")
 		if req.MeshOp == "simplify" {
 			ratio, triangles, maxErr := r.FormValue("simplify_ratio"), r.FormValue("simplify_triangles"), r.FormValue("simplify_max_error")
@@ -331,52 +376,40 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 			n, errT := strconv.Atoi(triangles)
 			e, errE := strconv.ParseFloat(maxErr, 64)
 			switch {
-			case maxErr != "" && ratio == "" && triangles == "" && s.cfg.Features.MeshSimplifyError && errE == nil && e > 0 && e <= 10:
+			case maxErr != "" && ratio == "" && triangles == "" && errE == nil && e > 0 && e <= 10:
 				req.SimplifyMaxError = e
 			case ratio != "" && triangles == "" && errR == nil && v > 0 && v <= 1:
 				req.SimplifyRatio = v
 			case triangles != "" && ratio == "" && errT == nil && n > 0:
 				req.SimplifyTriangles = n
 			default:
-				fail(w, 400, "simplify needs simplify_ratio in (0, 1], a positive simplify_triangles, or simplify_max_error in (0, 10] with a tool that takes --max-error")
+				fail(w, 400, "simplify_needs_simplify_ratio")
 				return
 			}
 		}
 	case "export":
 		format := r.FormValue("export_format")
-		if format == "drc" && !s.cfg.Features.ExportDRC || format == "generic3mf" && !s.cfg.Features.ExportGeneric3MF {
-			fail(w, 400, "This export format requires a slicing engine with --export-drc / --export-3mf-generic support.")
-			return
-		}
 		if format != "drc" && format != "generic3mf" {
-			fail(w, 400, "export_format must be generic3mf or drc")
+			fail(w, 400, "export_format_must_generic3mf")
 			return
 		}
 		req.MeshOp, req.ExportFormat = "export", format
 		if raw := r.FormValue("draco_bits"); raw != "" {
 			n, err := strconv.Atoi(raw)
 			if err != nil || n < 0 || n > 30 || format != "drc" {
-				fail(w, 400, "draco_bits must be 0 to 30, for drc only")
+				fail(w, 400, "draco_bits_must_drc")
 				return
 			}
 			req.DracoBits = n
 		}
 	case "boolean":
 		op := r.FormValue("boolean_op")
-		if !s.cfg.Features.MeshBoolean {
-			fail(w, 400, "Mesh Boolean requires a slicing engine with --mesh-boolean support.")
-			return
-		}
 		if op != "union" && op != "difference" && op != "intersection" {
-			fail(w, 400, "boolean_op must be union, difference or intersection")
+			fail(w, 400, "boolean_op_must_union")
 			return
 		}
 		req.MeshOp, req.BooleanOp = "boolean", op
 	case "svg":
-		if !s.cfg.Features.EmbossSVG {
-			fail(w, 400, "SVG embossing requires a slicing engine with --emboss-svg support.")
-			return
-		}
 		args := []string{}
 		for _, f := range []struct {
 			key, flag string
@@ -388,75 +421,57 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 			}
 			v, err := strconv.ParseFloat(raw, 64)
 			if err != nil || math.IsNaN(v) || v < f.lo || v > f.hi {
-				fail(w, 400, fmt.Sprintf("%s must be %g to %g", f.key, f.lo, f.hi))
+				fail(w, 400, "must_v_v", f.key, f.lo, f.hi)
 				return
 			}
 			args = append(args, f.flag, strconv.FormatFloat(v, 'f', -1, 64))
 		}
 		req.MeshOp, req.Text = "svg", args
 		if r.FormValue("use_surface") == "1" {
-			features := s.cfg.Features
-			features.EmbossSurface = features.EmbossSVGSurface
-			surface, err := surfaceArgs(r, features)
+			surface, err := surfaceArgs(r)
 			if err != nil {
-				fail(w, 400, err.Error())
+				fail(w, 400, "http_invalid", err.Error())
 				return
 			}
 			req.TextSurface = surface
 		}
 	case "text":
-		if !s.cfg.Features.EmbossText {
-			fail(w, 400, "Text embossing requires a slicing engine with --emboss-text support.")
-			return
-		}
 		args, err := textArgs(r)
 		if err != nil {
-			fail(w, 400, err.Error())
+			fail(w, 400, "http_invalid", err.Error())
 			return
 		}
 		req.MeshOp, req.Text = "text", args
 		if r.FormValue("use_surface") == "1" {
-			if req.TextSurface, err = surfaceArgs(r, s.cfg.Features); err != nil {
-				fail(w, 400, err.Error())
+			if req.TextSurface, err = surfaceArgs(r); err != nil {
+				fail(w, 400, "http_invalid", err.Error())
 				return
 			}
 		}
 	case "explode":
-		if !s.cfg.Features.Explode {
-			fail(w, 400, "Opening a 3MF project as editable objects requires a slicing engine with --explode-3mf support.")
-			return
-		}
 		req.Explode = true
 	case "wipe-tower":
-		if !s.cfg.Features.WipeTower {
-			fail(w, 400, "Estimating the prime tower requires a slicing engine with --wipe-tower-only support.")
-			return
-		}
 		req.WipeTower = true
 	case "cut":
-		if !s.cfg.Features.Cut {
-			fail(w, 400, "Cutting models requires a slicing engine with --cut-only support.")
-			return
-		}
 		req.Cut, req.CutKeep, req.CutPlaceLower = r.FormValue("cut"), r.FormValue("cut_keep"), r.FormValue("cut_place_lower") == "1"
 		if req.CutKeep == "" {
 			req.CutKeep = "both"
 		}
 		if !validCutPlane(req.Cut) || (req.CutKeep != "upper" && req.CutKeep != "lower" && req.CutKeep != "both") {
-			fail(w, 400, "cut needs a plane Z or X,Y,Z,NX,NY,NZ with a nonzero normal and cut_keep upper, lower or both")
+			fail(w, 400, "cut_needs_plane_z")
 			return
 		}
 		req.CutConnectors, req.CutDovetail = r.FormValue("cut_connectors"), r.FormValue("cut_dovetail")
-		if msg := cutJoinError(req, s.cfg.Features.CutConnectors); msg != "" {
-			fail(w, 400, msg)
+		if msg := cutJoinError(req); msg != "" {
+			fail(w, 400, "http_invalid", msg)
 			return
 		}
 	default:
-		fail(w, 400, "Unrecognized operation.")
+		fail(w, 400, "unrecognized_operation")
 		return
 	}
 	if strings.ContainsAny(req.Filename, "/\\\r\n") || len(req.Filename) > 240 || strings.IndexFunc(req.Filename, unicode.IsControl) >= 0 || req.Filename == "." || req.Filename == ".." {
-		fail(w, 400, "filename must be a basename of at most 240 bytes")
+		fail(w, 400, "filename_must_basename_most")
 		return
 	}
 	if req.Output == "" {
@@ -467,83 +482,50 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	case "low", "batch":
 		req.Priority = p
 	default:
-		fail(w, 400, "priority must be interactive/normal or batch/low")
+		fail(w, 400, "priority_must_interactive_normal")
 		return
 	}
 	if r.FormValue("force_planar") != "" {
-		if !s.cfg.Features.ForcePlanar {
-			fail(w, 400, "Forcing flat layers requires a slicing engine with --force-planar support.")
-			return
-		}
 		req.ForcePlanar = true
 	}
 	if r.FormValue("floating") != "" {
-		if !s.cfg.Features.Floating {
-			fail(w, 400, "Floating overhang detection requires a slicing engine with --floating support.")
-			return
-		}
 		req.Floating = true
 	}
 	if r.FormValue("allow_mixed_temperatures") != "" {
-		if !s.cfg.Features.MixedTemperatures {
-			fail(w, 400, "Allowing mixed filament temperatures requires a slicing engine with --allow-mixed-temperatures support.")
-			return
-		}
 		req.AllowMixedTemperatures = true
 	}
 	if r.URL.Path == "/api/patch-preview" {
-		if !s.cfg.Features.PatchPreview {
-			fail(w, 501, "This slicing engine build doesn't support curved patch previews.")
-			return
-		}
 		budget, err := strconv.ParseFloat(cmp.Or(r.FormValue("budget"), "2"), 64)
 		if err != nil || !(budget >= 0.1 && budget <= 60) {
-			fail(w, 400, "budget must be 0.1 to 60 seconds")
+			fail(w, 400, "budget_must_seconds")
 			return
 		}
 		req.Output, req.Priority, req.PreviewBudget = "patch-preview", "low", budget
 	} else if r.URL.Path == "/api/top-surfaces/plan" {
-		if !s.cfg.Features.PlanTops {
-			fail(w, 501, "This slicing engine build doesn't support curved-top previews.")
-			return
-		}
 		req.Output, req.Priority = "plan-tops", "low"
 	} else if req.Output != "gcode" && req.Output != "gcode.3mf" && req.Output != "3mf" {
-		fail(w, 400, "output must be gcode, gcode.3mf or 3mf")
+		fail(w, 400, "output_must_gcode_gcode")
 		return
 	}
-	vendor, problem := s.resolveJobProfiles(&req)
+	presets, problem := s.resolveJobProfiles(&req)
 	if problem != nil {
 		problem.write(w)
 		return
 	}
-	if raw := r.FormValue("overrides"); resolved != nil {
-		values := map[string]json.RawMessage{}
-		for k, v := range resolved.Config {
-			if (resolved.Sources[k] != "catalog" || resolved.engineOverrides[k]) && !hiddenSetting.MatchString(k) {
-				values[k] = v
-			}
-		}
-		encoded, _ := json.Marshal(values)
-		if req.Overrides, err = overrides(string(encoded)); err != nil {
-			fail(w, 400, err.Error())
-			return
-		}
-	} else if raw != "" {
-		req.Overrides, err = overrides(raw)
-		if err != nil {
-			fail(w, 400, err.Error())
-			return
-		}
+	values := resolved.EngineValues()
+	encoded, _ := json.Marshal(values)
+	if req.Overrides, err = overrides(string(encoded)); err != nil {
+		fail(w, 400, "http_invalid", err.Error())
+		return
 	}
 	if raw := r.FormValue("events"); raw != "" {
 		if json.Unmarshal([]byte(raw), &req.Events) != nil {
-			fail(w, 400, "events must be an array of strings")
+			fail(w, 400, "events_must_array_strings")
 			return
 		}
 	}
 	if len(req.Events) > 0 {
-		rawHeight := vendor.machines[req.Printer].Config["printable_height"]
+		rawHeight := presets.machine.Config["printable_height"]
 		heightText := stringValue(rawHeight)
 		if heightText == "" {
 			heightText = string(rawHeight)
@@ -553,7 +535,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 			text, _, hasType := strings.Cut(event, ":")
 			height, err := strconv.ParseFloat(text, 64)
 			if err != nil || !hasType || math.IsNaN(height) || math.IsInf(height, 0) || height <= 0 || !(height < maxHeight) {
-				fail(w, 400, "event height must be finite, positive and below printable_height")
+				fail(w, 400, "event_height_must_finite")
 				return
 			}
 		}
@@ -563,22 +545,20 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		SHA256 string `json:"sha256"`
 	}
 	if raw := r.FormValue("files"); raw != "" && json.Unmarshal([]byte(raw), &files) != nil {
-		fail(w, 400, "files must be an array of {name, sha256}")
+		fail(w, 400, "files_must_array_name")
 		return
 	}
 	if kind := r.FormValue("calib"); kind != "" {
 		params := r.FormValue("calib_params")
 		switch {
-		case !s.cfg.Features.Calib:
-			fail(w, 400, "Calibration generators require a slicing engine with --calib support.")
 		case !calibKinds[kind]:
-			fail(w, 400, "Unrecognized calibration test type.")
+			fail(w, 400, "unrecognized_calibration_test_type")
 		case !calibParams.MatchString(params):
-			fail(w, 400, "calib_params must be key=value pairs separated by commas")
+			fail(w, 400, "calib_params_must_key")
 		case !calibHead.MatchString(r.FormValue("calib_head")):
-			fail(w, 400, "calib_head must be a head library id")
+			fail(w, 400, "calib_head_must_head")
 		case len(files) > 0 || r.FormValue("plate") != "" || req.Output == "3mf" || req.Orient:
-			fail(w, 400, "a calibration takes no files, plate or project output")
+			fail(w, 400, "calibration_takes_no_files")
 		default:
 			req.Calib, req.CalibParams, req.CalibHead = kind, params, r.FormValue("calib_head")
 			s.startJob(w, j, req, &started)
@@ -587,14 +567,14 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.MeshOp == "text" && len(req.TextSurface) == 0 {
 		if len(files) > 0 || r.FormValue("plate") != "" || req.Output == "3mf" {
-			fail(w, 400, "text takes no files, plate or project output")
+			fail(w, 400, "text_takes_no_files")
 			return
 		}
 		s.startJob(w, j, req, &started)
 		return
 	}
 	if len(files) == 0 {
-		fail(w, 400, "files is required")
+		fail(w, 400, "files_required")
 		return
 	}
 	names := map[string]bool{}
@@ -602,13 +582,13 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	for _, f := range files {
 		name := f.Name
 		ext := strings.ToLower(filepath.Ext(name))
-		other := s.cfg.Features.Step && (ext == ".step" || ext == ".stp") || ext == ".drc" || req.MeshOp == "svg" && ext == ".svg"
+		other := ext == ".step" || ext == ".stp" || ext == ".drc" || req.MeshOp == "svg" && ext == ".svg"
 		if name == "" || len(name) > 240 || strings.IndexFunc(name, unicode.IsControl) >= 0 || strings.ContainsAny(name, "/\\") || name != filepath.Base(name) || name == "." || name == ".." || (ext != ".stl" && ext != ".obj" && ext != ".3mf" && !other) || names[name] {
-			fail(w, 400, "Each uploaded STL, OBJ, STEP, DRC, SVG, or 3MF file needs a unique file name.")
+			fail(w, 400, "each_uploaded_stl_obj")
 			return
 		}
 		if !blobDigest.MatchString(f.SHA256) {
-			fail(w, 400, "each file needs its lowercase hex sha256")
+			fail(w, 400, "each_file_needs_lowercase")
 			return
 		}
 		names[name] = true
@@ -616,7 +596,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		if err := s.blobs.link(f.SHA256, filepath.Join(j.Dir, "input", name)); errors.Is(err, fs.ErrNotExist) {
 			missing = append(missing, f.SHA256)
 		} else if err != nil {
-			fail(w, 500, err.Error())
+			fail(w, 500, "http_internal", err.Error())
 			return
 		}
 	}
@@ -629,7 +609,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		var plate map[string]json.RawMessage
 		var objects []map[string]json.RawMessage
 		if json.Unmarshal([]byte(raw), &plate) != nil || json.Unmarshal(plate["objects"], &objects) != nil || len(objects) == 0 {
-			fail(w, 400, "The plate needs at least one model on it.")
+			fail(w, 400, "plate_needs_least_one")
 			return
 		}
 		for _, obj := range objects {
@@ -640,153 +620,115 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 			}
 			if obj["volumes"] != nil && json.Unmarshal(obj["volumes"], &volumes) != nil ||
 				(obj["file"] != nil || len(volumes) == 0) && (json.Unmarshal(obj["file"], &file) != nil || !names[file]) {
-				fail(w, 400, "Every object on the plate must match an uploaded model file.")
-				return
-			}
-			if len(volumes) > 0 && !s.cfg.Features.Volumes {
-				fail(w, 400, "Multi-part objects and modifiers require a slicing engine with plate-JSON volume support.")
-				return
-			}
-			for _, v := range volumes {
-				if (v.Type == "seam" || strings.HasPrefix(v.Type, "precise_seam_")) && !s.cfg.Features.SeamParts {
-					fail(w, 400, "Precise seam modifiers require a slicing engine with plate-JSON seam support.")
-					return
-				}
-			}
-			if obj["paint"] != nil && !s.cfg.Features.Paint {
-				fail(w, 400, "Painted supports, seams, and colors require a slicing engine with plate-JSON paint support.")
-				return
-			}
-			if obj["layer_height_profile"] != nil && !s.cfg.Features.LayerProfile {
-				fail(w, 400, "Variable layer height requires a slicing engine with layer-height profile support.")
-				return
-			}
-			if obj["ranges"] != nil && !s.cfg.Features.Ranges {
-				fail(w, 400, "Height-range modifiers require a slicing engine with plate-JSON range support.")
-				return
-			}
-			if obj["brim_ears"] != nil && !s.cfg.Features.BrimEars {
-				fail(w, 400, "Painted brim ears require a slicing engine with plate-JSON brim_ears support.")
+				fail(w, 400, "every_object_plate_must")
 				return
 			}
 			for _, v := range volumes {
 				if !names[v.File] {
-					fail(w, 400, "Every part volume on the plate must match an uploaded model file.")
+					fail(w, 400, "every_part_volume_plate")
 					return
 				}
 			}
 		}
-		if err := validatePlatePlacement([]byte(raw), req.Output == "3mf", s.cfg.Features.PlatePlacement, s.cfg.Features.MeshPlates); err != nil {
-			fail(w, 400, err.Error())
+		if err := validatePlatePlacement([]byte(raw), req.Output == "3mf"); err != nil {
+			fail(w, 400, "http_invalid", err.Error())
 			return
 		}
 		if err := os.WriteFile(filepath.Join(j.Dir, "input", "plate.json"), []byte(raw), 0600); err != nil {
-			fail(w, 500, err.Error())
+			fail(w, 500, "http_internal", err.Error())
 			return
 		}
 		req.Plate = true
 	} else if raw := r.FormValue("project_edits"); raw != "" {
-		if !s.cfg.Features.Edit {
-			fail(w, 400, "Editing an imported 3MF project requires a slicing engine with --edit support.")
-			return
-		}
-		if err := writeProjectEdits(filepath.Join(j.Dir, "input"), req.Files, names, raw, s.cfg.Features.ProjectVolumes, s.cfg.Features.ProjectPaint); err != nil {
-			fail(w, 400, err.Error())
+		if err := writeProjectEdits(filepath.Join(j.Dir, "input"), req.Files, names, raw); err != nil {
+			fail(w, 400, "http_invalid", err.Error())
 			return
 		}
 		req.Edits = true
 	} else if len(files) != 1 && req.MeshOp != "boolean" && req.MeshOp != "svg" {
-		fail(w, 400, "multiple uploads require plate JSON")
+		fail(w, 400, "multiple_uploads_require_plate")
 		return
 	}
 	if raw := r.FormValue("plate_index"); raw != "" {
 		req.PlateIndex, err = strconv.Atoi(raw)
 		if err != nil || req.PlateIndex < 1 || req.Plate || req.Orient || len(req.Files) != 1 && !req.Edits || !strings.EqualFold(filepath.Ext(req.Files[0]), ".3mf") {
-			fail(w, 400, "plate_index requires a positive 1-based index and one 3MF project")
-			return
-		}
-		if req.Output != "3mf" && !s.cfg.Features.PlateIndex {
-			fail(w, 400, "Slicing a specific plate from a multi-plate project requires an updated slicing engine with --plate-index support.")
+			fail(w, 400, "plate_index_requires_positive")
 			return
 		}
 	}
 	if req.Explode && (req.Plate || len(req.Files) != 1 || !strings.EqualFold(filepath.Ext(req.Files[0]), ".3mf") || req.PlateIndex > 0) {
-		fail(w, 400, "explode requires one 3MF project")
+		fail(w, 400, "explode_requires_one_3mf")
 		return
 	}
 	if !req.Plate && !req.Explode && strings.EqualFold(filepath.Ext(req.Files[0]), ".3mf") {
 		layout, layoutErr := readProjectLayout(filepath.Join(j.Dir, "input", req.Files[0]))
 		if layoutErr != nil {
-			fail(w, 400, layoutErr.Error())
+			fail(w, 400, "http_invalid", layoutErr.Error())
 			return
 		}
 		if req.PlateIndex > 0 && req.Output != "3mf" {
 			if layout.Width <= 0 || layout.Depth <= 0 {
-				fail(w, 400, "The selected project doesn't define a printable bed area.")
+				fail(w, 400, "selected_project_doesnt_define")
 				return
 			}
 			for _, plate := range layout.Membership {
 				if plate == 0 {
-					fail(w, 400, "Couldn't match every object in the project to a build plate.")
+					fail(w, 400, "couldnt_match_every_object")
 					return
 				}
 			}
 		}
 		req.SourcePlates = layout.Plates
 		if req.PlateIndex > 0 && !layout.hasPlate(req.PlateIndex) {
-			fail(w, 400, "That plate number doesn't exist in the saved project.")
+			fail(w, 400, "plate_number_doesnt_exist")
 			return
 		}
 		if req.Output != "3mf" && len(layout.Plates) > 1 && req.PlateIndex == 0 {
-			fail(w, 400, "Multi-plate project: pick a plate using plate_index (requires a slicing engine with --plate-index support).")
+			fail(w, 400, "multi_plate_project_pick")
 			return
 		}
 	}
-	if req.Output == "3mf" && !req.Plate && strings.EqualFold(filepath.Ext(req.Files[0]), ".3mf") && !s.cfg.Features.PlatePlacement {
-		fail(w, 400, "Saving edits to an imported 3MF project requires the updated R238 slicing engine.")
-		return
-	}
 	if raw := r.FormValue("project_instances"); raw != "" {
 		if req.Plate || len(req.Files) != 1 && !req.Edits || !strings.EqualFold(filepath.Ext(req.Files[0]), ".3mf") {
-			fail(w, 400, "project_instances requires one 3MF project")
+			fail(w, 400, "project_instances_requires_one")
 			return
 		}
 		var instances []projectInstance
 		if json.Unmarshal([]byte(raw), &instances) != nil || len(instances) == 0 {
-			fail(w, 400, "project_instances needs a non-empty array")
+			fail(w, 400, "project_instances_needs_non")
 			return
 		}
 		if err := projectTransformsWorkaround(filepath.Join(j.Dir, "input", req.Files[0]), instances); err != nil {
-			fail(w, 400, err.Error())
+			fail(w, 400, "http_invalid", err.Error())
 			return
 		}
 	}
 	if raw := r.FormValue("project_settings"); raw != "" {
 		if req.Plate || len(req.Files) != 1 && !req.Edits || !strings.EqualFold(filepath.Ext(req.Files[0]), ".3mf") {
-			fail(w, 400, "project_settings requires one 3MF project")
+			fail(w, 400, "project_settings_requires_one")
 			return
 		}
 		settings, err := overrides(raw)
 		if err != nil {
-			fail(w, 400, "project_settings: "+err.Error())
+			fail(w, 400, "project_settings", err.Error())
 			return
 		}
 		if err := patchProjectSettings(filepath.Join(j.Dir, "input", req.Files[0]), settings); err != nil {
-			fail(w, 400, err.Error())
+			fail(w, 400, "http_invalid", err.Error())
 			return
 		}
 		req.ProjectSettings = settings
 	}
 	if !req.Plate && strings.EqualFold(filepath.Ext(req.Files[0]), ".3mf") {
-		machine := vendor.machines[req.Printer]
+		machine := presets.machine
 		selected := make([][2]string, 0, len(machine.Config)+len(req.Overrides))
 		for key, raw := range machine.Config {
-			if configKinds[key] == "" || hiddenSetting.MatchString(key) {
+			if resolve.OptionKind(key) == "" || resolve.HiddenSetting(key) {
 				continue
 			}
 			value, err := configValue(key, raw)
 			if err != nil {
-				fail(w, 500, "invalid system printer setting: "+key)
+				fail(w, 500, "invalid_system_printer_setting", key)
 				return
 			}
 			selected = append(selected, [2]string{key, value})
@@ -796,28 +738,33 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	if req.MeshOp == "svg" {
 		want := map[bool]int{true: 2, false: 1}[len(req.TextSurface) > 0]
 		if req.Output != "gcode" || req.Plate || len(req.Files) != want || !strings.EqualFold(filepath.Ext(req.Files[0]), ".svg") || want == 2 && !allSTL(req.Files[1:]) {
-			fail(w, 400, "svg takes the SVG, and with use_surface one STL target, without plate JSON or project output")
+			fail(w, 400, "svg_takes_svg_use")
 			return
 		}
 	} else if want := map[bool]int{true: 2, false: 1}[req.MeshOp == "boolean"]; req.MeshOp != "" && (req.Output != "gcode" || req.Plate || len(req.Files) != want || !allSTL(req.Files) && !(req.MeshOp == "export" && strings.EqualFold(filepath.Ext(req.Files[0]), ".3mf"))) {
-		fail(w, 400, fmt.Sprintf("this mesh operation takes %d STL without plate JSON or project output", want))
+		fail(w, 400, "mesh_operation_takes_v", want)
 		return
 	}
 	if req.Cut != "" && (req.Output != "gcode" || req.Plate || len(req.Files) != 1 || !strings.EqualFold(filepath.Ext(req.Files[0]), ".stl")) {
-		fail(w, 400, "cut requires one STL without plate JSON or project output")
+		fail(w, 400, "cut_requires_one_stl")
 		return
 	}
 	if (req.Arrange || req.WipeTower) && (!req.Plate || req.Output != "gcode") {
-		fail(w, 400, "arrange and the prime tower estimate require plate JSON")
+		fail(w, 400, "arrange_prime_tower_estimate")
 		return
 	}
 	if req.Orient && (req.Output == "3mf" || req.Plate || len(req.Files) != 1 || !strings.EqualFold(filepath.Ext(req.Files[0]), ".stl")) {
-		fail(w, 400, "orient requires one STL without plate JSON or project output")
+		fail(w, 400, "orient_requires_one_stl")
 		return
 	}
 	if !req.Orient && !req.Arrange && !req.WipeTower && !req.Explode && req.Cut == "" && req.MeshOp == "" && req.Output != "3mf" && !overlayOutput(req.Output) {
-		if err := validatePlateBounds(filepath.Join(j.Dir, "input"), req, vendor.machines[req.Printer], rawPlate); err != nil {
-			fail(w, 400, err.Error())
+		if err := validatePlateBounds(filepath.Join(j.Dir, "input"), req, presets.machine, rawPlate); err != nil {
+			var outside outsideBedError
+			if errors.As(err, &outside) {
+				fail(w, 400, "outside_build_plate", outside.name, outside.extent)
+			} else {
+				fail(w, 400, "http_invalid", err.Error())
+			}
 			return
 		}
 	}
@@ -831,17 +778,17 @@ var calibHead = regexp.MustCompile(`^[a-z0-9_-]{0,64}$`)
 var calibParams = regexp.MustCompile(`^([a-z_]+=[A-Za-z0-9_.;-]*(,[a-z_]+=[A-Za-z0-9_.;-]*)*)?$`)
 
 func (s *Server) startJob(w http.ResponseWriter, j *Job, req JobRequest, started *bool) {
-	vendor, problem := s.resolveJobProfiles(&req)
+	presets, problem := s.resolveJobProfiles(&req)
 	if problem != nil {
 		problem.write(w)
 		return
 	}
-	if problem := s.validateJobMethods(j, req, vendor); problem != nil {
+	if problem := s.validateJobMethods(j, req, presets); problem != nil {
 		writeJSON(w, 409, problem)
 		return
 	}
-	if err := s.captureSubmission(j, &req, vendor); err != nil {
-		fail(w, 500, "Oops! Couldn't save the print settings for this job. Please try slicing again.")
+	if err := s.captureSubmission(j, &req, presets); err != nil {
+		fail(w, 500, "couldnt_save_print_settings")
 		return
 	}
 	j.Request = req
@@ -857,7 +804,7 @@ func (s *Server) startJob(w http.ResponseWriter, j *Job, req JobRequest, started
 func (s *Server) job(w http.ResponseWriter, r *http.Request) *Job {
 	j := s.jobs.Get(r.PathValue("id"))
 	if j == nil {
-		fail(w, 404, "Couldn't find that slice job.")
+		fail(w, 404, "couldnt_find_slice_job")
 	}
 	return j
 }
@@ -889,7 +836,7 @@ func (s *Server) surfaceGrid(w http.ResponseWriter, r *http.Request) {
 	}
 	var record map[string]json.RawMessage
 	if !j.Previewable() || json.Unmarshal(j.Record(), &record) != nil || record["surface_grid"] == nil {
-		fail(w, 404, "Surface preview grid isn't available for this job.")
+		fail(w, 404, "surface_preview_grid_isnt")
 		return
 	}
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
@@ -905,7 +852,7 @@ func (s *Server) deleteJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.jobs.Remove(j); err != nil {
-		fail(w, 500, "Couldn't remove job: "+err.Error())
+		fail(w, 500, "couldnt_remove_job", err.Error())
 		return
 	}
 	w.WriteHeader(204)
@@ -916,7 +863,7 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if j.AwaitFinished(r.Context()) != StateDone {
-		fail(w, 409, "This job doesn't have a finished file ready to download yet.")
+		fail(w, 409, "job_doesnt_have_finished")
 		return
 	}
 	if refusal := j.curveRefusal(); refusal != "" && previewableRequest(j.Request) {
@@ -930,7 +877,7 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 	if j.Request.Cut != "" {
 		side := r.URL.Query().Get("piece")
 		if !validPiece(side) {
-			fail(w, 400, "a cut job's download needs piece=upper, lower or dowel-N")
+			fail(w, 400, "cut_jobs_download_needs")
 			return
 		}
 		path, name = j.PiecePath(side), outputBase(j.Request)+"."+side+".stl"
@@ -941,14 +888,14 @@ func (s *Server) download(w http.ResponseWriter, r *http.Request) {
 			j.setState(StateStale, "completed output is unavailable; slice again")
 			writeJSON(w, 410, map[string]string{"error": "Oops! That sliced file has expired. Please slice the plate again.", "code": "job_output_expired", "recovery": "slice_again"})
 		} else {
-			fail(w, 503, "Oops! Couldn't open the exported file. Please try downloading it again.")
+			fail(w, 503, "couldnt_open_exported_file")
 		}
 		return
 	}
 	defer f.Close()
 	st, err := f.Stat()
 	if err != nil {
-		fail(w, 500, err.Error())
+		fail(w, 500, "http_internal", err.Error())
 		return
 	}
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name}))
@@ -972,18 +919,18 @@ func (s *Server) exploded(w http.ResponseWriter, r *http.Request) {
 	}
 	name := r.PathValue("name")
 	if !j.Request.Explode || j.State() != StateDone || !explodedName.MatchString(name) {
-		fail(w, 404, "Couldn't find that extracted model part.")
+		fail(w, 404, "couldnt_find_extracted_model")
 		return
 	}
 	f, err := os.Open(filepath.Join(j.ExplodedDir(), name))
 	if err != nil {
-		fail(w, 404, "Couldn't find that extracted model part.")
+		fail(w, 404, "couldnt_find_extracted_model")
 		return
 	}
 	defer f.Close()
 	st, err := f.Stat()
 	if err != nil {
-		fail(w, 500, err.Error())
+		fail(w, 500, "http_internal", err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "model/3mf")
@@ -1006,13 +953,13 @@ func (s *Server) moves(w http.ResponseWriter, r *http.Request) {
 		if f != nil {
 			f.Close()
 		}
-		fail(w, 404, "Toolpath preview data isn't available for this slice.")
+		fail(w, 404, "toolpath_preview_data_isnt")
 		return
 	}
 	st, err := f.Stat()
 	f.Close()
 	if err != nil {
-		fail(w, 500, err.Error())
+		fail(w, 500, "http_internal", err.Error())
 		return
 	}
 	serveMoves(w, r, path, st)
@@ -1027,21 +974,21 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	if last := r.Header.Get("Last-Event-ID"); last != "" {
 		n, err := strconv.Atoi(last)
 		if err != nil || n < 0 {
-			fail(w, 400, "invalid Last-Event-ID")
+			fail(w, 400, "invalid_last_event_id")
 			return
 		}
 		j.mu.Lock()
 		latest := j.nextEvent
 		j.mu.Unlock()
 		if n > latest {
-			fail(w, 400, "Last-Event-ID is ahead of this job")
+			fail(w, 400, "last_event_id_ahead")
 			return
 		}
 		from = n
 	}
 	controller := http.NewResponseController(w)
 	if _, ok := w.(http.Flusher); !ok {
-		fail(w, 500, "Live progress streaming isn't available in this connection.")
+		fail(w, 500, "live_progress_streaming_isnt")
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -1086,7 +1033,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func spaFiles(dir, resources string) http.Handler {
+func spaFiles(dir, resources string, boot func(*http.Request) []byte) http.Handler {
 	cache := &staticCache{files: map[string]staticEntry{}}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -1113,7 +1060,7 @@ func spaFiles(dir, resources string) http.Handler {
 			st, err = os.Stat(file)
 		}
 		if err != nil && resources != "" && strings.HasPrefix(clean, "/profiles/") {
-			if ext := strings.ToLower(path.Ext(clean)); ext == ".png" || ext == ".stl" {
+			if ext := strings.ToLower(path.Ext(clean)); ext == ".png" || ext == ".stl" || ext == ".svg" {
 				file = filepath.Join(resources, relative)
 				st, err = os.Stat(file)
 			}
@@ -1130,19 +1077,17 @@ func spaFiles(dir, resources string) http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		cache.serve(w, r, file, st)
+		cache.serve(w, r, file, st, boot)
 	})
 }
 
-func cutJoinError(req JobRequest, supported bool) string {
+func cutJoinError(req JobRequest) string {
 	if req.CutConnectors == "" && req.CutDovetail == "" {
 		return ""
 	}
 	var connectors []map[string]any
 	var dovetail map[string]any
 	switch {
-	case !supported:
-		return "connectors and dovetails require a tool with --cut-connectors"
 	case req.CutConnectors != "" && req.CutDovetail != "":
 		return "a dovetail cut takes no separate connectors"
 	case req.CutKeep != "both":
@@ -1237,10 +1182,7 @@ func textArgs(r *http.Request) ([]string, error) {
 
 var vector3 = regexp.MustCompile(`^-?[0-9.]+(e-?[0-9]+)?,-?[0-9.]+(e-?[0-9]+)?,-?[0-9.]+(e-?[0-9]+)?$`)
 
-func surfaceArgs(r *http.Request, f ToolFeatures) ([]string, error) {
-	if !f.EmbossSurface {
-		return nil, errors.New("Wrapping onto a curved surface requires a slicing engine with --use-surface support.")
-	}
+func surfaceArgs(r *http.Request) ([]string, error) {
 	args := []string{}
 	for _, k := range []string{"at", "normal", "up"} {
 		v := r.FormValue(k)
@@ -1260,23 +1202,17 @@ func surfaceArgs(r *http.Request, f ToolFeatures) ([]string, error) {
 		args = append(args, "--angle", strconv.FormatFloat(a, 'f', -1, 64))
 	}
 	if r.FormValue("outside") == "1" {
-		if !f.EmbossSurfaceOutside {
-			return nil, errors.New("Raised surface text requires a slicing engine with --surface-outside support.")
-		}
 		args = append(args, "--surface-outside")
 	}
 	return args, nil
 }
 
 func (s *Server) embossFonts(w http.ResponseWriter, r *http.Request) {
-	if !s.cfg.Features.EmbossText {
-		fail(w, 404, "Please enter some text to generate.")
-		return
-	}
 	s.fontsOnce.Do(func() {
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, s.cfg.Tool, "--emboss-fonts", "--profiles", filepath.Join(s.cfg.Resources, "profiles"))
+		cmd.Env = engineEnv(os.TempDir())
 		configureKill(cmd)
 		cmd.WaitDelay = 5 * time.Second
 		out, err := cmd.Output()
@@ -1296,7 +1232,7 @@ func (s *Server) embossFonts(w http.ResponseWriter, r *http.Request) {
 		s.fonts, _ = json.Marshal(map[string]any{"fonts": catalog.Fonts})
 	})
 	if s.fonts == nil {
-		fail(w, 500, fmt.Sprint(s.fontsErr))
+		fail(w, 500, "http_internal", fmt.Sprint(s.fontsErr))
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -1307,18 +1243,18 @@ func (s *Server) embossFonts(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handyModel(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !handyModels[name] {
-		fail(w, 404, "Unrecognized built-in sample model.")
+		fail(w, 404, "unrecognized_built_sample_model")
 		return
 	}
 	f, err := os.Open(filepath.Join(s.cfg.Resources, "handy_models", name))
 	if err != nil {
-		fail(w, 404, "That built-in sample model isn't available right now.")
+		fail(w, 404, "built_sample_model_isnt")
 		return
 	}
 	defer f.Close()
 	st, err := f.Stat()
 	if err != nil {
-		fail(w, 500, err.Error())
+		fail(w, 500, "http_internal", err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
@@ -1342,12 +1278,12 @@ func (s *Server) cancelJob(w http.ResponseWriter, r *http.Request) {
 func (s *Server) retryJob(w http.ResponseWriter, r *http.Request) {
 	key, err := submissionKey(r.URL.Path, r.Header.Get("Idempotency-Key"))
 	if err != nil {
-		fail(w, 400, err.Error())
+		fail(w, 400, "http_invalid", err.Error())
 		return
 	}
 	existing, finish, err := s.jobs.reserve(r.Context(), key)
 	if err != nil {
-		fail(w, 408, err.Error())
+		fail(w, 408, "http_timeout", err.Error())
 		return
 	}
 	if existing != nil {
@@ -1368,23 +1304,23 @@ func (s *Server) retryJob(w http.ResponseWriter, r *http.Request) {
 	}
 	j.IdempotencyKey = key
 	req := j.Request
-	vendor, problem := s.resolveJobProfiles(&req)
+	presets, problem := s.resolveJobProfiles(&req)
 	if problem != nil {
 		s.jobs.releaseUpload(j)
 		os.RemoveAll(j.Dir)
 		problem.write(w)
 		return
 	}
-	if problem := s.validateJobMethods(j, req, vendor); problem != nil {
+	if problem := s.validateJobMethods(j, req, presets); problem != nil {
 		s.jobs.releaseUpload(j)
 		os.RemoveAll(j.Dir)
 		writeJSON(w, 409, problem)
 		return
 	}
-	if err := s.captureSubmission(j, &req, vendor); err != nil {
+	if err := s.captureSubmission(j, &req, presets); err != nil {
 		s.jobs.releaseUpload(j)
 		os.RemoveAll(j.Dir)
-		fail(w, 500, "Oops! Couldn't save the retry settings. Please slice the project again.")
+		fail(w, 500, "couldnt_save_retry_settings")
 		return
 	}
 	j.Request = req
@@ -1427,7 +1363,6 @@ type engineHealth struct {
 	reason        string
 	manifest      map[string]any
 	tool          os.FileInfo
-	features      map[string]any
 	outputs       map[string]bool
 }
 
@@ -1452,7 +1387,7 @@ func (h *engineHealth) setEngine(next HealthState) {
 }
 
 func (h *engineHealth) setArtifact(next HealthState) {
-	moveHealth(artifactTransitions, &h.artifactState, next, "engine release check")
+	moveHealth(artifactTransitions, &h.artifactState, next, "artifact qualification")
 }
 
 func (h *engineHealth) wireState() HealthState {
@@ -1482,7 +1417,7 @@ func bundleFileHash(name string) (string, error) {
 }
 
 func bundleResourceHash(root string) (string, error) {
-	var names []string
+	h := sha256.New()
 	err := filepath.WalkDir(root, func(name string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -1493,81 +1428,25 @@ func bundleResourceHash(root string) (string, error) {
 		if !d.Type().IsRegular() {
 			return errors.New("nonregular resource")
 		}
-		names = append(names, name)
+		digest, err := bundleFileHash(name)
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(root, name)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(h, "%s\x00%s\n", filepath.ToSlash(relative), digest)
 		return nil
 	})
 	if err != nil {
 		return "", err
 	}
-	digests, errs := make([]string, len(names)), make([]error, len(names))
-	next := make(chan int)
-	var wg sync.WaitGroup
-	for range min(len(names), max(4, 2*runtime.NumCPU())) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := range next {
-				digests[i], errs[i] = bundleFileHash(names[i])
-			}
-		}()
-	}
-	for i := range names {
-		next <- i
-	}
-	close(next)
-	wg.Wait()
-	h := sha256.New()
-	for i, name := range names {
-		if errs[i] != nil {
-			return "", errs[i]
-		}
-		relative, err := filepath.Rel(root, name)
-		if err != nil {
-			return "", err
-		}
-		fmt.Fprintf(h, "%s\x00%s\n", filepath.ToSlash(relative), digests[i])
-	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-type bundleDigest struct {
-	binary, resources       string
-	binaryErr, resourcesErr error
-}
-
-func newBundleDigest(tool, resources string) func() bundleDigest {
-	return sync.OnceValue(func() bundleDigest {
-		var d bundleDigest
-		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() { defer wg.Done(); d.binary, d.binaryErr = bundleFileHash(tool) }()
-		d.resources, d.resourcesErr = bundleResourceHash(resources)
-		wg.Wait()
-		return d
-	})
-}
-
 func newEngineHealth(c Config) *engineHealth {
-	h := &engineHealth{state: HealthUnknown, artifactState: HealthUnknown, features: map[string]any{}}
-	b, _ := json.Marshal(c.Features)
-	json.Unmarshal(b, &h.features)
-	if c.Features.DumpOptions && c.Options != nil {
-		var options map[string]struct {
-			Values []string `json:"enum_values"`
-		}
-		if json.Unmarshal(c.Options.plain, &options) == nil {
-			for _, v := range options["nonplanar_mode"].Values {
-				if v == "curved_tops" {
-					h.features["curved_tops"] = true
-				}
-			}
-			for _, v := range options["nonplanar_wave"].Values {
-				if v == "whole" {
-					h.features["nonplanar_wave"] = true
-				}
-			}
-		}
-	}
+	h := &engineHealth{state: HealthUnknown, artifactState: HealthUnknown}
 	st, err := os.Stat(c.Tool)
 	if err != nil || !st.Mode().IsRegular() {
 		h.reason = "engine executable unavailable"
@@ -1576,76 +1455,34 @@ func newEngineHealth(c Config) *engineHealth {
 	}
 	h.tool = st
 	h.setEngine(HealthHealthy)
-	manifestPath := c.SurfaceManifest
-	if manifestPath == "" {
-		manifestPath = os.Getenv("ORCA_WEB_SURFACE_MANIFEST")
-	}
-	if manifestPath == "" {
-		manifestPath = os.Getenv("ORCA_WEB_ARTIFACT_MANIFEST")
-	}
-	if manifestPath == "" {
+	raw, binary, resources := c.Engine.Manifest, c.Engine.Binary, c.Engine.Resources
+	if raw == nil {
 		return h
 	}
 	h.setArtifact(HealthUnqualified)
-	raw, err := os.ReadFile(manifestPath)
 	var manifest struct {
-		Schema          int               `json:"schema"`
 		PublicationMain string            `json:"publication_main_sha"`
 		Platform        *artifactPlatform `json:"platform"`
 		Backend         string            `json:"backend"`
 		Source          string            `json:"source_sha"`
 		Available       bool              `json:"available"`
 		Preview         bool              `json:"preview_ready"`
-		PrintQualified  bool              `json:"print_qualified"`
-		Binary          string            `json:"binary_sha256"`
-		Resources       string            `json:"resources_sha256"`
 		Curved          bool              `json:"validated_curved_benchy_clearance"`
 		Wave            bool              `json:"validated_wave_export"`
 		Features        map[string]bool   `json:"features"`
 	}
-	if err != nil || json.Unmarshal(raw, &manifest) != nil {
-		h.reason = "artifact manifest unreadable"
+	if json.Unmarshal(raw, &manifest) != nil || !manifest.Available {
+		h.reason = "artifact manifest says the engine is unavailable"
 		h.setEngine(HealthDegraded)
 		return h
 	}
-	digest := c.BundleDigest()
-	binary, resources := digest.binary, digest.resources
-	if digest.binaryErr != nil || digest.resourcesErr != nil || manifest.Binary != binary || manifest.Resources != resources || !manifest.Available {
-		h.reason = "artifact identity mismatch"
-		h.setEngine(HealthDegraded)
-		return h
-	}
-	var proof struct {
-		Ready           bool              `json:"ready"`
-		PublicationMain string            `json:"publication_main_sha"`
-		Platform        *artifactPlatform `json:"platform"`
-		Source          string            `json:"source_sha"`
-		Binary          string            `json:"binary_sha256"`
-		Resources       string            `json:"resources_sha256"`
-		Manifest        string            `json:"manifest_sha256"`
-	}
-	proofPath := c.ArtifactQualification
-	if proofPath == "" {
-		proofPath = os.Getenv("ORCA_WEB_ARTIFACT_QUALIFICATION")
-	}
-	proofRaw, proofErr := os.ReadFile(proofPath)
-	manifestHash := sha256.Sum256(raw)
-	qualified := proofErr == nil && json.Unmarshal(proofRaw, &proof) == nil && proof.Ready &&
-		manifest.Source != "" && proof.Source == manifest.Source &&
-		proof.Binary == binary && proof.Resources == resources && proof.Manifest == hex.EncodeToString(manifestHash[:]) && manifest.PrintQualified
-	if qualified && manifest.Schema >= 3 && (manifest.Platform == nil || *manifest.Platform != runningPlatform() ||
-		proof.Platform == nil || *proof.Platform != *manifest.Platform || manifest.PublicationMain == "" || proof.PublicationMain != manifest.PublicationMain) {
-		qualified = false
-		h.reason = "platform mismatch"
-	}
-	outputs, failed := nativeOutputHashes(raw)
-	if qualified && failed > 0 {
-		qualified = false
-		h.reason = "a reference output is missing, failed its audit or has clearance hits"
-	}
+	qualified := c.Engine.Qualified
 	if qualified {
-		h.outputs = outputs
+		h.outputs = c.Engine.Outputs
 		h.setArtifact(HealthQualified)
+	} else {
+		h.reason = c.Engine.Unqualified
+		log.Printf("engine not qualified: %s", h.reason)
 	}
 	wave := qualified && manifest.Preview && manifest.Wave && manifest.Features["nonplanar_wave"]
 	modes := []string{}
@@ -1678,10 +1515,10 @@ func (h *engineHealth) snapshot(tool string) map[string]any {
 	defer h.mu.Unlock()
 	st, err := os.Stat(tool)
 	if h.state != HealthDegraded && (err != nil || h.tool == nil || !os.SameFile(st, h.tool) || st.Size() != h.tool.Size() || !st.ModTime().Equal(h.tool.ModTime())) {
-		h.reason = "engine executable changed; restart to reprobe"
+		h.reason = "engine executable changed since the service started; restart the service"
 		h.manifest = nil
 		h.setEngine(HealthDegraded)
 	}
 	return map[string]any{"engine_state": h.wireState(), "artifact_state": h.artifactState, "reason": h.reason,
-		"artifact_manifest": h.manifest, "tool_features": h.features}
+		"artifact_manifest": h.manifest}
 }

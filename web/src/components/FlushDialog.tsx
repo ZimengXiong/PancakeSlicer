@@ -1,37 +1,43 @@
 import { useState } from 'react';
 import { Dropdown } from './Dropdown';
-import { effectiveConfig, printerPreset } from '../state/store';
-import { extruderCount, extruderLabel } from '../multinozzle/config';
-import { MAX_FLUSH_VOLUME, minFlushVolumes, MULTIPLIER_RANGE, predictorMinFlush } from '../flush';
-import { allFlush, autoFlushMatrix, flushInputs } from '../flush-state';
-import { markStale, setState, useStore } from '../state/store';
+import { printerPreset } from '../state/store';
+import { extruderLabel } from '../multinozzle/config';
+import { nozzleCount } from '../profiles/view';
+import { allFlush, MAX_FLUSH_VOLUME, MULTIPLIER_RANGE, nozzleFlush } from '../flush-state';
+import { setState, useStore } from '../state/store';
 import { Modal, ModalBody, ModalFooter, ModalTitle } from './Modal';
 import { SlotChip } from './SlotChip';
-import { undoable } from '../state/history';
+import { filamentColor } from '../plater/filamentColor';
+import { slotFilaments } from '../profiles/slots';
+import { setFlushing } from '../profiles/plate-setup';
 
 const TYPICAL_MAX_FLUSH_VOLUME = 900;
 
+const filledSlots = (s: import('../state/store').State) => slotFilaments(s).flatMap((f, i) => f ? [i] : []);
+
 export function FlushDialog() {
   const open = useStore((s) => s.flushDialog);
-  if (!open) return null;
-  return <FlushTable />;
+  const answered = useStore((s) => !!allFlush(s));
+  const shape = useStore((s) => { const f = allFlush(s), n = filledSlots(s).length, nozzles = nozzleCount(s);
+    return f && f.multipliers.length === nozzles && f.matrix.length === nozzles * n * n ? `${n}x${nozzles}` : ''; });
+  if (!open || !answered || !shape) return null;
+  return <FlushTable key={shape} />;
 }
 
 function FlushTable() {
   const s = useStore((st) => st);
   const [nozzle, setNozzle] = useState(0);
-  const count = extruderCount(effectiveConfig(s, 'machine'));
-  const { colours, printer, filaments } = flushInputs(s, nozzle);
+  const count = nozzleCount(s);
+  const slots = filledSlots(s), colours = slots.map((i) => filamentColor(s, i + 1));
   const n = colours.length;
-  const init = allFlush(s);
+  const init = allFlush(s)!, record = s.records.printers.find((p) => p.id === s.printer);
   const [raw, setRaw] = useState<number[]>(init.matrix);
   const [multipliers, setMultipliers] = useState(init.multipliers);
   const [multTexts, setMultTexts] = useState(init.multipliers.map(String));
   const mult = multipliers[nozzle], multText = multTexts[nozzle];
-  const auto = autoFlushMatrix(s, nozzle);
+  const auto = nozzleFlush(s, nozzle)?.auto ?? [];
   const offset = nozzle * n * n;
-  const dataset = Number((Array.isArray(printer.nozzle_flush_dataset) ? printer.nozzle_flush_dataset[0] : printer.nozzle_flush_dataset) ?? 0) || 0;
-  const minVol = Math.min(predictorMinFlush(dataset), ...minFlushVolumes(printer, filaments));
+  const minVol = nozzleFlush(s, nozzle)?.minVolume ?? 0;
   const close = () => setState({ flushDialog: false });
 
   const shown = (i: number) => Math.min(MAX_FLUSH_VOLUME, Math.max(0, Math.round(raw[offset + i] * mult)));
@@ -52,15 +58,11 @@ function FlushTable() {
   };
   const save = () => {
     const matrix = raw.map((v, i) => Math.min(Math.max(v, 0), multipliers[Math.floor(i / (n * n))] > 0 ? MAX_FLUSH_VOLUME / multipliers[Math.floor(i / (n * n))] : MAX_FLUSH_VOLUME));
-    const autoAll = Array.from({ length: count }, (_, i) => autoFlushMatrix(s, i)).flat();
-    const same = matrix.every((v, i) => v === autoAll[i]);
-    const matrixChanged = matrix.some((v, i) => v !== init.matrix[i]);
-    undoable('Flushing volumes', () => setState((st) => ({
-      flush: { matrix: st.project && !matrixChanged ? st.flush.matrix : same && !st.project ? null : matrix, multiplier: null },
-      dirty: { ...st.dirty, process: { ...st.dirty.process, flush_multiplier: multipliers } },
-      flushDialog: false,
-      job: markStale(st.job),
-    })));
+    const autoAll = Array.from({ length: count }, (_, i) => nozzleFlush(s, i)?.auto ?? []).flat();
+    const volumes = matrix.map((v, i) => v === autoAll[i] ? null : v);
+    const keepMultipliers = !!record?.flushing?.multipliers?.length || multipliers.some((v, i) => v !== init.multipliers[i]);
+    void setFlushing({ ...(volumes.some((v) => v !== null) ? { volumes } : {}), ...(keepMultipliers ? { multipliers } : {}) });
+    setState({ flushDialog: false });
   };
   const outOfRange = raw.slice(offset, offset + n * n).some((_, i) => Math.floor(i / n) !== i % n && (shown(i) < minVol || shown(i) > MAX_FLUSH_VOLUME));
 
@@ -81,14 +83,14 @@ function FlushTable() {
                     <span className="flush-corner" aria-label="From / to" />
                   </th>
                   {colours.map((c, j) => (
-                    <th key={j} aria-label={`To filament ${j + 1}`}><SlotChip n={j + 1} colour={c} /></th>
+                    <th key={j} aria-label={`To filament ${slots[j] + 1}`}><SlotChip n={slots[j] + 1} colour={c} /></th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {colours.map((c, i) => (
                   <tr key={i}>
-                    <th aria-label={`From filament ${i + 1}`}><SlotChip n={i + 1} colour={c} /></th>
+                    <th aria-label={`From filament ${slots[i] + 1}`}><SlotChip n={slots[i] + 1} colour={c} /></th>
                     {colours.map((_, j) => {
                       const k = i * n + j;
                       const v = i === j ? 0 : shown(k);
@@ -102,7 +104,7 @@ function FlushTable() {
                             value={v}
                             readOnly={i === j}
                             onChange={(e) => onCell(k, e.target.value)}
-                            aria-label={`from ${i + 1} to ${j + 1}`}
+                            aria-label={`from ${slots[i] + 1} to ${slots[j] + 1}`}
                           />
                         </td>
                       );

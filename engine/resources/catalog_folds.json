@@ -1,0 +1,398 @@
+{
+  "schema": 1,
+  "about": "Reviewed filament folds for the catalog build (nonplanar_slice_tool --flatten-catalog reads it beside the profiles). A fold makes another vendor bundle's copy of a branded filament a set of tunings of the brand's own product, fitting only that vendor's printers; the copy's id becomes an alias of the product and library records naming it move there. Candidates come from --fold-candidates (same brand, same type, every word of the copy's name in the product's adding only \"Basic\", densities within 0.03 g/cm3); `separate` lists the candidates that stay products of their own, with the reason.",
+  "folds": [
+    {
+      "from": "Bambu PETG",
+      "into": "Bambu PETG Basic",
+      "vendor": "Qidi",
+      "brand": "Bambu Lab",
+      "type": "PETG",
+      "evidence": {
+        "brand": "Bambu Lab",
+        "type": "PETG",
+        "words": "every word of Bambu PETG is in Bambu PETG Basic",
+        "tunings": 28,
+        "density": [
+          1.24,
+          1.25
+        ],
+        "into_base": "Bambu PETG Basic @System"
+      }
+    },
+    {
+      "from": "Bambu PLA",
+      "into": "Bambu PLA Basic",
+      "vendor": "Qidi",
+      "brand": "Bambu Lab",
+      "type": "PLA",
+      "evidence": {
+        "brand": "Bambu Lab",
+        "type": "PLA",
+        "words": "every word of Bambu PLA is in Bambu PLA Basic",
+        "tunings": 28,
+        "density": [
+          1.24,
+          1.26
+        ],
+        "into_base": "Bambu PLA Basic @System"
+      }
+    }
+  ],
+  "separate": [
+    {
+      "from": "Extrudr PLA NX2 Matt",
+      "vendor": "Meltingplot",
+      "brand": "Extrudr",
+      "type": "PLA",
+      "reason": "the brand has no product of its own of this type"
+    },
+    {
+      "from": "Fiberon ASA-CF08",
+      "vendor": "Snapmaker",
+      "brand": "Polymaker",
+      "type": "ASA",
+      "reason": "no product of the brand with the same name"
+    },
+    {
+      "from": "Fiberon PA612-ESD",
+      "vendor": "Snapmaker",
+      "brand": "Polymaker",
+      "type": "PA-CF",
+      "reason": "no product of the brand with the same name"
+    },
+    {
+      "from": "Fiberon PPS-GF20",
+      "vendor": "Snapmaker",
+      "brand": "Polymaker",
+      "type": "ABS",
+      "reason": "no product of the brand with the same name"
+    },
+    {
+      "from": "Fiberthree PACF Pro P1",
+      "vendor": "iQ",
+      "brand": "iQ Materials",
+      "type": "PACF Pro",
+      "reason": "the brand has no product of its own of this type"
+    },
+    {
+      "from": "Fiberthree PACF Pro P2",
+      "vendor": "iQ",
+      "brand": "iQ Materials",
+      "type": "PACF Pro",
+      "reason": "the brand has no product of its own of this type"
+    },
+    {
+      "from": "Fillamentum PLA Concret Grey",
+      "vendor": "Pragostroj",
+      "brand": "Fillamentum",
+      "type": "PLA",
+      "reason": "the brand has no product of its own of this type"
+    },
+    {
+      "from": "Flashforge PC",
+      "vendor": "Flashforge",
+      "brand": "FusRock",
+      "type": "PAHT",
+      "reason": "the brand has no product of its own of this type"
+    },
+    {
+      "from": "FusRock NexPA-CF25",
+      "vendor": "Flashforge",
+      "brand": "FusRock",
+      "type": "PA-CF",
+      "reason": "the brand has no product of its own of this type"
+    },
+    {
+      "from": "FusRock PAHT",
+      "vendor": "Flashforge",
+      "brand": "FusRock",
+      "type": "PAHT",
+      "reason": "the brand has no product of its own of this type"
+    },
+    {
+      "from": "FusRock PAHT-GF",
+      "vendor": "Flashforge",
+      "brand": "FusRock",
+      "type": "PAHT-GF",
+      "reason": "the brand has no product of its own of this type"
+    },
+    {
+      "from": "FusRock PET",
+      "vendor": "Flashforge",
+      "brand": "FusRock",
+      "type": "PET",
+      "reason": "the brand has no product of its own of this type"
+    },
+    {
+      "from": "FusRock PET-GF",
+      "vendor": "Flashforge",
+      "brand": "FusRock",
+      "type": "PET-GF",
+      "reason": "the brand has no product of its own of this type"
+    },
+    {
+      "from": "Grauts HPP4GF25 P1",
+      "vendor": "iQ",
+      "brand": "iQ Materials",
+      "type": "HPP4GF25",
+      "reason": "the brand has no product of its own of this type"
+    },
+    {
+      "from": "HATCHBOX ABS",
+      "vendor": "Qidi",
+      "brand": "HATCHBOX",
+      "type": "ABS",
+      "reason": "the brand has no product of its own of this type"
+    },
+    {
+      "from": "HATCHBOX PETG",
+      "vendor": "Qidi",
+      "brand": "HATCHBOX",
+      "type": "PETG",
+      "reason": "the brand has no product of its own of this type"
+    },
+    {
+      "from": "HATCHBOX PLA",
+      "vendor": "Qidi",
+      "brand": "HATCHBOX",
+      "type": "PLA",
+      "reason": "the brand has no product of its own of this type"
+    },
+    {
+      "from": "Kexcelled TPU 64D",
+      "vendor": "Flashforge",
+      "brand": "Kexcelled",
+      "type": "TPU",
+      "reason": "the brand has no product of its own of this type"
+    },
+    {
+      "from": "Material4Print ABS Natur P1",
+      "vendor": "iQ",
+      "brand": "iQ Materials",
+      "type": "ABS Material4Print Natur",
+      "reason": "the brand has no product of its own of this type"
+    },
+    {
+      "from": "Overture ABS",
+      "vendor": "Qidi",
+      "brand": "Overture",
+      "type": "ABS",
+      "evidence": {
+        "brand": "Overture",
+        "type": "ABS",
+        "words": "every word of Overture ABS is in Overture ABS Basic",
+        "tunings": 28,
+        "density": [
+          1.05,
+          1.15
+        ],
+        "into_base": "Overture ABS Basic @System"
+      },
+      "reason": "densities differ"
+    },
+    {
+      "from": "PolyLite J1 PLA",
+      "vendor": "Snapmaker",
+      "brand": "Polymaker",
+      "type": "PLA",
+      "reason": "no product of the brand with the same name"
+    },
+    {
+      "from": "PolyLite PETG Translucent",
+      "vendor": "Snapmaker",
+      "brand": "Polymaker",
+      "type": "PETG",
+      "reason": "no product of the brand with the same name"
+    },
+    {
+      "from": "PolyLite PLA Pro Metallic",
+      "vendor": "Snapmaker",
+      "brand": "Polymaker",
+      "type": "PLA",
+      "reason": "no product of the brand with the same name"
+    },
+    {
+      "from": "PolySonic PLA",
+      "vendor": "Creality",
+      "brand": "Polymaker",
+      "type": "PLA",
+      "reason": "no product of the brand with the same name"
+    },
+    {
+      "from": "PolySonic PLA Pro",
+      "vendor": "Creality",
+      "brand": "Polymaker",
+      "type": "PLA",
+      "reason": "no product of the brand with the same name"
+    },
+    {
+      "from": "PolyTerra J1 PLA",
+      "vendor": "Snapmaker",
+      "brand": "Polymaker",
+      "type": "PLA",
+      "reason": "no product of the brand with the same name"
+    },
+    {
+      "from": "Polymaker General PLA Family",
+      "vendor": "Snapmaker",
+      "brand": "Polymaker",
+      "type": "PLA",
+      "reason": "no product of the brand with the same name"
+    },
+    {
+      "from": "Polymaker PETG Galaxy",
+      "vendor": "Snapmaker",
+      "brand": "Polymaker",
+      "type": "PETG",
+      "reason": "no product of the brand with the same name"
+    },
+    {
+      "from": "Polymaker PETG Polymax black P1",
+      "vendor": "iQ",
+      "brand": "iQ Materials",
+      "type": "PETG Polymax",
+      "reason": "the brand has no product of its own of this type"
+    },
+    {
+      "from": "Polymaker PLA",
+      "vendor": "Snapmaker",
+      "brand": "Polymaker",
+      "type": "PLA",
+      "reason": "no product of the brand with the same name"
+    },
+    {
+      "from": "Polymaker PLA-HT",
+      "vendor": "Qidi",
+      "brand": "Polymaker",
+      "type": "PLA",
+      "reason": "no product of the brand with the same name"
+    },
+    {
+      "from": "Polymaker S1",
+      "vendor": "Flashforge",
+      "brand": "Polymaker",
+      "type": "PA",
+      "reason": "no product of the brand with the same name"
+    },
+    {
+      "from": "Polymaker Silk PLA Family",
+      "vendor": "Snapmaker",
+      "brand": "Polymaker",
+      "type": "PLA",
+      "reason": "no product of the brand with the same name"
+    },
+    {
+      "from": "Polymaker Tough PLA Family",
+      "vendor": "Snapmaker",
+      "brand": "Polymaker",
+      "type": "PLA",
+      "reason": "no product of the brand with the same name"
+    },
+    {
+      "from": "Tinmorry PETG-ECO",
+      "vendor": "Qidi",
+      "brand": "Tinmorry",
+      "type": "PETG",
+      "reason": "the brand has no product of its own of this type"
+    },
+    {
+      "from": "VXL90 TiQ2 P2",
+      "vendor": "iQ",
+      "brand": "iQ Materials",
+      "type": "VXL90 Xioneer",
+      "reason": "the brand has no product of its own of this type"
+    },
+    {
+      "from": "YUMI PETG",
+      "vendor": "Wanhao France",
+      "brand": "Yumi",
+      "type": "PETG",
+      "reason": "the brand has no product of its own of this type"
+    },
+    {
+      "from": "YUMI PLA Bowden",
+      "vendor": "Wanhao France",
+      "brand": "Yumi",
+      "type": "PLA",
+      "reason": "the brand has no product of its own of this type"
+    },
+    {
+      "from": "YUMI PLA Direct Drive",
+      "vendor": "Wanhao France",
+      "brand": "Yumi",
+      "type": "PLA",
+      "reason": "the brand has no product of its own of this type"
+    },
+    {
+      "from": "eSUN ABS+",
+      "vendor": "Creality",
+      "brand": "eSUN",
+      "type": "ABS",
+      "reason": "the brand has no product of its own of this type"
+    },
+    {
+      "from": "eSUN ASA+",
+      "vendor": "Creality",
+      "brand": "eSUN",
+      "type": "ASA",
+      "reason": "the brand has no product of its own of this type"
+    },
+    {
+      "from": "eSUN PET-Basic",
+      "vendor": "Creality",
+      "brand": "eSUN",
+      "type": "PET",
+      "reason": "the brand has no product of its own of this type"
+    },
+    {
+      "from": "eSUN PETG+HS",
+      "vendor": "Creality",
+      "brand": "eSUN",
+      "type": "PETG",
+      "reason": "no product of the brand with the same name"
+    },
+    {
+      "from": "eSUN PETG-Basic",
+      "vendor": "Creality",
+      "brand": "eSUN",
+      "type": "PETG",
+      "reason": "no product of the brand with the same name"
+    },
+    {
+      "from": "eSUN PLA-CF",
+      "vendor": "Creality",
+      "brand": "eSUN",
+      "type": "PLA-CF",
+      "reason": "the brand has no product of its own of this type"
+    },
+    {
+      "from": "eSUN PLA-HS",
+      "vendor": "Creality",
+      "brand": "eSUN",
+      "type": "PLA",
+      "reason": "no product of the brand with the same name"
+    },
+    {
+      "from": "eSUN PLA-LW",
+      "vendor": "Creality",
+      "brand": "eSUN",
+      "type": "PLA",
+      "reason": "no product of the brand with the same name"
+    },
+    {
+      "from": "eSUN PLA-Lite",
+      "vendor": "Creality",
+      "brand": "eSUN",
+      "type": "PLA",
+      "reason": "no product of the brand with the same name"
+    },
+    {
+      "from": "eSUN PLA-Silk",
+      "vendor": "Creality",
+      "brand": "eSUN",
+      "type": "PLA",
+      "reason": "no product of the brand with the same name"
+    }
+  ]
+}

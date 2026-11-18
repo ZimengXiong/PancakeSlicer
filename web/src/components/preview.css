@@ -44,6 +44,7 @@
 :where(.orca-parity) .lg-dim { color: var(--ink-2); }
 :where(.orca-parity) .lg-num { font-variant-numeric: tabular-nums; }
 :where(.orca-parity) .lg-collapse { flex: none; margin-left: auto; display: grid; place-items: center; width: 28px; height: 28px; min-width: 0; min-height: 0; padding: 0; border: 0; border-radius: var(--r-2); background: none; color: var(--ink-2); cursor: pointer; }
+:where(.orca-parity) .lg-collapse[aria-expanded=false] { width: auto; padding: 0 var(--s-2); font: var(--t-small); }
 :where(.orca-parity) .lg-collapse:hover { background: var(--overlay); color: var(--ink); }
 :where(.orca-parity) .lg-summary { flex: none; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-4); padding: var(--s-3) var(--s-4) var(--s-4); border-top: 1px solid var(--line); }
 :where(.orca-parity) .lg-stat { display: flex; flex-direction: column; gap: var(--s-1); min-width: 0; }
@@ -63,8 +64,7 @@
 :where(.orca-parity) .lg-table th:first-child, :where(.orca-parity) .lg-table td:first-child { text-align: left; padding-left: 0; }
 :where(.orca-parity) .lg-table td:first-child { overflow: hidden; text-overflow: ellipsis; max-width: 0; width: 100%; }
 :where(.orca-parity) .lg-scale { display: grid; grid-template-rows: repeat(6, auto); grid-auto-flow: column; column-gap: var(--s-6); justify-content: start; }
-:where(.orca-parity) .lg-seg { width: 100%; margin: var(--s-1) 0 var(--s-3); }
-:where(.orca-parity) .lg-seg > button { padding: 0 var(--s-2); }
+:where(.orca-parity) .lg-np-by { width: 100%; margin: var(--s-1) 0 var(--s-3); }
 
 :where(.orca-parity) .lg-options { display: grid; grid-template-columns: 1fr 1fr; gap: 0 var(--s-4); padding-bottom: var(--s-1); }
 :where(.orca-parity) .lg-opt { display: flex; align-items: center; gap: var(--s-2); cursor: pointer; min-height: 26px; white-space: nowrap; }
@@ -179,7 +179,6 @@
 @media (pointer: coarse) {
   :where(.orca-parity) .lg-role-row { height: 32px; }
   :where(.orca-parity) .lg-opt, :where(.orca-parity) .lg-switch { min-height: 34px; }
-  :where(.orca-parity) .lg-seg { --seg-h: 32px; }
   :where(.orca-parity) .layer-slider { width: 48px; }
   :where(.orca-parity) .layer-slider .ls-track::before { inset: 0 -18px; }
   :where(.orca-parity) .ls-thumb { width: 24px; height: 24px; margin: 0 0 -12px -12px; }

@@ -1,10 +1,10 @@
+import { objectValues } from '../profiles/view';
 import type * as THREE from 'three';
 import { T3 } from '../three-runtime';
 import { effectiveConfig, getState, setState, updateObject, type Instance, type PlateObject, type SlantEdit, type State } from '../state/store';
 import type { Config } from '../api/types';
 import { instanceBox } from './geometry';
 import { loadHead, type Head } from '../heads';
-import { OPTIONS } from '../options';
 
 const DEG = Math.PI / 180;
 const KEYS = ['nonplanar_slant_angle', 'nonplanar_slant_direction', 'nonplanar_slant_start_height'] as const;
@@ -30,6 +30,14 @@ export function slantAngles(n: THREE.Vector3): { tilt: number; dir: number } {
   return { tilt, dir };
 }
 
+export function slantPoint(s: State, e: SlantEdit): THREE.Vector3 | null {
+  const t = slantTarget(s);
+  if (!t) return null;
+  const b = instanceBox(t.o, t.inst);
+  const rise = morphing(s, t.o) ? 0 : Math.tan(e.tilt * DEG) * span(b, e.dir) / 2;
+  return new T3.Vector3((b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, b.min.z + e.z + rise);
+}
+
 function span(b: THREE.Box3, dirDeg: number): number {
   const d = dirDeg * DEG, u = [Math.cos(d), Math.sin(d)];
   let lo = Infinity, hi = -Infinity;
@@ -43,14 +51,6 @@ function span(b: THREE.Box3, dirDeg: number): number {
 
 const morphing = (s: State, o: PlateObject) => num(objectValue(s, o, 'nonplanar_slant_morph_layers'), 0) > 0;
 
-export function slantPoint(s: State, e: SlantEdit): THREE.Vector3 | null {
-  const t = slantTarget(s);
-  if (!t) return null;
-  const b = instanceBox(t.o, t.inst);
-  const rise = morphing(s, t.o) ? 0 : Math.tan(e.tilt * DEG) * span(b, e.dir) / 2;
-  return new T3.Vector3((b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, b.min.z + e.z + rise);
-}
-
 function lowestStart(s: State, e: SlantEdit): number {
   const t = slantTarget(s);
   if (!t || morphing(s, t.o)) return 0;
@@ -58,7 +58,7 @@ function lowestStart(s: State, e: SlantEdit): number {
 }
 
 const num = (v: unknown, fallback: number) => (v === undefined || v === '' || !Number.isFinite(Number(v)) ? fallback : Number(v));
-const objectValue = (s: State, o: PlateObject, key: string) => o.settings[key] ?? effectiveConfig(s, 'process')[key];
+const objectValue = (s: State, o: PlateObject, key: string) => objectValues(s, o.id).values[key];
 
 export function initialSlant(s: State = getState()): SlantEdit | null {
   const t = slantTarget(s);
@@ -155,7 +155,7 @@ export async function refreshSlantLimit() {
   if (!head) return setState({ slant: { ...now, limit: undefined } });
   const width = span(instanceBox(t.o, t.inst), now.dir);
   const duct = ['1', 'true'].includes(String(process.nonplanar_ignore_duct ?? '0'));
-  const tolerance = num(process.nonplanar_collision_tolerance ?? OPTIONS.nonplanar_collision_tolerance?.default, 0);
+  const tolerance = num(process.nonplanar_collision_tolerance, 0);
   const limit = slantLimit(head, now.dir, Math.max(width, 1e-3), num(objectValue(s, t.o, 'layer_height'), 0.2), duct, tolerance);
   setState({ slant: { ...now, limit } });
 }

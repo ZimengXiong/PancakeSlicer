@@ -1,4 +1,3 @@
-import { reportProblem } from '../build-info';
 import { openUrlImport } from '../url-import';
 import { savePreferences } from '../saved-preferences';
 import { addInstance, arrangeAll, canBoolean, canExport, cancelSlice, download, fillBed, openFileDialog, outputKind,
@@ -15,10 +14,10 @@ import { cutBlocked, toggleCut } from '../plater/cut';
 import { addPlate, canAddPlate, duplicatePlate, exportAll, exportablePlates, sliceAll } from '../plater/plates';
 import { assembly, setAssembly } from '../plater/assembly';
 import { openGcode } from '../preview/jump';
-import { canCalibrate } from '../api/client';
 import { setThemePref } from '../theme';
 import { canEditLayers } from '../components/LayerHeight';
 import { registerCommand, type Command } from './registry';
+import { reportProblem } from '../build-info';
 
 const s = getState;
 const objects = () => s().objects.length > 0 || 'Add a model first';
@@ -56,7 +55,7 @@ export const CORE: Command[] = [
   { id: 'file.import', title: 'Import models…', group: 'File', keys: 'Mod+I', keywords: 'add open stl 3mf obj step load', run: openFileDialog, boost: 60 },
   { id: 'file.gcode', title: 'Open G-code…', group: 'File', run: () => openGcode() },
   { id: 'file.configs', title: 'Import profiles…', group: 'File', keywords: 'presets bundle configs', run: () => setState({ presetUx: { kind: 'import' } }) },
-  { id: 'file.export', get title() { return exportTitle(); }, group: 'File', keys: 'Mod+G', keywords: 'download save sliced file gcode 3mf', enabled: exportable, run: download, boost: 80 },
+  { id: 'file.export', get title() { return exportTitle(); }, group: 'File', keys: 'Mod+E', keywords: 'download save sliced file gcode 3mf', enabled: exportable, run: download, boost: 80 },
   { id: 'file.send', title: 'Print — send to printer…', group: 'File', keywords: 'send upload printer bambu octoprint prusalink', enabled: () => printers() === true ? exportable() : printers(), run: app('send'), boost: 80 },
   { id: 'file.exportall', title: 'Export all plates', group: 'File', enabled: () => s().projectPlates.length > 1 ? !busy(s()) && exportablePlates(s()).length > 0 || 'Slice the plates first' : 'One plate only', run: () => void exportAll() },
   { id: 'file.stl', title: 'Export all objects as one STL…', group: 'File', keywords: 'mesh', enabled: objects, run: () => void import('../exportStl').then((m) => m.exportStl(false, false)) },
@@ -100,9 +99,9 @@ export const CORE: Command[] = [
   { id: 'tool.cut', title: 'Cut', group: 'Tools', keys: 'C', keywords: 'gizmo split plane', enabled: () => !cutBlocked() || cutBlocked()!, run: () => { setState({ tab: 'prepare' }); toggleCut(); } },
   { id: 'tool.measure', title: 'Measure', group: 'Tools', keys: 'U', keywords: 'distance', enabled: selection, run: gizmo('measure') },
   { id: 'tool.boolean', title: 'Mesh boolean', group: 'Tools', keys: 'B', keywords: 'union difference intersection', enabled: () => canBoolean(s()) || 'Select an object with parts', run: toggleBoolean },
-  { id: 'tool.text', title: 'Text', group: 'Tools', keys: 'T', keywords: 'emboss label', enabled: () => !!s().features.emboss_text || 'Not with this tool', run: toggleText },
-  { id: 'tool.svg', title: 'SVG', group: 'Tools', keywords: 'emboss image logo', enabled: () => !!s().features.emboss_svg || 'Not with this tool', run: toggleSvg },
-  { id: 'tool.brimears', title: 'Brim ears', group: 'Tools', keys: 'E', enabled: () => !!s().features.brim_ears ? editable() : 'Not with this tool', run: gizmo('brimears') },
+  { id: 'tool.text', title: 'Text', group: 'Tools', keys: 'T', keywords: 'emboss label', run: toggleText },
+  { id: 'tool.svg', title: 'SVG', group: 'Tools', keywords: 'emboss image logo', run: toggleSvg },
+  { id: 'tool.brimears', title: 'Brim ears', group: 'Tools', keys: 'E', enabled: editable, run: gizmo('brimears') },
   { id: 'tool.layers', title: 'Variable layer height', group: 'Tools', keywords: 'adaptive', enabled: () => canEditLayers(s()) || 'Select one object', run: gizmo('layers') },
   ...PAINTS.map(([k, title, keys]): Command => ({ id: `tool.paint.${k}`, title, group: 'Tools', keys, keywords: 'paint brush', enabled: () => canPaint(s()) || 'Select one object', run: () => { setState({ tab: 'prepare' }); togglePaint(k); } })),
   { id: 'tool.assembly', title: 'Assembly view', group: 'Tools', keywords: 'explode', enabled: objects, run: () => setAssembly({ on: !assembly().on }) },
@@ -131,8 +130,7 @@ export const CORE: Command[] = [
 
   { id: 'preset.printer', title: 'Printer settings…', group: 'Preset', keywords: 'machine edit', run: () => setState({ dialog: { type: 'machine', slot: 0 } }) },
   { id: 'preset.filament', title: 'Filament settings…', group: 'Preset', keywords: 'material edit', run: () => setState({ dialog: { type: 'filament', slot: 0 } }) },
-  { id: 'preset.process', title: 'Process settings', group: 'Preset', keywords: 'quality edit', run: () => setState({ tab: 'prepare', processScope: 'global' }) },
-  { id: 'preset.filaments', title: 'Set filaments to use…', group: 'Preset', run: app('filaments') },
+  { id: 'preset.process', title: 'Process settings', group: 'Preset', keywords: 'quality edit', run: () => setState({ tab: 'prepare' }) },
   { id: 'preset.create', title: 'Create printer…', group: 'Preset', keywords: 'new machine nozzle', run: app('createPrinter') },
   { id: 'preset.search', title: 'Search settings', group: 'Preset', keys: 'Mod+F / /', keywords: 'find option', run: () => void import('./registry').then((m) => m.openPalette('/')) },
 
@@ -143,7 +141,7 @@ export const CORE: Command[] = [
   { id: 'help.about', title: 'About PancakeSlicer', group: 'Help', keywords: 'version licence', run: app('about') },
   { id: 'help.report', title: 'Report a problem', group: 'Help', keywords: 'bug issue feedback github', run: reportProblem },
   { id: 'help.calibguide', title: 'Calibration guide', group: 'Help', run: () => void window.open('https://www.orcaslicer.com/wiki/calibration_guide', '_blank', 'noopener') },
-  ...CALIB.map(([k, title]): Command => ({ id: `calib.${k}`, title: `Calibrate: ${title}`, group: 'Calibration', enabled: () => canCalibrate() || 'Not with this tool', run: () => setState({ calibDialog: k }) })),
+  ...CALIB.map(([k, title]): Command => ({ id: `calib.${k}`, title: `Calibrate: ${title}`, group: 'Calibration', run: () => setState({ calibDialog: k }) })),
 
   { id: 'key.tab', title: 'Model / Layers (in a 3D view)', group: 'View', keys: 'Tab' },
   { id: 'key.views', title: 'Views', group: 'View', keys: '0 … 6' },

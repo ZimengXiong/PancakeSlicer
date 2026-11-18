@@ -24,23 +24,29 @@ import (
 	"github.com/andybalholm/brotli"
 )
 
-//go:embed options.json
-var optionData []byte
-
 type cachedResponse struct {
 	plain, zipped []byte
 	etag          string
-	brotli atomic.Pointer[[]byte]
+	brotli        atomic.Pointer[[]byte]
 }
 
 var brotliSlot = make(chan struct{}, 1)
 
-func cacheResponse(b []byte) *cachedResponse {
-	var zipped bytes.Buffer
-	z := gzip.NewWriter(&zipped)
-	z.Write(b)
-	z.Close()
-	c := &cachedResponse{plain: b, zipped: zipped.Bytes(), etag: fmt.Sprintf(`"%x"`, sha256.Sum256(b))}
+func cacheResponse(b []byte) *cachedResponse { return precompressedResponse(b, nil, nil) }
+
+func precompressedResponse(b, gzipped, brotliEncoded []byte) *cachedResponse {
+	if gzipped == nil {
+		var zipped bytes.Buffer
+		z := gzip.NewWriter(&zipped)
+		z.Write(b)
+		z.Close()
+		gzipped = zipped.Bytes()
+	}
+	c := &cachedResponse{plain: b, zipped: gzipped, etag: fmt.Sprintf(`"%x"`, sha256.Sum256(b))}
+	if brotliEncoded != nil {
+		c.brotli.Store(&brotliEncoded)
+		return c
+	}
 	go func() {
 		brotliSlot <- struct{}{}
 		defer func() { <-brotliSlot }()
@@ -171,13 +177,13 @@ func serveGzipped(w http.ResponseWriter, r *http.Request, path string, st os.Fil
 			return
 		}
 		if err != nil {
-			failUncached(w, "Couldn't compress the output file: " + err.Error())
+			failUncached(w, "couldnt_compress_output_file", err.Error())
 			return
 		}
 	}
 	f, err := os.Open(cached)
 	if err != nil {
-		failUncached(w, "Oops! Couldn't open the output file on the server.")
+		failUncached(w, "couldnt_open_output_file")
 		return
 	}
 	defer f.Close()
@@ -192,7 +198,7 @@ func serveGzipped(w http.ResponseWriter, r *http.Request, path string, st os.Fil
 	}
 	z, err := gzip.NewReader(f)
 	if err != nil {
-		failUncached(w, "Oops! Couldn't open the output file on the server.")
+		failUncached(w, "couldnt_open_output_file")
 		return
 	}
 	if r.Method != http.MethodHead {
@@ -206,11 +212,11 @@ func copyOrAbort(w io.Writer, src io.Reader) {
 	}
 }
 
-func failUncached(w http.ResponseWriter, msg string) {
+func failUncached(w http.ResponseWriter, code string, args ...any) {
 	for _, h := range []string{"Cache-Control", "ETag", "Content-Encoding", "Content-Disposition"} {
 		w.Header().Del(h)
 	}
-	fail(w, 500, msg)
+	fail(w, 500, code, args...)
 }
 
 func writeGzipped(w http.ResponseWriter, r *http.Request, path, cached string, encode func(io.Reader, io.Writer, func() error) error) (streamed bool, err error) {
@@ -264,6 +270,7 @@ type staticEntry struct {
 	size     int64
 	response *cachedResponse
 	build    string
+	page     []byte
 }
 type staticCache struct {
 	mu    sync.Mutex
@@ -279,7 +286,7 @@ func mimeType(path string) string {
 	}
 	return t
 }
-func (c *staticCache) serve(w http.ResponseWriter, r *http.Request, path string, st os.FileInfo) {
+func (c *staticCache) serve(w http.ResponseWriter, r *http.Request, path string, st os.FileInfo, boot func(*http.Request) []byte) {
 	policy := "public, max-age=300, must-revalidate"
 	if filepath.Base(path) == "index.html" {
 		policy = "no-cache"
@@ -303,6 +310,12 @@ func (c *staticCache) serve(w http.ResponseWriter, r *http.Request, path string,
 		http.NotFound(w, r)
 		return
 	}
+	if script := []byte(nil); entry.page != nil && boot != nil {
+		if script = boot(r); script != nil {
+			precompressedResponse(withBoot(entry.page, script), nil, nil).serve(w, r, st.Name(), contentType, policy, st.ModTime())
+			return
+		}
+	}
 	entry.response.serve(w, r, st.Name(), contentType, policy, st.ModTime())
 }
 
@@ -322,10 +335,23 @@ func (c *staticCache) entry(path string, st os.FileInfo) (staticEntry, bool) {
 		sum := sha256.Sum256(b)
 		entry.build = hex.EncodeToString(sum[:6])
 		b = bytes.Replace(b, []byte("</head>"), []byte(`<meta name="orca-build" content="`+entry.build+`"></head>`), 1)
+		entry.page = b
 	}
-	entry.response = cacheResponse(b)
+	entry.response = precompressedResponse(b, sibling(path+".gz", st), sibling(path+".br", st))
 	c.files[path] = entry
 	return entry, true
+}
+
+func sibling(path string, of os.FileInfo) []byte {
+	st, err := os.Stat(path)
+	if err != nil || st.ModTime().Before(of.ModTime()) {
+		return nil
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	return b
 }
 
 func (c *staticCache) build(dir string) string {

@@ -1,5 +1,6 @@
+import { objectValues } from '../profiles/view';
 import type { Config, ConfigValue } from '../api/types';
-import { effectiveConfig, getState, markStale, newId, setState, type LayerRange, type PlateObject } from '../state/store';
+import { getState, markStale, newId, setState, type LayerRange, type PlateObject } from '../state/store';
 import { undoable } from '../state/history';
 
 const mapRanges = (objectId: number, fn: (rs: LayerRange[]) => LayerRange[], name: string, merge?: string) =>
@@ -8,7 +9,7 @@ const mapRanges = (objectId: number, fn: (rs: LayerRange[]) => LayerRange[], nam
     job: markStale(s.job),
   })), merge);
 
-const defaultHeight = (o: PlateObject) => Number(o.settings.layer_height ?? effectiveConfig(getState(), 'process').layer_height) || 0.2;
+const defaultHeight = (o: PlateObject) => Number(objectValues(getState(), o.id).values.layer_height) || 0.2;
 
 export function addHeightRanges(objectId: number) {
   const o = getState().objects.find((x) => x.id === objectId);

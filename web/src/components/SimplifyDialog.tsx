@@ -1,7 +1,7 @@
 import { Range } from './Range';
 import { Dropdown } from './Dropdown';
 import { useState } from 'react';
-import { getState, useStore } from '../state/store';
+import { getState } from '../state/store';
 import { simplifyModel, triangleCount } from '../plater/meshOps';
 import { Modal, ModalBody, ModalFooter, ModalTitle } from './Modal';
 
@@ -9,20 +9,17 @@ const LEVELS: [string, number][] = [['Extra high', 0.001], ['High', 0.01], ['Med
 
 export default function SimplifyDialog({ close }: { close(): void }) {
   const s = getState(), o = s.objects.find((x) => x.id === s.selected?.object);
-  const levels = useStore((st) => !!st.features.mesh_simplify_error);
-  const [useCount, setUseCount] = useState(!levels);
+  const [useCount, setUseCount] = useState(false);
   const [level, setLevel] = useState(2);
   const [ratio, setRatio] = useState(50);
   if (!o) return null;
   const total = triangleCount(o), wanted = Math.max(1, Math.round(total * (1 - ratio / 100)));
-  const count = useCount || !levels;
+  const count = useCount;
   return (
     <Modal size="m" label={`Simplify ${o.name}`} onClose={close}>
       <ModalTitle title={`Simplify ${o.name}`} onClose={close} />
       <ModalBody className="modal-fields">
-        {levels && <div className="form-row"><span>Method</span><span className="seg" role="radiogroup" aria-label="Method">
-          <button type="button" role="radio" aria-checked={!count} onClick={() => setUseCount(false)}>Detail level</button>
-          <button type="button" role="radio" aria-checked={count} onClick={() => setUseCount(true)}>Reduce by</button></span></div>}
+        {<div className="form-row"><span>Method</span><Dropdown className="combo" aria-label="Method" value={count ? 'count' : 'level'} onValueChange={(next) => setUseCount(next === 'count')} options={[{ value: 'level', label: 'Detail level' }, { value: 'count', label: 'Reduce by' }]} /></div>}
         {!count ? <label className="form-row"><span>Detail level</span>
           <Dropdown className="combo" value={level} aria-label="Detail level" onValueChange={(next) => setLevel(Number(next))} options={[...LEVELS.map(([label], i) => ({ value: i, label }))]} /></label>
           : <label className="form-row"><span>Reduce by</span><span className="modal-unit simplify-ratio">

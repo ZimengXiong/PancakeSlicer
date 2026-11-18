@@ -1,4 +1,5 @@
 #include "StrengthTerm.hpp"
+#include "libslic3r/Nonplanar/Research.hpp"
 
 #include "FieldObjective.hpp"
 
@@ -94,7 +95,7 @@ double StrengthTerm::cost(const ObjectiveGeometry &, const std::vector<Vec3d> &G
 
 std::shared_ptr<const FieldTerm> make_strength_term(const ObjectiveGeometry &g)
 {
-    const char *path = std::getenv("NP_STRENGTH_FILE");
+    const char *path = research_switch("NP_STRENGTH_FILE");
     if (path == nullptr || *path == 0) {
         BOOST_LOG_TRIVIAL(warning) << "Strength term: NP_STRENGTH_FILE unset, the term is zero";
         return std::make_shared<const StrengthTerm>(g, std::string());
