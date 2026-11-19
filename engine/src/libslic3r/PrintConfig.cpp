@@ -5288,7 +5288,7 @@ void PrintConfigDef::init_fff_params()
                       "of the part's estimated extrusion time; on typical parts every outer wall fits, for 5 to 20 % more "
                       "print time. Walls already raised onto a top by Z contouring keep their single line.");
     def->mode     = comAdvanced;
-    def->set_default_value(new ConfigOptionBool(false));
+    def->set_default_value(new ConfigOptionBool(true));
 
     def = this->add("nonplanar_flow_mod", coBool);
     def->label    = L("Non-planar flow modulation");
@@ -5345,10 +5345,10 @@ void PrintConfigDef::init_fff_params()
                       "the flat nozzle tip through the shell, and flexible filaments are not ironed. Auto irons a curved area only "
                       "when ironing is asked for and the flat nozzle tip fits its curvature; an object, modifier or height range set "
                       "to \"No ironing\" irons none."
-                      " Default: off. Unit: unitless on/off. Auto admits requested ironing only where the nozzle land fits "
+                      " Default: on. Unit: unitless on/off. Auto admits requested ironing only where the nozzle land fits "
                       "the curvature, and disables it on rotary printers.");
     def->mode     = comAdvanced;
-    def->set_default_value(new ConfigOptionBool(false));
+    def->set_default_value(new ConfigOptionBool(true));
 
     def = this->add("nonplanar_top_finish_flow", coFloat);
     def->label    = L("Curved top flow");
@@ -5418,9 +5418,9 @@ void PrintConfigDef::init_fff_params()
                       "undersides down to flat roofs, and bridges that curved bridges do not take. The layers bend by at most the "
                       "non-planar maximum slope, 40° when it is 0. With supports and the curved support interface on, supported "
                       "overhangs get that interface instead. Auto always prints them and leaves support out under them."
-                      " Default: off. Unit: unitless on/off. Auto enables curved overhangs regardless of this switch.");
+                      " Default: on. Unit: unitless on/off. Auto enables curved overhangs regardless of this switch.");
     def->mode     = comAdvanced;
-    def->set_default_value(new ConfigOptionBool(false));
+    def->set_default_value(new ConfigOptionBool(true));
 
     def = this->add("nonplanar_bridges", coBool);
     def->label    = L("Curved bridges");
@@ -5429,10 +5429,10 @@ void PrintConfigDef::init_fff_params()
                       "bead settles into, instead of straight lines that droop after they are laid. The layers above level the sag "
                       "out with thicker beads. Not with supports on, which would stand in the sag. Auto prints them whenever supports "
                       "are off."
-                      " Default: off. Unit: unitless on/off. Auto enables curved bridges when supports are off regardless of "
+                      " Default: on. Unit: unitless on/off. Auto enables curved bridges when supports are off regardless of "
                       "this switch.");
     def->mode     = comAdvanced;
-    def->set_default_value(new ConfigOptionBool(false));
+    def->set_default_value(new ConfigOptionBool(true));
 
     def = this->add("nonplanar_fallback", coEnum);
     def->label    = L("Non-planar fallback");
@@ -5630,7 +5630,7 @@ void PrintConfigDef::init_fff_params()
     def->min = 0;
     def->max = 20;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionInt(0));
+    def->set_default_value(new ConfigOptionInt(2));
 
     def = this->add("nonplanar_curved_min_area", coFloat);
     def->label = L("Minimum curved top area");
