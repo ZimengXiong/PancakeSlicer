@@ -472,6 +472,17 @@ func (s *Server) planImport(presets []parsedPreset, lib *resolve.Library) []impo
 	kinds := map[string]string{"machine": "printer", "filament": "filament", "process": "process"}
 	rows := []importRow{}
 	taken := map[string]*parsedPreset{}
+	claimed := map[string]*parsedPreset{}
+	claim := func(id string, p *parsedPreset) bool {
+		if !strings.HasPrefix(id, "profile:") || lib.Printers[id] != nil || lib.Filaments[id] != nil || lib.Processes[id] != nil || lib.Alias[id] != "" {
+			return false
+		}
+		if owner := claimed[id]; owner != nil && owner != p {
+			return false
+		}
+		claimed[id] = p
+		return true
+	}
 	kindLabel := map[string]string{"printer": "printer", "filament": "filament", "process": "print profile"}
 	freeName := func(kind, wanted string) string {
 		name := wanted
@@ -538,8 +549,19 @@ func (s *Server) planImport(presets []parsedPreset, lib *resolve.Library) []impo
 					return skipped("the record exported with it is incomplete")
 				}
 				delete(record, "archived")
+				exported := stringValue(record["id"])
+				if row.Status == "new" && claim(exported, p) {
+					head["id"] = exported
+				}
 				for k, v := range head {
 					record[k] = must(json.Marshal(v))
+				}
+				if kind == "filament" && exported != head["id"] && claim(exported, p) {
+					var aliases []string
+					json.Unmarshal(record["aliases"], &aliases)
+					if !slices.Contains(aliases, exported) {
+						record["aliases"] = must(json.Marshal(append(aliases, exported)))
+					}
 				}
 				row.Record = must(json.Marshal(record))
 				row.Basis = cmpOr(stringValue(record["product"]), "Auto")
@@ -832,6 +854,47 @@ func (s *Server) planImport(presets []parsedPreset, lib *resolve.Library) []impo
 			rows = append(rows, edited(added))
 		default:
 			rows = append(rows, edited(decode("", row)))
+		}
+	}
+	arriving := map[string]bool{}
+	for _, r := range rows {
+		var rec struct {
+			ID      string   `json:"id"`
+			Aliases []string `json:"aliases"`
+		}
+		if r.Record != nil && r.Status != "skip" && json.Unmarshal(r.Record, &rec) == nil {
+			arriving[r.Kind+"\x00"+rec.ID] = true
+			for _, a := range rec.Aliases {
+				arriving[r.Kind+"\x00"+a] = true
+			}
+		}
+	}
+	for i := range rows {
+		r := &rows[i]
+		if r.Kind != "printer" || r.Record == nil || r.Status == "skip" {
+			continue
+		}
+		var record map[string]json.RawMessage
+		var slots []map[string]json.RawMessage
+		if json.Unmarshal(r.Record, &record) != nil || json.Unmarshal(record["slots"], &slots) != nil {
+			continue
+		}
+		cleared := false
+		for _, slot := range slots {
+			if id := stringValue(slot["filament"]); id != "" && !arriving["filament\x00"+id] {
+				if f := lib.Filament(id); f == nil || !f.Live() {
+					slot["filament"], cleared = must(json.Marshal("")), true
+				}
+			}
+		}
+		if id := stringValue(record["process"]); id != "" && !arriving["process\x00"+id] && !live("process", id) {
+			delete(record, "process")
+			cleared = true
+		}
+		if cleared {
+			record["slots"] = must(json.Marshal(slots))
+			r.Record = must(json.Marshal(record))
+			r.Note = strings.TrimPrefix(r.Note+"; Some filaments or the print profile weren't in the library or the import, so pick them again", "; ")
 		}
 	}
 	for i := range rows {
