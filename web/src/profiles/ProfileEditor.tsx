@@ -82,7 +82,7 @@ export function ProfileEditor({type, name, draft, update, onBack, onClose, onSav
   useEffect(() => {onSavingChange?.(saving);}, [saving]);
   useEffect(() => () => {if (m.get().value === 'saving' || m.get().value === 'renaming') onSavingChange?.(false);}, []);
   const latest = useRef<ProfileDraft>({values, baseline, origin: draft?.origin ?? source, printer: draft?.printer ?? ownerPrinter, staged:draft?.staged}); latest.current = {values, baseline, origin: draft?.origin ?? source, printer: draft?.printer ?? ownerPrinter, staged:draft?.staged,scales:draft?.scales,printOverrides:draft?.printOverrides,speedModel:draft?.speedModel,speedOverrides:draft?.speedOverrides,cleared:draft?.cleared,locked:draft?.locked};
-  const set = useCallback((k: string, value: ConfigValue) => { const current = latest.current; update(key, {...current, values: {...current.values, [k]: value}}); }, [key, update]);
+  const set = useCallback((k: string, value: ConfigValue) => { const current = latest.current, next = {...current, values: {...current.values, [k]: value}}; latest.current = next; update(key, next); }, [key, update]);
   const reset = useCallback((k: string) => { const current = latest.current; const next = {...current.values}; if (current.baseline[k] === undefined) delete next[k]; else next[k] = current.baseline[k]; update(key, {...current, values: next}); }, [key, update]);
   const resetToBase = useCallback((k: string) => { const current = latest.current, next = {...current.values}, below = valueBelow(resolved.layers[k], 'record');
     if (below === undefined) delete next[k]; else next[k] = below;
