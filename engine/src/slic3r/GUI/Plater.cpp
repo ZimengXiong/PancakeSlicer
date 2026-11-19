@@ -1024,7 +1024,7 @@ void Sidebar::priv::layout_printer(bool isBBL, bool isDual)
 
     PresetBundle &preset_bundle = *wxGetApp().preset_bundle;
     const auto& cfg = preset_bundle.printers.get_edited_preset().config;
-    panel_printer_bed->Show(preset_bundle.is_bbl_vendor() || cfg.opt_bool("support_multi_bed_types"));
+    panel_printer_bed->Show();
 
     extruder_dual_sizer->Show(isDual);
 
@@ -3511,7 +3511,7 @@ void Sidebar::update_all_preset_comboboxes()
 
     show_SEMM_buttons();
 
-    if (is_bbl_vendor || cfg.opt_bool("support_multi_bed_types")) {
+    if (print_tech == ptFFF) {
         p->combo_printer_bed->Enable();
         if (!p->plater->is_loading_project()) {
             bool has_changed = reset_bed_type_combox_choices();
@@ -3540,7 +3540,7 @@ void Sidebar::update_all_preset_comboboxes()
         p->combo_printer_bed->Disable();
     }
 
-    p->panel_printer_bed->Show(is_bbl_vendor || cfg.opt_bool("support_multi_bed_types"));
+    p->panel_printer_bed->Show(print_tech == ptFFF);
 
     if (print_tech == ptFFF) {
         for (PlaterPresetComboBox* cb : p->combos_filament)

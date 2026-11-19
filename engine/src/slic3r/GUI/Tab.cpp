@@ -2176,6 +2176,7 @@ void Tab::update_wiping_button_visibility() {
 void Tab::activate_option(const std::string& opt_key, const wxString& category)
 {
     wxString page_title = translate_category(category, m_type);
+    Page* selected_page = nullptr;
 
     auto cur_item = m_tabctrl->GetFirstVisibleItem();
     if (cur_item < 0)
@@ -2205,6 +2206,7 @@ void Tab::activate_option(const std::string& opt_key, const wxString& category)
             }
         }
 
+        selected_page = m_pages[cur_item].get();
         m_tabctrl->SelectItem(cur_item);
         break;
     }
@@ -2219,7 +2221,7 @@ void Tab::activate_option(const std::string& opt_key, const wxString& category)
 #endif
     };
 
-    Field* field = get_field(opt_key);
+    Field* field = selected_page ? selected_page->get_field(opt_key) : nullptr;
 
     if (field) {
         set_focus(field->getWindow());
@@ -2235,7 +2237,8 @@ void Tab::activate_option(const std::string& opt_key, const wxString& category)
            set_focus(field->getWindow());
     }
 
-    m_highlighter.init(get_custom_ctrl_with_blinking_ptr(opt_key));
+    if (selected_page == m_active_page)
+        m_highlighter.init(get_custom_ctrl_with_blinking_ptr(opt_key));
 }
 
 void Tab::apply_searcher()
@@ -3095,7 +3098,7 @@ void TabPrint::toggle_options()
 
     if (m_type == Preset::TYPE_PLATE) {
         const auto &printer_config = m_preset_bundle->printers.get_edited_preset().config;
-        toggle_option("curr_bed_type", m_preset_bundle->is_bbl_vendor() || printer_config.opt_bool("support_multi_bed_types"));
+        toggle_option("curr_bed_type", printer_config.opt_enum<PrinterTechnology>("printer_technology") == ptFFF);
     }
 
     Field *field = m_active_page->get_field("support_style");
