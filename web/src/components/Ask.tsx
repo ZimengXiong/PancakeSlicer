@@ -17,7 +17,7 @@ const ask = (a: Omit<Ask, 'resolve'>) =>
 export const confirmDialog = (title: string, message: string, buttons?: [string, string], danger?: boolean) => ask({ title, message, buttons, danger }).then((v) => v !== null);
 export const saveDiscardDialog = (title: string, message: string, save = 'Save') =>
   ask({ title, message, buttons: [save, 'Cancel'], alternative: 'Discard' }).then((v) => v === null ? null : v === 'alternative' ? 'discard' as const : 'save' as const);
-export const messageDialog = (title: string, message: string) => ask({ title, message, buttons: ['Close', null] }).then(() => undefined);
+export const messageDialog = (title: string, message: string, button = 'Close') => ask({ title, message, buttons: [button, null] }).then(() => undefined);
 export const promptDialog = (title: string, value: string, validate?: (v: string) => string | null) => ask({ title, value, validate }).then((v) => v?.trim() || null);
 export const numberDialog = (title: string, prompt: string, value: number, min: number, max: number) =>
   ask({ title, message: prompt, value: String(value), range: [min, max] }).then((v) => v === null || v.trim() === '' ? null : Math.min(max, Math.max(min, Math.round(Number(v)))))

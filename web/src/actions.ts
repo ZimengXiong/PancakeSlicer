@@ -435,6 +435,7 @@ export interface JobSink {
   progress(p: { pct: number; stage: string; id?: string }): void;
   done(job: JobView): void;
   failed(error: string, code: string): void;
+  timeoutWarning?(): void;
 }
 
 export function runJob(api: Api, request: JobRequest, signature: string, sink: JobSink, calib?: string): () => void {
@@ -466,6 +467,7 @@ export function runJob(api: Api, request: JobRequest, signature: string, sink: J
           live = false;
           complete(status);
         },
+timeoutWarning: () => { if (live) sink.timeoutWarning?.(); },
         error: (msg, code) => {
           if (!live) return;
           live = false;
@@ -535,6 +537,9 @@ export async function slice(calib?: { kind: string; params: string; head?: strin
     progress: ({ id, ...p }) => { if (!current()) return; bindSlicePreview(navigation, id); setState(st => id ? {job: {...st.job, id, state: 'running', ...p}} : st.job.state === 'submitting' ? {job: {...st.job, ...p}} : {}); },
     done: (job) => { if (!current()) return; bindSlicePreview(navigation, job.id); setState({job: {...job, stale: plateSignature(getState()) !== signature}}); },
     failed: (error, errorCode) => { if (current()) setState(st => ({job: {...st.job, state: 'failed', error, errorCode}})); },
+    timeoutWarning: () => {
+      if (current()) void confirmDialog('Slicing is taking longer than expected', 'The slice is still running. It will continue automatically unless you stop it.', ['Continue', 'Stop']).then((ok) => { if (!ok) cancelSlice(); });
+    },
   }, calib?.kind);
 }
 
