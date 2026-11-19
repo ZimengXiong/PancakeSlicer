@@ -3,10 +3,15 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"mime"
 	"mime/multipart"
 	"net"
@@ -329,7 +334,25 @@ func cameraTLS(ctx context.Context, p *PrinterConfig, port int) (net.Conn, error
 	if err != nil {
 		return nil, err
 	}
-	conn, err := dialTLS(ctx, target.Addr().String(), port, p.tlsConfig(p.Serial))
+	config := p.tlsConfig(p.Serial)
+	if port == 322 && p.TLS == "bambu-ca" {
+		verify := config.VerifyConnection
+		config.VerifyConnection = func(cs tls.ConnectionState) error {
+			err := verify(cs)
+			var unknown x509.UnknownAuthorityError
+			if !errors.As(err, &unknown) {
+				return err
+			}
+			mqtt, err := dialTLS(ctx, target.Addr().String(), 8883, p.tlsConfig(p.Serial))
+			if err != nil {
+				return err
+			}
+			defer mqtt.Close()
+			cs.PeerCertificates = append(cs.PeerCertificates, mqtt.ConnectionState().PeerCertificates[1:]...)
+			return verify(cs)
+		}
+	}
+	conn, err := dialTLS(ctx, target.Addr().String(), port, config)
 	if err != nil {
 		return nil, err
 	}
@@ -447,6 +470,29 @@ func httpCamera(ctx context.Context, p *PrinterConfig, typed string, emit func([
 	return ctx.Err()
 }
 
+func cameraTLSListener() (net.Listener, error) {
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1)},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, key.Public(), key)
+	if err != nil {
+		return nil, err
+	}
+	return tls.Listen("tcp", "127.0.0.1:0", &tls.Config{
+		MinVersion:   tls.VersionTLS12,
+		Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}},
+	})
+}
+
 func rtspCamera(ctx context.Context, p *PrinterConfig, secret string, emit func([]byte, bool)) error {
 	executable, err := exec.LookPath("ffmpeg")
 	if err != nil {
@@ -457,7 +503,7 @@ func rtspCamera(ctx context.Context, p *PrinterConfig, secret string, emit func(
 		return err
 	}
 	defer conn.Close()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := cameraTLSListener()
 	if err != nil {
 		return err
 	}
@@ -474,8 +520,8 @@ func rtspCamera(ctx context.Context, p *PrinterConfig, secret string, emit func(
 		go func() { io.Copy(conn, local); conn.Close() }()
 		io.Copy(local, conn)
 	}()
-	target := url.URL{Scheme: "rtsp", Host: listener.Addr().String(), User: url.UserPassword("bblp", secret), Path: "/streaming/live/1"}
-	cmd := exec.CommandContext(ctx, executable, "-hide_banner", "-loglevel", "error", "-rtsp_transport", "tcp", "-analyzeduration", "500000", "-probesize", "32768", "-timeout", "15000000", "-i", target.String(), "-map", "0:v:0", "-an", "-c:v", "copy", "-movflags", "frag_keyframe+empty_moov+default_base_moof", "-flush_packets", "1", "-f", "mp4", "pipe:1")
+	target := url.URL{Scheme: "rtsps", Host: listener.Addr().String(), User: url.UserPassword("bblp", secret), Path: "/streaming/live/1"}
+	cmd := exec.CommandContext(ctx, executable, "-hide_banner", "-loglevel", "error", "-rtsp_transport", "tcp", "-tls_verify", "0", "-analyzeduration", "500000", "-probesize", "32768", "-timeout", "15000000", "-i", target.String(), "-map", "0:v:0", "-an", "-c:v", "copy", "-movflags", "frag_keyframe+empty_moov+default_base_moof", "-flush_packets", "1", "-f", "mp4", "pipe:1")
 	pipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return err

@@ -238,7 +238,7 @@ func (p *PrinterConfig) tlsConfig(serverName string) *tls.Config {
 		c.VerifyConnection = func(cs tls.ConnectionState) error {
 			leaf, err := p.bambuLeaf(cs)
 			if err != nil {
-				return errors.New("The printer's security certificate wasn't signed by the Bambu printer CA.")
+				return &bambuCertificateError{cause: err}
 			}
 			if !strings.EqualFold(leaf.Subject.CommonName, p.Serial) {
 				return &serialMismatch{leaf.Subject.CommonName}
@@ -267,6 +267,14 @@ func (p *PrinterConfig) tlsConfig(serverName string) *tls.Config {
 }
 
 var errPinMismatch = errors.New("The printer's security certificate doesn't match the expected fingerprint.")
+
+type bambuCertificateError struct{ cause error }
+
+func (e *bambuCertificateError) Error() string {
+	return "The printer's security certificate wasn't signed by the Bambu printer CA."
+}
+
+func (e *bambuCertificateError) Unwrap() error { return e.cause }
 
 type serialMismatch struct{ actual string }
 
