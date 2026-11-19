@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { fileAccept } from '../file-accept';
 import { bedArea } from '../actions';
 import { addVolume, getState, newId, setState, toast, type SeamMode, type Volume, type VolumeType } from '../state/store';
 import { undoable } from '../state/history';
@@ -46,7 +47,7 @@ export function addPrimitive(objectId: number, type: VolumeType, shape: Shape) {
 export function loadVolume(objectId: number, type: VolumeType) {
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = '.stl,.obj';
+  input.accept = fileAccept(['stl', 'obj']);
   input.onchange = async () => {
     const file = input.files?.[0];
     if (!file) return;

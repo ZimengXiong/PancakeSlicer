@@ -4,6 +4,7 @@ import { Modal, ModalBody, ModalFooter, ModalTitle } from './Modal';
 import type { Config, ConfigValue } from '../api/types';
 import { bedBounds, parsePoints } from '../plater/geometry';
 import { bedAsset, registerBedAsset } from '../plater/bed-assets';
+import { fileAccept } from '../file-accept';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { union, type Polygon, type Pair } from 'polygon-clipping';
 import { setOption, toast } from '../state/store';
@@ -41,9 +42,11 @@ export default function BedShapeDialog({ config, close, onSet = (key, value) => 
         {reason && <span className="control-error" id={errorId} role="status">{reason}</span>}</span></label>;
   };
   const at = (values: number[], set: (v: number[]) => void, i: number) => (v: number) => set(values.map((x, j) => (i === j ? v : x)));
-  const asset = (title: string, value: string, set: (v: string) => void, accept: string) => <div className="form-row"><span>{title}</span>
+  const asset = (title: string, value: string, set: (v: string) => void, exts: string[]) => <div className="form-row"><span>{title}</span>
     <span className="modal-file">{value ? <span className="modal-file-name" data-full-text={value}>{value.split(/[\\/]/).pop()}</span> : <span className="modal-file-none">None</span>}
-      <label className="btn">Choose…<input type="file" aria-label={`Choose ${title.toLowerCase()}`} accept={accept} hidden onChange={(e) => { const file = e.target.files?.[0]; if (file) set(registerBedAsset(file)); }} /></label>
+      <label className="btn">Choose…<input type="file" aria-label={`Choose ${title.toLowerCase()}`} accept={fileAccept(exts)} hidden onChange={(e) => { const file = e.target.files?.[0]; if (!file) return;
+        if (!exts.includes(file.name.split('.').pop()!.toLowerCase())) return setError(`Choose a ${exts.map((e) => e.toUpperCase()).join(' or ')} file.`);
+        setError(''); set(registerBedAsset(file)); }} /></label>
       {value && <button className="btn-ghost" type="button" aria-label={`Remove ${title.toLowerCase()}`} onClick={() => set('')}>Remove</button>}</span></div>;
   const loadShape = async (file: File) => {
     try {
@@ -75,8 +78,8 @@ export default function BedShapeDialog({ config, close, onSet = (key, value) => 
           {num('Origin X', origin[0], at(origin, setOrigin, 0), -ORIGIN_LIMIT, ORIGIN_LIMIT)}{num('Origin Y', origin[1], at(origin, setOrigin, 1), -ORIGIN_LIMIT, ORIGIN_LIMIT)}</>}
         {shape === 'Circular' && num('Diameter', diameter, setDiameter, SIZE_MIN, SIZE_MAX)}
         {shape === 'Custom' && <div className="form-row"><span>Outline</span><span className="modal-file"><span className="modal-file-none">{custom.length >= 3 ? `${custom.length} points` : 'None'}</span>
-          <label className="btn">Load STL…<input type="file" aria-label="Load shape from STL" hidden accept=".stl" onChange={(e) => { const file = e.target.files?.[0]; if (file) void loadShape(file); }} /></label></span></div>}
-        {asset('Texture', texture, setTexture, '.png,.svg')}{asset('Model', model, setModel, '.stl')}
+          <label className="btn">Load STL…<input type="file" aria-label="Load shape from STL" hidden accept={fileAccept(['stl'])} onChange={(e) => { const file = e.target.files?.[0]; if (file) void loadShape(file); }} /></label></span></div>}
+        {asset('Texture', texture, setTexture, ['png', 'svg'])}{asset('Model', model, setModel, ['stl'])}
         {(error || invalid) && <p className="modal-error" role="alert">{error || invalid}</p>}
       </div>
       <svg className="bed-2d" viewBox="0 0 300 300" role="img" aria-label="Bed shape preview">

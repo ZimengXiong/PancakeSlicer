@@ -1,4 +1,5 @@
 import { setState } from '../state/store';
+import { fileAccept } from '../file-accept';
 
 interface StreamLayers { layers: { first: number }[]; layerEnd: number[] }
 let stream: { key: string; data: StreamLayers } | null = null;
@@ -32,7 +33,7 @@ let onFile: ((f: File) => void) | null = null;
 export function openGcode() {
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = '.gcode,.gco,.g,.3mf';
+  input.accept = fileAccept(['gcode', 'gco', 'g', '3mf']);
   input.onchange = () => {
     const f = input.files?.[0];
     if (!f) return;

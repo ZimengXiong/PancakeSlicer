@@ -5,12 +5,13 @@ import type { PresetType } from '../api/types';
 import { applyImport, exportProfiles, planImport, type ExportKind, type ImportRow } from '../profiles/library-io';
 import { setState, toast, useStore } from '../state/store';
 import { Dropdown } from './Dropdown';
+import { fileAccept } from '../file-accept';
 import { Modal, ModalBody, ModalFooter, ModalTitle } from './Modal';
 import { createMachine, useMachine } from '../flow/fsm';
 import { notice, noticeText, type NoticeKind } from '../notice-codes';
 
 const TYPE_NAME: Record<PresetType, string> = { machine: 'Printer', filament: 'Filament', process: 'Process' };
-const ACCEPT = '.json,.zip,.bbscfg,.orca_printer,.orca_filament,.orca_bundle';
+const ACCEPT = fileAccept(['json', 'zip', 'bbscfg', 'orca_printer', 'orca_filament', 'orca_bundle']);
 const close = () => setState({ presetUx: null });
 
 type Row = ImportRow & { checked: boolean; result?: string; ok?: boolean;  added?: ImportRow['record']; addedNote?: string;
