@@ -5,6 +5,7 @@
 	"from": "system",
 	"setting_id": "LyL8izVzYFaXHlPb",
 	"instantiation": "true",
+	"nonplanar_head": "elegoo-centauri-carbon",
 	"nozzle_diameter": [
 		"0.4"
 	],
