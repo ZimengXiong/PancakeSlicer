@@ -58,12 +58,14 @@ const WARNING_TEXTS: Record<string, ((p: Record<string, unknown>) => string) | n
   sla_drilling_failed: () => "The holes couldn't be drilled into the model",
   sla_drilling_partial: () => "Some holes couldn't be drilled into the model",
   sla_hollowing_unsuitable: () => "This model can't be hollowed",
+  object_warning: null,
 };
 const WITH_DETAIL = new Set(['curved_top_flat_share', 'curved_shells_only', 'smooth_morph_limited', 'auto_printed_curved', 'auto_switched_flat',
   'slant_flat', 'multiplanar_auto', 'rotary_planar', 'sublayer_walls_skipped', 'atom_toolpath_note', 'may_need_support', 'settings_warning',
   'precise_seam', 'imex_mode_fallback', 'settings_warning', 'clearance_hits', 'clearance_repair_summary', 'clearance_residual_hits', 'head_profile_fallback']);
 
 export function warningText(w: EngineWarning): string | null {
+  if (w.code === 'object_warning') return w.detail ?? null;
   if (!(w.code in WARNING_TEXTS)) return `The slicer reported a warning (${w.code.replace(/_/g, ' ')})`;
   return WARNING_TEXTS[w.code]?.(w.params ?? {}) ?? null;
 }
