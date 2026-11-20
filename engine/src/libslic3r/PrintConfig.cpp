@@ -10677,11 +10677,14 @@ void PrintConfigDef::handle_legacy(t_config_option_key &opt_key, std::string &va
         }
     }
     else if(opt_key == "ensure_vertical_shell_thickness") {
-        if(value == "1") {
+        if(value == "1" || value == "enabled") {
             value = "ensure_all";
         }
-        else if (value == "0"){
+        else if (value == "0" || value == "partial"){
             value = "ensure_moderate";
+        }
+        else if (value == "disabled") {
+            value = "none";
         }
     } else if (opt_key == "rotate_solid_infill_direction") {
         opt_key = "solid_infill_rotate_template";
