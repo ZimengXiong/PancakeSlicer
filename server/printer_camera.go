@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/binary"
@@ -447,6 +448,80 @@ func httpCamera(ctx context.Context, p *PrinterConfig, typed string, emit func([
 	return ctx.Err()
 }
 
+func relayRTSPRequests(dst io.Writer, src io.Reader, localAuthority, printerAuthority string) error {
+	reader := bufio.NewReaderSize(src, 64<<10)
+	for {
+		prefix, err := reader.Peek(1)
+		if err != nil {
+			return err
+		}
+		if prefix[0] == '$' {
+			header := make([]byte, 4)
+			if _, err = io.ReadFull(reader, header); err != nil {
+				return err
+			}
+			if _, err = dst.Write(header); err != nil {
+				return err
+			}
+			length := int64(binary.BigEndian.Uint16(header[2:]))
+			if _, err = io.CopyN(dst, reader, length); err != nil {
+				return err
+			}
+			continue
+		}
+
+		line, err := reader.ReadSlice('\n')
+		if err != nil {
+			return fmt.Errorf("invalid RTSP request line: %w", err)
+		}
+		if !bytes.HasSuffix(line, []byte("\r\n")) {
+			return errors.New("invalid RTSP request line ending")
+		}
+		requestLine := string(line)
+		parts := strings.Split(strings.TrimSuffix(requestLine, "\r\n"), " ")
+		if len(parts) == 3 && parts[2] == "RTSP/1.0" {
+			u, parseErr := url.Parse(parts[1])
+			if parseErr == nil && strings.EqualFold(u.Scheme, "rtsp") && strings.EqualFold(u.Host, localAuthority) {
+				u.Scheme = "rtsps"
+				u.Host = printerAuthority
+				requestLine = strings.Replace(requestLine, parts[1], u.String(), 1)
+			}
+		}
+		if _, err = io.WriteString(dst, requestLine); err != nil {
+			return err
+		}
+
+		headerBytes := 0
+		var contentLength int64
+		for {
+			line, err = reader.ReadSlice('\n')
+			if err != nil {
+				return fmt.Errorf("invalid RTSP header: %w", err)
+			}
+			headerBytes += len(line)
+			if headerBytes > 1<<20 || !bytes.HasSuffix(line, []byte("\r\n")) {
+				return errors.New("invalid RTSP headers")
+			}
+			if _, err = dst.Write(line); err != nil {
+				return err
+			}
+			if len(line) == 2 {
+				break
+			}
+			name, value, ok := strings.Cut(string(line), ":")
+			if ok && strings.EqualFold(strings.TrimSpace(name), "Content-Length") {
+				contentLength, err = strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+				if err != nil || contentLength < 0 || contentLength > 1<<20 {
+					return errors.New("invalid RTSP Content-Length")
+				}
+			}
+		}
+		if _, err = io.CopyN(dst, reader, contentLength); err != nil {
+			return err
+		}
+	}
+}
+
 func rtspCamera(ctx context.Context, p *PrinterConfig, secret string, emit func([]byte, bool)) error {
 	executable, err := exec.LookPath("ffmpeg")
 	if err != nil {
@@ -471,7 +546,10 @@ func rtspCamera(ctx context.Context, p *PrinterConfig, secret string, emit func(
 		}
 		defer local.Close()
 		listener.Close()
-		go func() { io.Copy(conn, local); conn.Close() }()
+		go func() {
+			_ = relayRTSPRequests(conn, local, listener.Addr().String(), net.JoinHostPort(p.Host, "322"))
+			conn.Close()
+		}()
 		io.Copy(local, conn)
 	}()
 	target := url.URL{Scheme: "rtsp", Host: listener.Addr().String(), User: url.UserPassword("bblp", secret), Path: "/streaming/live/1"}
