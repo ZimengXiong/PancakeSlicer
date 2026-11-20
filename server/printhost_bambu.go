@@ -59,6 +59,19 @@ func sendBambu(ctx context.Context, u *upload) (string, error) {
 	return mqttProjectFile(ctx, p, u, plate, strings.ToUpper(hex.EncodeToString(digest.Sum(nil))))
 }
 
+func bambuRemoteLocation(model, filename string) (remote, url string) {
+	switch model {
+	case "H2D":
+		remote = "ftp:///" + filename
+		return remote, remote
+	case "P2S":
+		remote = "ftp:///cache/" + filename
+		return remote, remote
+	default:
+		return filename, "file:///sdcard/" + filename
+	}
+}
+
 var plateEntry = regexp.MustCompile(`^Metadata/plate_[0-9]+\.gcode$`)
 
 func packagePlate(f *os.File) (string, error) {
@@ -250,8 +263,9 @@ func ftpsUpload(ctx context.Context, host string, config *tls.Config, u *upload)
 			return err
 		}
 	}
+	remote, _ := bambuRemoteLocation(u.printer.model, u.filename)
 	if u.resend {
-		if text, err := c.cmd(213, 15*time.Second, "SIZE %s", u.filename); err == nil && strings.TrimSpace(text) == strconv.FormatInt(u.size, 10) {
+		if text, err := c.cmd(213, 15*time.Second, "SIZE %s", remote); err == nil && strings.TrimSpace(text) == strconv.FormatInt(u.size, 10) {
 			u.onCard = true
 			u.progress.Store(u.size)
 			c.cmd(221, 5*time.Second, "QUIT")
@@ -276,7 +290,7 @@ func ftpsUpload(ctx context.Context, host string, config *tls.Config, u *upload)
 	defer raw.Close()
 	limitSendBuffer(raw)
 	step = "upload"
-	if _, err = c.cmd(150, 15*time.Second, "STOR %s", u.filename); err != nil {
+	if _, err = c.cmd(150, 15*time.Second, "STOR %s", remote); err != nil {
 		return err
 	}
 	data := tls.Client(raw, config)
@@ -410,10 +424,11 @@ func mqttProjectFile(ctx context.Context, p *PrinterConfig, u *upload, plate, md
 	if legacyMapping == nil {
 		legacyMapping, addresses = []int{}, []bambuTrayAddress{}
 	}
+	remote, url := bambuRemoteLocation(p.model, u.filename)
 	if err := mqttPublish(conn, p, map[string]any{"print": map[string]any{
 		"sequence_id": sequence, "command": "project_file", "param": plate,
 		"project_id": "0", "profile_id": "0", "task_id": "0", "subtask_id": "0", "subtask_name": name,
-		"file": u.filename, "url": "file:///sdcard/" + u.filename, "md5": md5sum,
+		"file": remote, "url": url, "md5": md5sum,
 		"timelapse": u.options.timelapse, "bed_type": "auto", "bed_leveling": u.options.bedLeveling, "flow_cali": u.options.flowCali,
 		"vibration_cali": u.options.vibrationCali, "layer_inspect": false, "use_ams": u.options.useAMS, "ams_mapping": legacyMapping, "ams_mapping2": addresses,
 	}}); err != nil {
