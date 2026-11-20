@@ -43,8 +43,8 @@ var bedTypes = sync.OnceValue(func() []BuildPlate {
 	return out
 })
 
-func (c *Catalog) PlatesOf(variantID string) *Plates {
-	ref, ok := c.variants[variantID]
+func (c *Catalog) PlatesOf(printer *Printer) *Plates {
+	ref, ok := c.variants[printer.Nozzles[0].Variant]
 	if !ok {
 		return nil
 	}
@@ -64,8 +64,12 @@ func (c *Catalog) PlatesOf(variantID string) *Plates {
 	if def == "" {
 		def = model("default_bed_type")
 	}
+	supportMultiBed := value("support_multi_bed_types")
+	if v, ok := printer.Machine["support_multi_bed_types"]; ok {
+		supportMultiBed = FirstConfigText(v)
+	}
 	out := &Plates{Plates: []BuildPlate{}}
-	if p.Vendor != "BBL" && value("support_multi_bed_types") != "1" && def == "" {
+	if p.Vendor != "BBL" && supportMultiBed != "1" && !strings.EqualFold(supportMultiBed, "true") && def == "" {
 		return out
 	}
 	unsupported := strings.Split(model("not_support_bed_type"), ";")
@@ -88,7 +92,7 @@ func (c *Catalog) PlatesOf(variantID string) *Plates {
 
 func (c *Catalog) validatePlateSetup(p *Printer) error {
 	if p.Plate != "" {
-		plates := c.PlatesOf(p.Nozzles[0].Variant)
+		plates := c.PlatesOf(p)
 		if plates == nil || !slices.ContainsFunc(plates.Plates, func(b BuildPlate) bool { return b.Value == p.Plate }) {
 			return fmt.Errorf("its build plate %s isn't one the printer takes", p.Plate)
 		}

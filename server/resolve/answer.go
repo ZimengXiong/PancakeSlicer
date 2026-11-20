@@ -86,7 +86,7 @@ type askedProfile struct {
 }
 
 func (c *Catalog) setupOf(printer *Printer, flushing *resolvedFlushing) *answerSetup {
-	plates := c.PlatesOf(printer.Nozzles[0].Variant)
+	plates := c.PlatesOf(printer)
 	if plates == nil {
 		plates = &Plates{Plates: []BuildPlate{}}
 	}
