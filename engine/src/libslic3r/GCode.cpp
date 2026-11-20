@@ -10176,11 +10176,8 @@ double GCode::nonplanar_travel_z(const Vec2d *from, const Vec2d *to, bool nozzle
 {
     double z;
     if (m_material_columns && from != nullptr && to != nullptr && nozzle_only) {
-        Nonplanar::HeadEnvelope nozzle = this->nonplanar_head();
-        nozzle.boxes.erase(std::remove_if(nozzle.boxes.begin(), nozzle.boxes.end(), [](const Nonplanar::HeadBox &b) { return !b.nozzle; }),
-                           nozzle.boxes.end());
-        z = safe_travel_z(*m_material_columns, nozzle, *from, *to,
-                          std::max(0.1, m_writer.filament() != nullptr ? m_config.z_hop.get_at(m_writer.filament()->id()) : 0.));
+        z = safe_travel_z(*m_material_columns, this->nonplanar_head(), *from, *to,
+                          std::max(0.1, m_writer.filament() != nullptr ? m_config.z_hop.get_at(m_writer.filament()->id()) : 0.), true);
     } else {
         const double hop = this->nonplanar_hop();
         z = m_material_columns && from != nullptr && to != nullptr ? safe_travel_z(*m_material_columns, this->nonplanar_head(), *from, *to, hop) :
@@ -12210,6 +12207,16 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
         if (m_force_safe_travel)
             safe = m_nonplanar_heights.travel_height(xy, m_nonplanar_clearance,
                 base + hop);
+        double col_safe = -std::numeric_limits<double>::infinity();
+        if (m_material_columns) {
+            Vec2d from_xy = m_writer.get_position().head<2>();
+            for (size_t i = 1; i < travel.size(); ++i) {
+                const Vec2d to_xy = this->point_to_gcode(travel.points[i]);
+                col_safe = std::max(col_safe, this->nonplanar_travel_z(&from_xy, &to_xy, true));
+                from_xy = to_xy;
+            }
+            safe = std::max(safe, col_safe);
+        }
         bool sloped = false;
         double lift = 0.;
         const bool short_hop = m_layer != nullptr && curved_tops_mode(m_layer->object()->config().nonplanar_mode.value) &&
@@ -12225,6 +12232,8 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
             sloped = primed_slope_lift >= 0. || 2. * lift < 2. * safe - from.z() - to.z();
             if (sloped && native_keep_primed)
                 sloped = m_nonplanar_heights.supports_travel(from + Vec3d(0., 0., lift), to + Vec3d(0., 0., lift), primed_support_gap);
+            if (sloped && m_material_columns)
+                sloped = std::min(from.z(), to.z()) + lift >= col_safe;
             if (sloped)
                 safe = from.z() + lift;
         }
