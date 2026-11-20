@@ -34,7 +34,14 @@ export interface ProjectItem {
 export type ArchivePaint = Partial<Record<'support' | 'seam' | 'fuzzy' | 'color', Record<string, string>>>;
 const PAINT_ATTRS = [['support', 'paint_supports'], ['seam', 'paint_seam'], ['fuzzy', 'paint_fuzzy_skin'], ['color', 'paint_color']] as const;
 
+const extruderPaint = (extruder: number): string | null => {
+  if (!Number.isInteger(extruder) || extruder < 1 || extruder > 33) return null;
+  const nibbles = extruder < 3 ? [extruder << 2] : extruder <= 17 ? [extruder - 3, 12] : [extruder - 18, 15, 12];
+  return nibbles.map((n) => n.toString(16).toUpperCase()).join('');
+};
+
 interface Obj {
+  id: string;
   name?: string;
   vertices?: Float32Array;
   triangles?: Uint32Array;
@@ -76,7 +83,7 @@ function parseModel(text: string): { objects: Map<string, Obj>; build: { objecti
     const head = m[1], body = m[2];
     const id = attr(head, 'id');
     if (!id) continue;
-    const obj: Obj = { name: attr(head, 'name'), components: [] };
+    const obj: Obj = { id, name: attr(head, 'name'), components: [] };
     const vStart = body.indexOf('<vertices');
     if (vStart >= 0) {
       const vEnd = body.indexOf('</vertices>', vStart);
@@ -127,8 +134,16 @@ function normalizePath(path: string): string {
   return parts.join('/');
 }
 
-function parseSettings(text: string | undefined): Map<string, { name?: string; extruder?: number; settings: Config; volumes: Set<string> }> {
-  const out = new Map<string, { name?: string; extruder?: number; settings: Config; volumes: Set<string> }>();
+interface ObjectSettings {
+  name?: string;
+  extruder?: number;
+  settings: Config;
+  volumes: Set<string>;
+  partExtruders: Map<string, number>;
+}
+
+function parseSettings(text: string | undefined): Map<string, ObjectSettings> {
+  const out = new Map<string, ObjectSettings>();
   if (!text) return out;
   for (const object of text.matchAll(/<object\b([^>]*)>([\s\S]*?)<\/object>/g)) {
     const id = attr(object[1], 'id');
@@ -143,11 +158,16 @@ function parseSettings(text: string | undefined): Map<string, { name?: string; e
       return values;
     };
     const values = metadata(own);
+    const partExtruders = new Map<string, number>();
+    for (const part of object[2].matchAll(/<part\b([^>]*)>([\s\S]*?)<\/part>/g)) {
+      const partId = attr(part[1], 'id'), extruder = Number(metadata(part[2]).extruder);
+      if (partId && extruder) partExtruders.set(partId, extruder);
+    }
     const volumes = new Set([...object[2].matchAll(/<part\b([^>]*)>/g)]
       .filter((p) => attr(p[1], 'subtype') !== 'normal_part').map((p) => attr(p[1], 'id')!));
     const firstVolume = /<volume\b[^>]*>([\s\S]*?)<\/volume>/.exec(object[2])?.[1];
     const extruder = Number(values.extruder ?? (firstVolume ? metadata(firstVolume).extruder : undefined)) || undefined;
-    out.set(id, { name: values.name === undefined ? undefined : String(values.name), extruder,
+    out.set(id, { name: values.name === undefined ? undefined : String(values.name), extruder, partExtruders,
       settings: Object.fromEntries(Object.entries(values).filter(([k]) => k !== 'name' && k !== 'extruder')), volumes });
   }
   return out;
@@ -267,11 +287,17 @@ export async function readProject(file: File, objectsOnly = false): Promise<{ it
   });
   function mergedPaint(id: string): { parts: 1; paint?: ArchivePaint } {
     const paint: ArchivePaint = {};
+    const partExtruders = settings.get(id)?.partExtruders;
     let offset = 0;
     for (const leaf of leaves(rootPath, id)) {
       for (const [kind, map] of Object.entries(leaf.paint ?? {}) as [keyof ArchivePaint, Record<string, string>][])
         for (const [k, v] of Object.entries(map)) (paint[kind] ??= {})[String(Number(k) + offset)] = v;
-      offset += leaf.triangles!.length / 3;
+      const count = leaf.triangles!.length / 3, color = extruderPaint(partExtruders?.get(leaf.id) ?? 0);
+      if (color) {
+        const colors = paint.color ??= {};
+        for (let triangle = 0; triangle < count; triangle++) colors[String(offset + triangle)] ??= color;
+      }
+      offset += count;
     }
     return { parts: 1, ...(Object.keys(paint).length ? { paint } : {}) };
   }
