@@ -909,7 +909,8 @@ void build_native_patch(PrintObject &object, const std::shared_ptr<const LayerFi
         if ((key.rfind("support_", 0) == 0 || key.rfind("tree_support", 0) == 0 || key == "enable_support") && config.has(key))
             config.set_key_value(key, object.config().option(key)->clone());
     config.set_deserialize_strict("independent_support_layer_height", "0");
-    if (native_planar_support())
+    const bool use_native_planar_support = native_planar_support() && !is_tree(object.config().support_type.value);
+    if (use_native_planar_support)
         config.set_key_value("enable_support", new ConfigOptionBool(false));
     const double            height = banded ? tops.back() : first + double(K - 1) * h;
     TriangleMesh            box    = make_cube(unscale<double>(bbox.size().x()), unscale<double>(bbox.size().y()), height);
@@ -1071,7 +1072,7 @@ void build_native_patch(PrintObject &object, const std::shared_ptr<const LayerFi
             roads.push_back(std::move(r));
         }
     }
-    if (native_planar_support() && object.config().enable_support.value) {
+    if (use_native_planar_support && object.config().enable_support.value) {
         std::vector<FieldRoad> planar = native_planar_support_roads(object, *field, roads, domains, tops, first, h, raft, host->print_z);
         for (FieldRoad &r : planar)
             if (r.path)
@@ -1082,7 +1083,7 @@ void build_native_patch(PrintObject &object, const std::shared_ptr<const LayerFi
     op.kinematics = kinematics.get();
     op.max_tilt   = std::max(0., tilt_budget(*kinematics) - Geometry::deg2rad(1.));
     op.lean_max   = 0.;
-    op.planar_support = native_planar_support() && object.config().enable_support.value;
+    op.planar_support = use_native_planar_support && object.config().enable_support.value;
     op.axis_blend     = native_axis_key("NP_NATIVE_AXIS_BLEND", 10., kinematics->rotary_count() > 0);
     op.layer_top.assign(tops.begin() + 1, tops.begin() + std::ptrdiff_t(n));
     op.layer_height.resize(n - 1);
