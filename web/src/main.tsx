@@ -2,7 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App, { preloadProjects } from './App';
 import { urlRoute } from './flow/routes';
-import { init } from './actions';
+import { importFiles, init } from './actions';
 import { startProjects } from './flow/project';
 import { loadTab } from './options';
 import { initialiseSavedPreferences } from './saved-preferences';
@@ -16,7 +16,9 @@ export function start() {
 
   void loadTab('process').catch(() => {});
   const booted = init();
-  void startProjects(booted).catch(() => {});
+  void startProjects(booted).then(() => window.orcaDesktop?.onLaunchFiles?.(async (files) => {
+    await importFiles(files.map((file) => new File([file.data], file.name, { lastModified: file.lastModified })));
+  })).catch(() => {});
   void booted.finally(() => {
     preloadViews();
     whenIdle(() => preloadImages(listProfiles('machine').flatMap((e) => printerCover(e.vendor, {}, e.model) ?? [])));

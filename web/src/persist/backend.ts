@@ -49,6 +49,7 @@ declare global {
   interface Window { orcaDesktop?: { version: number;
     onBeforeClose?(handler: () => Promise<void>): () => void; flushBeforeClose?(): Promise<void>;
     onPendingSaves?(count: () => Promise<number>): () => void; pendingSaves?(): Promise<number>;
+    onLaunchFiles?(cb: (files: { name: string; data: Uint8Array<ArrayBuffer>; lastModified: number }[]) => Promise<void>): () => void;
     bambuConnect?(jobId: string, filename: string): Promise<void> } }
 }
 const storageListeners = new Set<() => void>();

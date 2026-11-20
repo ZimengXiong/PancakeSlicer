@@ -9,6 +9,9 @@ import path from 'node:path';
 const MAC = process.platform === 'darwin';
 const EXE = process.platform === 'win32' ? '.exe' : '';
 const DESKTOP_ORIGIN = 'http://127.0.0.1:29731';
+const LAUNCH_MODEL = /\.(stl|obj|3mf|step|stp)$/i;
+const MAX_LAUNCH_MODEL_BYTES = 256 * 1024 * 1024;
+const launchModels: string[] = [];
 
 let server: ChildProcess | null = null;
 let origin = '';
@@ -82,13 +85,49 @@ process.once('exit', cleanSessionDirectory);
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
+  queueLaunchArguments(process.argv, process.cwd());
+  app.on('second-instance', (_e, argv, cwd) => {
+    queueLaunchArguments(argv, cwd);
     if (!win) return;
     if (win.isMinimized()) win.restore();
     win.show();
     win.focus();
   });
+  if (MAC) app.on('open-file', (e, file) => {
+    e.preventDefault();
+    queueLaunchArguments([file], process.cwd());
+  });
   app.whenReady().then(start).catch((e) => fail(String(e?.stack ?? e)));
+}
+
+function queueLaunchArguments(argv: readonly string[], cwd: string) {
+  for (const arg of argv) if (LAUNCH_MODEL.test(arg)) launchModels.push(path.resolve(cwd, arg));
+  if (launchModels.length && win && origin && !win.webContents.isDestroyed()) win.webContents.send('orca-desktop:launch-files-available');
+}
+
+async function takeLaunchModels() {
+  const paths = launchModels.splice(0);
+  const files: { name: string; data: Buffer; lastModified: number }[] = [];
+  const errors: string[] = [];
+  let total = 0;
+  for (const file of paths) {
+    try {
+      if (!LAUNCH_MODEL.test(file)) continue;
+      const handle = await fs.promises.open(file, 'r');
+      try {
+        const stat = await handle.stat();
+        if (!stat.isFile()) throw new Error('not a regular file');
+        if (stat.size > MAX_LAUNCH_MODEL_BYTES || total + stat.size > MAX_LAUNCH_MODEL_BYTES)
+          throw new Error(`model files must not exceed ${MAX_LAUNCH_MODEL_BYTES / 1024 / 1024} MB per launch`);
+        const data = await handle.readFile();
+        if (data.byteLength !== stat.size || data.byteLength > MAX_LAUNCH_MODEL_BYTES) throw new Error('the file changed while it was being read');
+        total += data.byteLength;
+        files.push({ name: path.basename(file), data, lastModified: stat.mtimeMs });
+      } finally { await handle.close(); }
+    } catch (e) { errors.push(`${file}: ${e instanceof Error ? e.message : String(e)}`); }
+  }
+  if (errors.length) dialog.showErrorBox('PancakeSlicer', `Oops! Some model files couldn\'t be opened.\n${errors.join('\n')}`);
+  return files;
 }
 
 
@@ -307,6 +346,10 @@ function ipc() {
   ipcMain.handle('orca-desktop:bambu-connect', (e, jobId: unknown, filename: unknown) => {
     if (!origin || new URL(e.senderFrame?.url ?? 'about:blank').origin !== origin) throw new Error('not the app');
     return openInBambuConnect(jobId, filename);
+  });
+  ipcMain.handle('orca-desktop:take-launch-files', (e) => {
+    if (!origin || new URL(e.senderFrame?.url ?? 'about:blank').origin !== origin) throw new Error('not the app');
+    return takeLaunchModels();
   });
 }
 
