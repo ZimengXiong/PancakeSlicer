@@ -5,10 +5,10 @@ import { printerCapabilities, printerModel } from './capabilities';
 import type { Transfer } from '../flow/transfer';
 import { joinParts, SEP } from '../separator';
 
-export type ConnectionKind = 'bambu-lan' | 'bambu-connect' | 'moonraker' | 'octoprint' | 'prusalink' | 'duet' | 'flashforge' | 'elegoolink';
+export type ConnectionKind = 'bambu-lan' | 'bambu-connect' | 'moonraker' | 'octoprint' | 'prusalink' | 'duet' | 'flashforge' | 'elegoolink' | 'repetier';
 export interface PrinterConnection {
   printer: string; id: string; name: string; kind: ConnectionKind;
-  host?: string; serial?: string; model?: string; url?: string; auth?: string; username?: string; limited_controls?: boolean;
+  host?: string; serial?: string; model?: string; url?: string; auth?: string; username?: string; slug?: string; limited_controls?: boolean; no_telemetry?: boolean;
   has_secret: boolean; trust?: string;
 }
 export interface Temp { actual: number; target: number }
@@ -33,7 +33,7 @@ export interface PrinterConnections {
 
 export const KIND_LABEL: Record<ConnectionKind, string> = {
   'bambu-lan': 'Bambu Lab (LAN)', 'bambu-connect': 'Bambu Connect', moonraker: 'Klipper (Moonraker)',
-  octoprint: 'OctoPrint', prusalink: 'PrusaLink', duet: 'Duet (RepRapFirmware)', flashforge: 'Flashforge (LAN)', elegoolink: 'Elegoo Link',
+  octoprint: 'OctoPrint', prusalink: 'PrusaLink', duet: 'Duet (RepRapFirmware)', flashforge: 'Flashforge (LAN)', elegoolink: 'Elegoo Link', repetier: 'Repetier Server',
 };
 export const connectionOutput = (kind: ConnectionKind) => (kind === 'bambu-lan' || kind === 'bambu-connect' ? 'gcode.3mf' : 'gcode');
 
@@ -69,7 +69,7 @@ async function call<T>(url: string, init: RequestInit, quiet = false): Promise<T
 
 export interface ConnectionEdit {
   kind: ConnectionKind; name: string; host?: string; serial?: string; access_code?: string; model?: string;
-  url?: string; auth?: string; username?: string; key?: string; clear_key?: boolean;
+  url?: string; auth?: string; username?: string; slug?: string; key?: string; clear_key?: boolean;
 }
 export interface ConnectionTest { ok: boolean; stage: string; message: string; model?: string }
 export interface Discovered {

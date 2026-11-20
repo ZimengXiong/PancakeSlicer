@@ -51,21 +51,22 @@ export function ConnectionEditor({ printer, name, onSaved }: { printer: string; 
   const [host, setHost] = useState(saved?.host ?? '');
   const [serial, setSerial] = useState(saved?.serial ?? '');
   const [url, setUrl] = useState(saved?.url?.replace(/^http:\/\//, '') ?? '');
+  const [slug, setSlug] = useState(saved?.slug ?? '');
   const [auth, setAuth] = useState(saved?.auth === 'digest' ? 'digest' : 'apikey');
   const [user, setUser] = useState(saved?.username ?? '');
   const [secret, setSecret] = useState('');
   const [model, setModel] = useState(saved?.model ?? '');
   const m = connectionEditFor(printer), snap = useMachine(m), { test, found, error } = snap.context, working = snap.value !== 'idle';
   const sameKind = saved?.kind === kind;
-  const bambu = kind === 'bambu-lan', flashforge = kind === 'flashforge', http = !!kind && !bambu && !flashforge && kind !== 'bambu-connect';
+  const bambu = kind === 'bambu-lan', flashforge = kind === 'flashforge', repetier = kind === 'repetier', http = !!kind && !bambu && !flashforge && kind !== 'bambu-connect';
   const digest = kind === 'prusalink' && auth === 'digest';
   const keyOptional = kind === 'moonraker' || kind === 'duet' || kind === 'elegoolink';
   const edit = (): ConnectionEdit => ({ kind: kind!, name, model: kind === 'elegoolink' ? setupModel : model || undefined,
     ...(bambu || flashforge ? { host: host.trim(), serial: serial.trim(), access_code: secret } : {}),
-    ...(http ? { url: url.trim(), key: secret, auth: kind === 'prusalink' ? auth : undefined, username: digest ? user.trim() : undefined } : {}) });
+    ...(http ? { url: url.trim(), slug: repetier ? slug.trim() : undefined, key: secret, auth: kind === 'prusalink' ? auth : undefined, username: digest ? user.trim() : undefined } : {}) });
   const hasSecret = !!saved?.has_secret && sameKind;
   const ready = !!kind && (kind === 'bambu-connect' || (flashforge ? !!host.trim() && (!secret || !!serial.trim()) : bambu ? !!host.trim() && !!serial.trim() && (!!secret || hasSecret)
-    : !!url.trim() && (keyOptional || !!secret || hasSecret) && (!digest || !!user.trim())));
+    : !!url.trim() && (!repetier || !!slug.trim()) && (keyOptional || !!secret || hasSecret) && (!digest || !!user.trim())));
   const touched = () => m.send({ type: 'EDIT' });
   const changed = <T,>(set: (v: T) => void) => (v: T) => { set(v); touched(); };
 
@@ -117,6 +118,10 @@ export function ConnectionEditor({ printer, name, onSaved }: { printer: string; 
         : "Bambu Connect runs locally on your computer, so direct sending requires the desktop app. In a browser, just download the .gcode.3mf file and open it in Bambu Connect."}</div>}
       {http && <>
         <label className="form-row"><span>Hostname, IP or URL</span><input className="text" value={url} placeholder={kind === 'moonraker' ? '192.168.1.70:7125' : '192.168.1.70'} spellCheck={false} onChange={(e) => changed(setUrl)(e.target.value)} /></label>
+        {repetier && <>
+          <label className="form-row"><span>Printer slug</span><input className="text" value={slug} placeholder="my_printer" spellCheck={false} onChange={(e) => changed(setSlug)(e.target.value)} /></label>
+          <div className="hint-text connection-hint">Use the slug from printer/list data[].slug, not a TCP port. Upload and autostart are supported; live status, pause, and temperature controls are unavailable.</div>
+        </>}
         {kind === 'prusalink' && (
           <label className="form-row"><span>Authorization</span>
             <Dropdown className="combo" value={auth} onValueChange={(v) => changed(setAuth)(v)} options={[{ value: 'apikey', label: 'API key' }, { value: 'digest', label: 'HTTP digest' }]} />

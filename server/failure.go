@@ -175,7 +175,7 @@ var failureTexts = map[string]failureText{
 	"job_hasnt_been_sent":                  {Text: "This job hasn't been sent to a printer yet."},
 	"job_isnt_currently_uploading":         {Text: "This job isn't currently uploading."},
 	"job_names_library_printer":            {Text: "A job names its library printer, print settings and filaments (library)."},
-	"kind_must_bambu_lan":                  {Text: "kind must be bambu-lan, bambu-connect, moonraker, octoprint, prusalink, duet, flashforge or elegoolink"},
+	"kind_must_bambu_lan":                  {Text: "kind must be bambu-lan, bambu-connect, moonraker, octoprint, prusalink, duet, flashforge, elegoolink or repetier"},
 	"kind_preset_printer_bundle":           {Text: "kind is preset, printer_bundle, filament_bundle, printer, filament or process."},
 	"last_event_id_ahead":                  {Text: "Last-Event-ID is ahead of this job"},
 	"library_io_internal":                  {Text: "%s"},

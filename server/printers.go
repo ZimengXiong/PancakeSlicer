@@ -35,6 +35,7 @@ type PrinterConfig struct {
 	Auth           string
 	Username       string
 	Storage        string
+	Slug           string
 	CredentialFile string
 	TLS            string
 	Fingerprint    string
@@ -50,29 +51,32 @@ type PrinterConfig struct {
 var connectionKinds = map[string]string{
 	"bambu-lan": "Bambu Lab (LAN)", "bambu-connect": "Bambu Connect", "moonraker": "Klipper (Moonraker)",
 	"octoprint": "OctoPrint", "prusalink": "PrusaLink", "duet": "Duet (RepRapFirmware)", "flashforge": "Flashforge (LAN)",
-	"elegoolink": "Elegoo Link",
+	"elegoolink": "Elegoo Link", "repetier": "Repetier Server",
 }
 
 type ConnectionView struct {
-	Printer    string `json:"printer"`
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Kind       string `json:"kind"`
-	Host       string `json:"host,omitempty"`
-	Serial     string `json:"serial,omitempty"`
-	Model      string `json:"model,omitempty"`
-	URL        string `json:"url,omitempty"`
-	Auth       string `json:"auth,omitempty"`
-	Username   string `json:"username,omitempty"`
-	HasSecret  bool   `json:"has_secret"`
-	Trust      string `json:"trust,omitempty"`
-	Limited    bool   `json:"limited_controls,omitempty"`
+	Printer     string `json:"printer"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Kind        string `json:"kind"`
+	Host        string `json:"host,omitempty"`
+	Serial      string `json:"serial,omitempty"`
+	Model       string `json:"model,omitempty"`
+	URL         string `json:"url,omitempty"`
+	Auth        string `json:"auth,omitempty"`
+	Username    string `json:"username,omitempty"`
+	Slug        string `json:"slug,omitempty"`
+	HasSecret   bool   `json:"has_secret"`
+	Trust       string `json:"trust,omitempty"`
+	Limited     bool   `json:"limited_controls,omitempty"`
+	NoTelemetry bool   `json:"no_telemetry,omitempty"`
 }
 
 func (p *PrinterConfig) view() ConnectionView {
 	_, err := os.Stat(p.CredentialFile)
 	return ConnectionView{Printer: p.Printer, ID: p.id, Name: p.Name, Kind: p.Kind, Host: p.Host, Serial: p.Serial, Model: p.model,
-		URL: p.URL, Auth: p.Auth, Username: p.Username, HasSecret: p.CredentialFile != "" && err == nil, Trust: p.TLS, Limited: p.limitedControls()}
+		URL: p.URL, Auth: p.Auth, Username: p.Username, Slug: p.Slug, HasSecret: p.CredentialFile != "" && err == nil, Trust: p.TLS,
+		Limited: p.limitedControls(), NoTelemetry: p.Kind == "repetier"}
 }
 
 var bambuSerial = regexp.MustCompile(`^[A-Za-z0-9]{6,32}$`)
@@ -82,7 +86,7 @@ func (p *PrinterConfig) validate(resources string) error {
 		return errors.New("Printer name must be 200 characters or fewer (with no control characters).")
 	}
 	switch p.Kind {
-	case "prusalink", "octoprint", "moonraker", "duet", "elegoolink":
+	case "prusalink", "octoprint", "moonraker", "duet", "elegoolink", "repetier":
 		u, err := url.Parse(p.URL)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 			return errors.New("Please enter a base http:// or https:// URL without login credentials, query parameters, or #fragments.")
@@ -101,6 +105,16 @@ func (p *PrinterConfig) validate(resources string) error {
 		}
 		if p.Kind == "elegoolink" && !strings.HasPrefix(p.model, "Elegoo Centauri") {
 			return errors.New("Elegoo Link works with Elegoo Centauri printers—connect other Elegoo printers with OctoPrint or Klipper (Moonraker).")
+		}
+		if p.Kind == "repetier" {
+			if p.Slug == "" {
+				return errors.New("Enter the Repetier Server printer slug from printer/list data[].slug.")
+			}
+			if len(p.Slug) > 200 || strings.ContainsAny(p.Slug, `/\`) || strings.IndexFunc(p.Slug, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
+				return errors.New("Repetier Server printer slugs must be one nonempty path segment without whitespace.")
+			}
+		} else if p.Slug != "" {
+			return errors.New("Printer slug settings only apply to Repetier Server printers.")
 		}
 	case "bambu-lan":
 		if p.Host == "" || strings.ContainsAny(p.Host, "/:@ ") && net.ParseIP(p.Host) == nil {
@@ -144,7 +158,7 @@ func (p *PrinterConfig) validate(resources string) error {
 		}
 		return nil
 	default:
-		return errors.New("kind must be bambu-lan, bambu-connect, moonraker, octoprint, prusalink, duet, flashforge or elegoolink")
+		return errors.New("kind must be bambu-lan, bambu-connect, moonraker, octoprint, prusalink, duet, flashforge, elegoolink or repetier")
 	}
 	switch p.TLS {
 	case "", "system", "bambu-ca", "tofu":
@@ -180,7 +194,7 @@ func (p *PrinterConfig) validate(resources string) error {
 }
 
 func secretRequired(kind string) bool {
-	return kind == "bambu-lan" || kind == "octoprint" || kind == "prusalink"
+	return kind == "bambu-lan" || kind == "octoprint" || kind == "prusalink" || kind == "repetier"
 }
 
 func readCredential(path string) (string, error) {

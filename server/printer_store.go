@@ -40,6 +40,7 @@ type storedPrinter struct {
 	URL         string `json:"url,omitempty"`
 	Auth        string `json:"auth,omitempty"`
 	Username    string `json:"username,omitempty"`
+	Slug        string `json:"slug,omitempty"`
 }
 
 func loadPrinterStore(dir, resources string, hosts *hostPolicy) (*printerStore, error) {
@@ -101,7 +102,7 @@ func (st *printerStore) config(sp storedPrinter) (*PrinterConfig, error) {
 		return nil, errors.New("bad id")
 	}
 	p := &PrinterConfig{Printer: sp.Printer, Name: sp.Name, Kind: sp.Kind, Host: sp.Host, Serial: sp.Serial, TLS: sp.TLS, Fingerprint: sp.Fingerprint,
-		URL: sp.URL, Auth: sp.Auth, Username: sp.Username, CredentialFile: filepath.Join(st.dir, sp.ID+".code"), id: sp.ID, hosts: st.hosts, model: sp.Model}
+		URL: sp.URL, Auth: sp.Auth, Username: sp.Username, Slug: strings.TrimSpace(sp.Slug), CredentialFile: filepath.Join(st.dir, sp.ID+".code"), id: sp.ID, hosts: st.hosts, model: sp.Model}
 	if p.Kind != "bambu-lan" && p.Kind != "bambu-connect" && p.Kind != "flashforge" {
 		u, err := hostURL(sp.URL)
 		if err != nil {
@@ -114,7 +115,7 @@ func (st *printerStore) config(sp storedPrinter) (*PrinterConfig, error) {
 
 func (st *printerStore) stored(p *PrinterConfig) storedPrinter {
 	return storedPrinter{ID: p.id, Printer: p.Printer, Name: p.Name, Kind: p.Kind, Host: p.Host, Serial: p.Serial, Model: p.model, TLS: p.TLS,
-		Fingerprint: p.Fingerprint, URL: p.URL, Auth: p.Auth, Username: p.Username}
+		Fingerprint: p.Fingerprint, URL: p.URL, Auth: p.Auth, Username: p.Username, Slug: p.Slug}
 }
 
 func (st *printerStore) save() error {
@@ -196,6 +197,7 @@ type connectionEdit struct {
 	URL        string `json:"url"`
 	Auth       string `json:"auth"`
 	Username   string `json:"username"`
+	Slug       string `json:"slug"`
 	Key        string `json:"key"`
 	ClearKey   bool   `json:"clear_key"`
 }
@@ -223,7 +225,7 @@ func (s *Server) connectionBody(w http.ResponseWriter, r *http.Request) (*connec
 		return nil, false
 	}
 	body.Name, body.Host, body.Serial, body.AccessCode = strings.TrimSpace(body.Name), strings.TrimSpace(body.Host), strings.ToUpper(strings.TrimSpace(body.Serial)), strings.TrimSpace(body.AccessCode)
-	body.URL, body.Username = strings.TrimSpace(body.URL), strings.TrimSpace(body.Username)
+	body.URL, body.Username, body.Slug = strings.TrimSpace(body.URL), strings.TrimSpace(body.Username), strings.TrimSpace(body.Slug)
 	if body.AccessCode != "" && (len(body.AccessCode) > 64 || strings.IndexFunc(body.AccessCode, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0) {
 		fail(w, 400, "enter_character_access_code")
 		return nil, false
@@ -263,6 +265,11 @@ func (s *Server) editConfig(ctx context.Context, body *connectionEdit, sp stored
 			return nil, err
 		}
 		sp.URL, sp.Auth, sp.Username = u.String(), body.Auth, body.Username
+		if body.Kind == "repetier" {
+			sp.Slug = body.Slug
+		} else {
+			sp.Slug = ""
+		}
 	}
 	p, err := st.config(sp)
 	if err != nil {
@@ -451,7 +458,7 @@ func (s *Server) adoptConnection(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, next.view())
 }
 
-var legacyHostTypes = map[string]string{"prusalink": "prusalink", "octoprint": "octoprint", "moonraker": "moonraker", "duet": "duet", "flashforge": "flashforge", "elegoolink": "elegoolink"}
+var legacyHostTypes = map[string]string{"prusalink": "prusalink", "octoprint": "octoprint", "moonraker": "moonraker", "duet": "duet", "flashforge": "flashforge", "elegoolink": "elegoolink", "repetier": "repetier"}
 
 func (s *Server) importLegacyConnection(w http.ResponseWriter, r *http.Request) {
 	m := s.sends
@@ -486,7 +493,9 @@ func (s *Server) importLegacyConnection(w http.ResponseWriter, r *http.Request) 
 			edit.Kind, edit.Model = "octoprint", ""
 		}
 	}
-	if kind == "flashforge" {
+	if kind == "repetier" {
+		edit.Slug = strings.TrimSpace(c["printhost_port"])
+	} else if kind == "flashforge" {
 		host := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(edit.URL, "http://"), "https://"), "/")
 		if h, _, err := net.SplitHostPort(host); err == nil {
 			host = h

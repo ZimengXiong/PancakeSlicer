@@ -27,9 +27,15 @@ func sendHTTP(ctx context.Context, u *upload) (string, error) {
 		return "", err
 	}
 	h := &hostSession{client: client, printer: p, secret: u.secret}
-	probe := map[string]string{"prusalink": "/api/version", "octoprint": "/api/version", "moonraker": "/server/info"}[p.Kind]
-	if err := h.preflight(ctx, base.JoinPath(probe).String()); err != nil {
-		return "", err
+	if p.Kind == "repetier" {
+		if err := repetierProbe(ctx, h, base); err != nil {
+			return "", err
+		}
+	} else {
+		probe := map[string]string{"prusalink": "/api/version", "octoprint": "/api/version", "moonraker": "/server/info"}[p.Kind]
+		if err := h.preflight(ctx, base.JoinPath(probe).String()); err != nil {
+			return "", err
+		}
 	}
 	build := func() (*http.Request, error) {
 		body := progressReader{io.LimitReader(u.file, u.size), u.progress}
@@ -48,6 +54,8 @@ func sendHTTP(ctx context.Context, u *upload) (string, error) {
 			return req, nil
 		case "octoprint":
 			return multipartUpload(ctx, base.JoinPath("api/files/local").String(), "file", u.filename, u.size, body, [][2]string{{"print", fmt.Sprint(u.start)}})
+		case "repetier":
+			return repetierUpload(ctx, base, u, body)
 		default:
 			return multipartUpload(ctx, base.JoinPath("server/files/upload").String(), "file", u.filename, u.size, body, [][2]string{{"root", "gcodes"}, {"print", fmt.Sprint(u.start)}})
 		}
