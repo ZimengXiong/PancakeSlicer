@@ -958,27 +958,23 @@ void PrintObject::nonplanar_shells()
 TriangleMesh PrintObject::object_frame_mesh(double &ground_offset) const
 {
     TriangleMesh mesh = m_model_object->raw_mesh();
-    TriangleMesh negative;
     for (const ModelVolume *volume : m_model_object->volumes)
         if (volume->is_negative_volume()) {
             TriangleMesh vm = volume->mesh();
             vm.transform(volume->get_matrix());
-            negative.merge(vm);
+            try {
+                MeshBoolean::cgal::minus(mesh, vm);
+            } catch (const std::exception &e) {
+                std::vector<TriangleMesh> parts;
+                MeshBoolean::mcut::make_boolean(mesh, vm, parts, "A_NOT_B");
+                TriangleMesh cut;
+                for (const TriangleMesh &part : parts)
+                    cut.merge(part);
+                BOOST_LOG_TRIVIAL(warning) << "Non-planar: negative volumes of " << m_model_object->name << " cut with mcut (" << e.what() << ")";
+                if (! cut.empty())
+                    mesh = std::move(cut);
+            }
         }
-    if (! negative.empty()) {
-        try {
-            MeshBoolean::cgal::minus(mesh, negative);
-        } catch (const std::exception &e) {
-            std::vector<TriangleMesh> parts;
-            MeshBoolean::mcut::make_boolean(mesh, negative, parts, "A_NOT_B");
-            TriangleMesh cut;
-            for (const TriangleMesh &part : parts)
-                cut.merge(part);
-            BOOST_LOG_TRIVIAL(warning) << "Non-planar: negative volumes of " << m_model_object->name << " cut with mcut (" << e.what() << ")";
-            if (! cut.empty())
-                mesh = std::move(cut);
-        }
-    }
     const ModelInstance *inst = m_instances.front().model_instance;
     Geometry::Transformation trans = inst->get_transformation();
     trans.set_offset(Vec3d(-unscale<double>(m_center_offset.x()), -unscale<double>(m_center_offset.y()), 0));
