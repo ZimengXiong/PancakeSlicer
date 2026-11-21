@@ -15,7 +15,7 @@ import { PaintView } from './paintView';
 import { viewOptions, subscribeViewOptions } from './viewOptions';
 import { sectionView, subscribeSection } from './section';
 import { defaultEarRadius, earsUi, setEars, setEarsUi, subscribeEarsUi } from './brimEars';
-import { brush, bucketFill, fill as fillPaint, heightRange, HEIGHT, isPaint, overhangFacets, overhangGeometry, paintOf, paintTool, paintTriangle, PAINT_STEP, RADIUS, setPaintTool, subscribePaintTool, type PaintKind, type Painting } from './paint';
+import { brush, bucketFill, fill as fillPaint, heightRange, HEIGHT, isPaint, layerBrushBand, layerRange, LAYERS, overhangFacets, overhangGeometry, paintOf, paintTool, paintTriangle, PAINT_STEP, RADIUS, setPaintTool, subscribePaintTool, type PaintKind, type Painting } from './paint';
 import { beginStep, undoable } from '../state/history';
 import { TowerView } from './wipeTower';
 import { setTextPlacing, textPlacing } from './textPlacing';
@@ -1273,17 +1273,27 @@ void main() {
     };
     const paintAt = (hit: PaintHit, view: THREE.Vector3) => {
       const s = getState();
+      const object = s.objects.find((ob) => ob.id === stroke!.object);
       const target = paintTarget(s, stroke!.object, stroke!.volume);
       if (!target || hit.tri === undefined || !hit.local) return;
       const t = paintTool();
-      const world = hit.object.matrixWorld;
+      const world = hit.object.matrixWorld, hitZ = hit.local.clone().applyMatrix4(world).z;
       const allow = (stroke!.kind === 'support' && t.overhangsOnly && overhangFacets(target.geometry, new THREE.Matrix3().getNormalMatrix(world), t.highlight)) || undefined;
-      stroke!.paint = t.tool === 'fill' && stroke!.kind === 'color' ? bucketFill(target.geometry, stroke!.paint, hit.tri, t.edges ? t.angle : -1, stroke!.state)
-        : t.tool === 'fill' ? fillPaint(target.geometry, stroke!.paint, hit.tri, t.angle, stroke!.state, allow)
-        : t.tool === 'gap' ? stroke!.paint
-        : t.tool === 'triangle' ? paintTriangle(stroke!.paint, hit.tri, stroke!.state)
-        : t.tool === 'height' ? heightRange(target.geometry, stroke!.paint, hit.tri, world, hit.local.clone().applyMatrix4(world).z, t.height, stroke!.state)
-        : brush(target.geometry, stroke!.paint, hit.tri, hit.local, t.radius / world.getMaxScaleOnAxis(), t.tool, view, stroke!.state, allow);
+      if (t.tool === 'layer') {
+        const config = object && { ...effectiveConfig(s, 'process'), ...object.settings }, inst = object?.instances.find((i) => i.id === stroke!.instance);
+        if (stroke!.kind !== 'fuzzy' || !object || !inst || String(config?.nonplanar_mode ?? 'off') !== 'off' || String(config?.nonplanar_wave ?? 'off') !== 'off') return;
+        const p = layerParams(s, object), profile = layerProfileOf(s, object, p), bed = instanceBox(object, inst).min.z;
+        const band = layerBrushBand(p, profile, object.layerProfile ? undefined : object.ranges ?? [], hitZ - bed, t.layers);
+        if (!band) return;
+        stroke!.paint = layerRange(target.geometry, stroke!.paint, world, bed + band.z0, bed + band.z1, stroke!.state);
+      } else {
+        stroke!.paint = t.tool === 'fill' && stroke!.kind === 'color' ? bucketFill(target.geometry, stroke!.paint, hit.tri, t.edges ? t.angle : -1, stroke!.state)
+          : t.tool === 'fill' ? fillPaint(target.geometry, stroke!.paint, hit.tri, t.angle, stroke!.state, allow)
+          : t.tool === 'gap' ? stroke!.paint
+          : t.tool === 'triangle' ? paintTriangle(stroke!.paint, hit.tri, stroke!.state)
+          : t.tool === 'height' ? heightRange(target.geometry, stroke!.paint, hit.tri, world, hitZ, t.height, stroke!.state)
+          : brush(target.geometry, stroke!.paint, hit.tri, hit.local, t.radius / world.getMaxScaleOnAxis(), t.tool, view, stroke!.state, allow);
+      }
       paintView.sync(s, { volume: stroke!.volume, paint: stroke!.paint });
       render();
     };
@@ -1434,6 +1444,7 @@ void main() {
       const t = paintTool(), up = ev.deltaY < 0;
       if (t.tool === 'fill') setPaintTool({ angle: t.angle + (up ? 5 : -5) });
       else if (t.tool === 'height') setPaintTool({ height: t.height + (up ? HEIGHT.step : -HEIGHT.step) });
+      else if (t.tool === 'layer') setPaintTool({ layers: t.layers + (up ? LAYERS.step : -LAYERS.step) });
       else setPaintTool({ radius: t.radius + (up ? RADIUS.step : -RADIUS.step) });
     };
     renderer.domElement.addEventListener('pointerdown', onPaintDown, { capture: true });

@@ -31,7 +31,7 @@ const OrientConfirm = preloadable(() => import('./OrientConfirm').then((m) => ({
 const RemapFilaments = preloadable(() => import('./RemapFilaments'));
 import { addPlate, canAddPlate } from '../plater/plates';
 import { arrangeSettings, resetArrangeSettings, setArrangeSettings, subscribeArrangeSettings } from '../plater/arrangeSettings';
-import { ANGLE, EXTRUDERS_LIMIT, GAP_AREA, HEIGHT, RADIUS, canPaint, gapFill, isPaint, paintOf, PAINT_STEP, PAINT_TOOLS, paintTool, setPaintTool, subscribePaintTool, togglePaint, type PaintKind } from '../plater/paint';
+import { ANGLE, EXTRUDERS_LIMIT, GAP_AREA, HEIGHT, LAYERS, RADIUS, canPaint, gapFill, isPaint, paintOf, PAINT_STEP, PAINT_TOOLS, paintTool, setPaintTool, subscribePaintTool, togglePaint, type PaintKind } from '../plater/paint';
 import { filamentColor } from '../plater/filamentColor';
 import { canEditLayers } from './LayerHeight';
 import { Num } from './Num';
@@ -492,7 +492,7 @@ export function PaintPanel() {
   if (!kind || !object) return null;
   const tools = PAINT_TOOLS[kind];
   const tool = tools.some(([id]) => id === t.tool) ? t.tool : 'circle';
-  const fill = tool === 'fill', gap = tool === 'gap', height = tool === 'height', triangle = tool === 'triangle';
+  const fill = tool === 'fill', gap = tool === 'gap', height = tool === 'height', layer = tool === 'layer', triangle = tool === 'triangle';
   const painted = !!paintOf(object, kind) || !!object.volumes?.some((v) => v.type === 'part' && paintOf(v, kind));
   return (
     <div className="manip-panel">
@@ -523,7 +523,13 @@ export function PaintPanel() {
             <button className="btn" style={{ gridColumn: 'span 2', justifySelf: 'start' }} disabled={!(t.gapArea > 0) || !painted}
               onClick={() => mapPaint(object.id, kind, PAINT_STEP[kind], (x, scale) => gapFill(x.geometry, paintOf(x, kind), t.gapArea / (scale * scale)))}>Apply</button>
           </>
-        ) : triangle ? null : height ? (
+        ) : triangle ? null : layer ? (
+          <>
+            <span>Layers</span>
+            <Range min={LAYERS.min} max={LAYERS.max} step={LAYERS.step} value={t.layers} aria-label="Layers" onValueChange={(next) => setPaintTool({ layers: next })} />
+            <Num label="Layers" value={t.layers} step={LAYERS.step} onCommit={(v) => setPaintTool({ layers: v })} />
+          </>
+        ) : height ? (
           <>
             <span>Height range</span>
             <Range min={HEIGHT.min} max={HEIGHT.max} step={HEIGHT.step} value={t.height} onValueChange={(next) => setPaintTool({ height: next })} />

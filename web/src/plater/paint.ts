@@ -1,10 +1,12 @@
 import type * as THREE from 'three';
 import { T3 } from '../three-runtime';
-import { setState, type State } from '../state/store';
+import { setState, type LayerRange, type State } from '../state/store';
+import { baseProfile, type SlicingParams } from './layerProfile';
+import { objectLayers } from './layerTexture';
 
 export type PaintKind = 'support' | 'seam' | 'fuzzy' | 'color';
 export const PAINT_KINDS = ['support', 'seam', 'fuzzy', 'color'] as const;
-export type BrushTool = 'circle' | 'sphere' | 'triangle' | 'height' | 'fill' | 'gap';
+export type BrushTool = 'circle' | 'sphere' | 'triangle' | 'height' | 'layer' | 'fill' | 'gap';
 export const EXTRUDERS_LIMIT = 16;
 export type PaintNode = number | PaintNode[];
 export type Painting = Map<number, PaintNode>;
@@ -93,9 +95,9 @@ interface CursorShape {
 }
 
 class HeightCursor implements CursorShape {
-  constructor(private readonly world: THREE.Matrix4, private readonly z0: number, private readonly height: number) {}
+  constructor(private readonly world: THREE.Matrix4, private readonly z0: number, private readonly height: number, private readonly margin = 0.02) {}
   private z = (p: THREE.Vector3) => p.clone().applyMatrix4(this.world).z;
-  inside = (p: THREE.Vector3) => { const z = this.z(p); return z > this.z0 - 0.02 && z < this.z0 + this.height + 0.02; };
+  inside = (p: THREE.Vector3) => { const z = this.z(p); return z > this.z0 - this.margin && z < this.z0 + this.height + this.margin; };
   faces = () => true;
   touches(tri: Tri) {
     const zs = tri.map(this.z);
@@ -171,6 +173,50 @@ export function heightRange(g: THREE.BufferGeometry, painting: Painting | null, 
   const limit = 0.1 / world.getMaxScaleOnAxis(), limit2 = limit * limit;
   const tris = grow(g, hit, (t) => cursor.touches(vertices(g, t)));
   return update(painting, tris, (node, t) => brushNode(node, vertices(g, t), cursor, state, limit2, 0));
+}
+
+function rangeProfile(p: SlicingParams, ranges: readonly LayerRange[]): number[] {
+  const spans: { lo: number; hi: number; height: number }[] = [{ lo: 0, hi: p.first, height: p.first }];
+  for (const r of [...ranges].sort((a, b) => a.z[0] - b.z[0])) {
+    const lo = Math.max(r.z[0], spans[spans.length - 1].hi), hi = Math.min(r.z[1], p.height);
+    if (lo + 1e-4 < hi && r.layer_height > 0) spans.push({ lo, hi, height: r.layer_height });
+  }
+  const out: number[] = [], near = (a: number, b: number) => Math.abs(a - b) < 1e-4;
+  const append = (z: number, height: number) => {
+    const n = out.length;
+    if (n && near(out[n - 1], height)) {
+      if (near(out[n - 2], z)) return;
+      if (n >= 4 && near(out[n - 3], height)) { out[n - 2] = z; return; }
+    }
+    out.push(z, height);
+  };
+  for (const { lo, hi, height } of spans) {
+    const z = out.length ? out[out.length - 2] : 0;
+    if (lo > z + 1e-4) append(z, p.layer), append(lo, p.layer);
+    append(lo, height);
+    append(hi, height);
+  }
+  const z = out.length ? out[out.length - 2] : 0;
+  if (z < p.height) append(z, p.layer), append(p.height, p.layer);
+  return out.length >= 4 ? out : baseProfile(p);
+}
+
+export function layerBrushBand(p: SlicingParams, profile: number[], ranges: readonly LayerRange[] | undefined, z: number, count: number) {
+  const n = Math.floor(count);
+  if (!(p.first > 0 && p.height > 0 && n > 0 && Number.isFinite(z)) || z < -1e-7 || z > p.height + 1e-7) return null;
+  const layers = objectLayers(p, ranges !== undefined ? rangeProfile(p, ranges) : profile), countLayers = layers.length / 2;
+  if (countLayers < 1) return null;
+  let clicked = countLayers - 1;
+  for (let i = 0; i < countLayers; i++) if (z < layers[2 * i + 1]) { clicked = i; break; }
+  const first = Math.max(0, clicked - n + 1);
+  return { z0: layers[2 * first], z1: layers[2 * clicked + 1], first, clicked };
+}
+
+export function layerRange(g: THREE.BufferGeometry, painting: Painting | null, world: THREE.Matrix4, z0: number, z1: number,
+  state: number): Painting | null {
+  const cursor = new HeightCursor(world, z0, z1 - z0, 0), tris: number[] = [];
+  for (let t = 0, T = triangleCount(g); t < T; t++) if (cursor.touches(vertices(g, t))) tris.push(t);
+  return update(painting, tris, (node, t) => brushNode(node, vertices(g, t), cursor, state, 0, 0));
 }
 
 export const paintTriangle = (painting: Painting | null, hit: number, state: number) => update(painting, [hit], () => state);
@@ -354,15 +400,16 @@ export function paintJson(o: Paintable): Record<string, Record<string, string>> 
 
 export interface PaintTool {
   tool: BrushTool; radius: number; angle: number;
-  height: number; filament: number;
+  height: number; layers: number; filament: number;
   gapArea: number; highlight: number; overhangsOnly: boolean;
   edges: boolean;
 }
 export const RADIUS = { min: 0.4, max: 8, step: 0.2 } as const;
 export const ANGLE = { min: 0, max: 90, step: 5 } as const;
 export const HEIGHT = { min: 0.1, max: 8, step: 0.2 } as const;
+export const LAYERS = { min: 5, max: 100, step: 1 } as const;
 export const GAP_AREA = { min: 0, max: 5, step: 0.05 } as const;
-let tool: PaintTool = { tool: 'circle', radius: 1, angle: 30, height: 1, filament: 1, gapArea: 0, highlight: 0, overhangsOnly: false, edges: false };
+let tool: PaintTool = { tool: 'circle', radius: 1, angle: 30, height: 1, layers: 5, filament: 1, gapArea: 0, highlight: 0, overhangsOnly: false, edges: false };
 const listeners = new Set<() => void>();
 export const paintTool = () => tool;
 export function setPaintTool(patch: Partial<PaintTool>) {
@@ -372,6 +419,7 @@ export function setPaintTool(patch: Partial<PaintTool>) {
   tool.gapArea = Math.min(GAP_AREA.max, Math.max(GAP_AREA.min, tool.gapArea));
   tool.highlight = Math.min(90, Math.max(0, tool.highlight));
   tool.height = Math.min(HEIGHT.max, Math.max(HEIGHT.min, Math.round(tool.height * 100) / 100));
+  tool.layers = Math.min(LAYERS.max, Math.max(LAYERS.min, Math.round(tool.layers)));
   listeners.forEach((l) => l());
 }
 export const subscribePaintTool = (l: () => void) => (listeners.add(l), () => void listeners.delete(l));
@@ -393,7 +441,7 @@ export const PAINT_STEP: Record<PaintKind, string> = {
 export const PAINT_TOOLS: Record<PaintKind, [BrushTool, string, string][]> = {
   support: [['circle', 'circle_paint', 'Circle'], ['sphere', 'toolbar_modifier_sphere', 'Sphere'], ['fill', 'fill_paint', 'Fill'], ['gap', 'gap_fill', 'Gap Fill']],
   seam: [['circle', 'circle_paint', 'Circle'], ['sphere', 'toolbar_modifier_sphere', 'Sphere']],
-  fuzzy: [['circle', 'circle_paint', 'Circle'], ['sphere', 'toolbar_modifier_sphere', 'Sphere'], ['fill', 'fill_paint', 'Fill']],
+  fuzzy: [['circle', 'circle_paint', 'Circle'], ['sphere', 'toolbar_modifier_sphere', 'Sphere'], ['layer', 'height_range_layer', 'Layers'], ['fill', 'fill_paint', 'Fill']],
   color: [['circle', 'circle_paint', 'Circle'], ['sphere', 'toolbar_modifier_sphere', 'Sphere'], ['triangle', 'triangle_paint', 'Triangle'],
     ['height', 'height_range', 'Height Range'], ['fill', 'fill_paint', 'Fill'], ['gap', 'gap_fill', 'Gap Fill']],
 };
