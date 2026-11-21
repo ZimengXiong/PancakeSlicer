@@ -339,7 +339,7 @@ func (m *JobManager) restoreJobs() error {
 			close(e.done)
 			m.idempotency[j.IdempotencyKey] = e
 		}
-		if j.state == StateDone && !j.Request.Orient && j.Request.Cut == "" {
+		if j.state == StateDone && !j.Request.Orient && j.Request.Cut == "" && !(j.Request.SupportFins && bytes.Contains(j.slice, []byte(`"fins":false`))) {
 			path := j.OutputPath(j.Request.Output)
 			if j.Request.Explode {
 				path = filepath.Join(j.ExplodedDir(), "plate.json")

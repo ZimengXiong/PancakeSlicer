@@ -27,6 +27,9 @@ type Config struct {
 	Listen                string
 	Tool                  string
 	Resources             string
+	SupportFinsNode       string
+	SupportFinsCLI        string
+	SupportFinsElectron   bool
 	JobRoot               string
 	StaticDir             string
 	MaxJobs               int
@@ -87,6 +90,9 @@ func parseConfig() Config {
 	flag.StringVar(&c.Listen, "listen", env("ORCA_WEB_LISTEN", "127.0.0.1:8780"), "listen address (ORCA_WEB_LISTEN)")
 	flag.StringVar(&c.Tool, "tool", env("ORCA_WEB_TOOL", "build-nogui/tests/fff_print/nonplanar_slice_tool"), "nonplanar_slice_tool path (ORCA_WEB_TOOL)")
 	flag.StringVar(&c.Resources, "resources", env("ORCA_WEB_RESOURCES", "resources"), "resources directory holding profiles/ and nonplanar/ (ORCA_WEB_RESOURCES)")
+	flag.StringVar(&c.SupportFinsNode, "support-fins-node", env("ORCA_WEB_SUPPORT_FINS_NODE", ""), "Node 20.10+ or Electron executable for Support Fins (ORCA_WEB_SUPPORT_FINS_NODE)")
+	flag.StringVar(&c.SupportFinsCLI, "support-fins-cli", env("ORCA_WEB_SUPPORT_FINS_CLI", ""), "bundled Support Fins CLI path (ORCA_WEB_SUPPORT_FINS_CLI)")
+	flag.BoolVar(&c.SupportFinsElectron, "support-fins-electron", envBool("ORCA_WEB_SUPPORT_FINS_ELECTRON"), "use Electron's Node-compatible runtime without a process address-space cap")
 	flag.StringVar(&c.JobRoot, "job-root", env("ORCA_WEB_JOB_ROOT", filepath.Join(os.TempDir(), "orca-webapp-jobs")), "scratch directory for job files (ORCA_WEB_JOB_ROOT)")
 	flag.StringVar(&c.StaticDir, "static", env("ORCA_WEB_STATIC", "web/dist"), "static front end to serve at / when it exists (ORCA_WEB_STATIC)")
 	flag.IntVar(&c.MaxJobs, "max-jobs", envInt("ORCA_WEB_MAX_JOBS", 2), "slices running at once; more jobs queue (ORCA_WEB_MAX_JOBS)")
@@ -138,6 +144,13 @@ func parseConfig() Config {
 	for _, p := range []*string{&c.Tool, &c.Resources, &c.JobRoot, &c.StaticDir, &c.DataDir} {
 		if abs, err := filepath.Abs(*p); err == nil {
 			*p = abs
+		}
+	}
+	for _, p := range []*string{&c.SupportFinsNode, &c.SupportFinsCLI} {
+		if *p != "" {
+			if abs, err := filepath.Abs(*p); err == nil {
+				*p = abs
+			}
 		}
 	}
 	return c

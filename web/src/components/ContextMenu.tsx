@@ -5,6 +5,7 @@ import { changeVolumeType, deleteAll, deleteVolume, effectiveConfig, getState, r
 import { addPrimitive, addPrimitiveObject, loadVolume, SEAM_MODES, SHAPES, TYPE_LABEL, VOLUME_MENU } from '../plater/volumes';
 import { ActionMenu, type MenuEntry as Item } from './Menu';
 import { canAddPlate, deletePlate, editPlateName } from '../plater/plates';
+import { supportFinsEligibility } from '../plater/supportFins';
 import { SlotChip, slotsOf } from './SlotChip';
 
 const HANDY = [['Orca Cube'], ['OrcaSliced Combo'], ['Orca Badge'], ['Orca Tolerance Test'], ['3DBenchy'], ['Cali Cat'], ['Autodesk FDM Test'], ['Voron Cube'],
@@ -22,6 +23,8 @@ export default function ContextMenu() {
   const all = !!s.selected?.all;
   const ids = all ? selectedObjectIds(s) : [];
   const editable = !!o && !o.project?.placeholder;
+  const finsReason = o && !all ? supportFinsEligibility(s, o) : null;
+  const hasFins = !!o?.volumes?.some((v) => v.supportFins);
   const printable = (o?.instances.find((i) => menu.instance === undefined || i.id === menu.instance) ?? o?.instances[0])?.printable !== false;
   const volume = o?.volumes?.find((v) => v.id === menu.volume);
   const heightRanges: Item[] = o && !all && !s.project && editable ? [{ label: 'Height Range Modifier',
@@ -69,6 +72,10 @@ export default function ContextMenu() {
     { label: 'Clone', shortcut: 'Ctrl+K', action: () => setState({ appDialog: 'clone' }), disabled: !editable || !!o.project, tip: 'Make copies of the selected objects' },
     ...(!all ? [{ label: 'Fix Model', action: () => void import('../plater/meshOps').then((m) => m.fixModel(o.id)), disabled: !editable || !!o.project || !!o.volumes?.length }] : []),
     ...(!all ? [{ label: 'Simplify Model', action: () => setState({ appDialog: 'simplify' }), disabled: !editable || !!o.project || !!o.volumes?.length }] : []),
+    ...(!all ? [{ label: hasFins ? 'Regenerate Support Fins' : 'Generate Support Fins',
+      action: () => void import('../plater/supportFins').then((m) => m.generateSupportFins(o.id)),
+      disabled: !editable || !!finsReason || !s.api || !!s.api.mock,
+      tip: finsReason ?? 'Bake the original model pose and generate separate breakaway fin geometry' }] : []),
     { label: 'Center', action: centreSelection, disabled: !editable },
     { label: 'Drop', action: dropSelection, disabled: !editable || !canDrop(s), tip: 'Drop the selection to the bed' },
     ...(all ? [] : [{ label: 'Split', disabled: !editable || !!s.project, sub: [

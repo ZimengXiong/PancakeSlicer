@@ -370,7 +370,7 @@ func stageCacheMaxMB() uint64 {
 
 func cacheableJob(m *JobManager, j *Job) bool {
 	r := j.Request
-	if r.Orient || r.Explode || r.Cut != "" || r.MeshOp != "" || r.Arrange || r.WipeTower || overlayOutput(r.Output) {
+	if r.SupportFins || r.Orient || r.Explode || r.Cut != "" || r.MeshOp != "" || r.Arrange || r.WipeTower || overlayOutput(r.Output) {
 		return false
 	}
 	heads, err := os.ReadDir(userHeadDir(m.cfg))

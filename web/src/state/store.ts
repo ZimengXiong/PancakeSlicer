@@ -52,6 +52,7 @@ export interface Volume {
   paint?: Partial<Record<PaintKind, Painting>>;
   text?: TextSpec;
   svg?: SvgSpec;
+  supportFins?: boolean;
 }
 
 export interface SvgSpec {

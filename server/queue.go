@@ -125,6 +125,13 @@ func limitJobMemory(cmd *exec.Cmd) error {
 	if err != nil || mb < 64 || mb > 1<<30 {
 		return fmt.Errorf("invalid ORCA_WEB_JOB_MEMORY_MB")
 	}
+	return limitProcessMemory(cmd, mb, 0)
+}
+
+func limitProcessMemory(cmd *exec.Cmd, mb, outputMB int64) error {
+	if jobMemoryLimit != nil {
+		return jobMemoryLimit(cmd)
+	}
 	if runtime.GOOS != "linux" {
 		return fmt.Errorf("job memory cap requires a platform memory hook")
 	}
@@ -132,7 +139,11 @@ func limitJobMemory(cmd *exec.Cmd) error {
 	if err != nil {
 		return fmt.Errorf("job memory cap requires prlimit")
 	}
-	cmd.Args = append([]string{wrapper, "--as=" + strconv.FormatInt(mb<<20, 10), "--", cmd.Path}, cmd.Args[1:]...)
+	args := []string{wrapper, "--as=" + strconv.FormatInt(mb<<20, 10)}
+	if outputMB > 0 {
+		args = append(args, "--fsize="+strconv.FormatInt(outputMB<<20, 10))
+	}
+	cmd.Args = append(append(args, "--", cmd.Path), cmd.Args[1:]...)
 	cmd.Path = wrapper
 	return nil
 }

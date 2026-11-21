@@ -330,7 +330,7 @@ func sliceNumbers(raw json.RawMessage, s *versionSlice) {
 
 func sliceJob(j *Job) bool {
 	r := j.Request
-	return j.State() == StateDone && !r.Orient && !r.Explode && r.Cut == "" && r.MeshOp == "" && !r.Arrange && !r.WipeTower && !overlayOutput(r.Output)
+	return j.State() == StateDone && !r.SupportFins && !r.Orient && !r.Explode && r.Cut == "" && r.MeshOp == "" && !r.Arrange && !r.WipeTower && !overlayOutput(r.Output)
 }
 
 func (s *Server) versionRoutes(mux *http.ServeMux) {

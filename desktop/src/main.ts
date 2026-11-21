@@ -108,6 +108,7 @@ interface BundleIdentity {
   server_binary_sha256: string;
   native_manifest_sha256: string;
   native_qualification_sha256: string;
+  support_fins_sha256: string;
 
   schemas: Record<string, number>;
 }
@@ -128,6 +129,7 @@ async function bundleIdentity(web: string, engine: string): Promise<BundleIdenti
   const hashes = await Promise.all(([
     [`orca-webapp-server${EXE}`, 'server_binary_sha256'], [`nonplanar_slice_tool${EXE}`, 'native_binary_sha256'],
     ['surface-manifest.json', 'native_manifest_sha256'], ['artifact-qualification.ready', 'native_qualification_sha256'],
+    ['support-fins/support-fins.mjs', 'support_fins_sha256'],
   ] as const).map(async ([name, key]) => /^[a-f0-9]{64}$/.test(expected[key]) && await fileHash(path.join(engine, name)) === expected[key]));
   if (!hashes.every(Boolean)) throw new Error('Oops! One of the app\'s bundled files looks modified or corrupted. Try reinstalling PancakeSlicer.');
   if (!/^[a-f0-9]{64}$/.test(expected.native_resources_sha256)) throw new Error('Oops! Required app resources are missing from this installation. Try reinstalling PancakeSlicer.');
@@ -191,6 +193,9 @@ async function startServer(): Promise<string> {
 
   if (fs.existsSync(surfaceManifest)) env.ORCA_WEB_SURFACE_MANIFEST = surfaceManifest;
   if (fs.existsSync(qualification)) env.ORCA_WEB_ARTIFACT_QUALIFICATION = qualification;
+  env.ORCA_WEB_SUPPORT_FINS_NODE = process.execPath;
+  env.ORCA_WEB_SUPPORT_FINS_CLI = path.join(engine, 'support-fins', 'support-fins.mjs');
+  env.ORCA_WEB_SUPPORT_FINS_ELECTRON = '1';
 
   if (process.platform === 'linux' && fs.existsSync(lib)) env.LD_LIBRARY_PATH = [lib, env.LD_LIBRARY_PATH].filter(Boolean).join(':');
   let lastError = '';

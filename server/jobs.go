@@ -46,6 +46,9 @@ type JobRequest struct {
 	CutConnectors string `json:"cut_connectors,omitempty"`
 	CutDovetail   string `json:"cut_dovetail,omitempty"`
 	MeshOp            string  `json:"mesh_op,omitempty"`
+	SupportFins         bool    `json:"support_fins,omitempty"`
+	SupportFinsNozzle   float64 `json:"support_fins_nozzle,omitempty"`
+	SupportFinsLayer    float64 `json:"support_fins_layer_height,omitempty"`
 	SimplifyRatio     float64 `json:"simplify_ratio,omitempty"`
 	SimplifyTriangles int     `json:"simplify_triangles,omitempty"`
 	SimplifyMaxError float64 `json:"simplify_max_error,omitempty"`
@@ -188,7 +191,7 @@ func (j *Job) snapshotView() JobView {
 		t := j.finished
 		v.Finished = &t
 	}
-	if j.state == StateDone && !j.Request.Orient && !overlayOutput(j.Request.Output) {
+	if j.state == StateDone && !j.Request.Orient && !j.Request.SupportFins && !overlayOutput(j.Request.Output) {
 		v.DownloadURL = "/api/jobs/" + j.ID + "/download"
 		v.Filename = j.DownloadName()
 	}
@@ -816,6 +819,10 @@ func (m *JobManager) run(ctx context.Context, j *Job) {
 		ctx, cancel = context.WithTimeout(ctx, m.cfg.JobTimeout)
 	}
 	defer cancel()
+	if j.Request.SupportFins {
+		m.runSupportFins(ctx, j)
+		return
+	}
 	if ctx.Err() != nil {
 		j.setState(StateInterrupted, "worker interrupted before preparation")
 		return

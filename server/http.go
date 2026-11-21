@@ -368,6 +368,24 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 			}
 			req.ArrangeMaterials = raw
 		}
+	case "support-fins":
+		if req.Output != "" {
+			fail(w, 400, "http_invalid", "Support Fins chooses its own STL output")
+			return
+		}
+		req.SupportFins, req.Output = true, "stl"
+		nozzle, nozzleErr := strconv.ParseFloat(r.FormValue("support_fins_nozzle"), 64)
+		layer, layerErr := strconv.ParseFloat(r.FormValue("support_fins_layer_height"), 64)
+		allowedNozzle := map[float64]bool{0.2: true, 0.25: true, 0.4: true, 0.6: true, 0.8: true, 1: true, 1.2: true, 1.4: true, 1.6: true, 1.8: true, 2: true}
+		if nozzleErr != nil || !allowedNozzle[nozzle] {
+			fail(w, 400, "http_invalid", "Support Fins nozzle must be one of 0.2, 0.25, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8 or 2.0 mm")
+			return
+		}
+		if layerErr != nil || math.IsNaN(layer) || math.IsInf(layer, 0) || layer < 0.08 || layer > 0.6 {
+			fail(w, 400, "http_invalid", "Support Fins layer height must be between 0.08 and 0.6 mm")
+			return
+		}
+		req.SupportFinsNozzle, req.SupportFinsLayer = nozzle, layer
 	case "repair", "simplify":
 		req.MeshOp = r.FormValue("operation")
 		if req.MeshOp == "simplify" {
@@ -503,7 +521,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		req.Output, req.Priority, req.PreviewBudget = "patch-preview", "low", budget
 	} else if r.URL.Path == "/api/top-surfaces/plan" {
 		req.Output, req.Priority = "plan-tops", "low"
-	} else if req.Output != "gcode" && req.Output != "gcode.3mf" && req.Output != "3mf" {
+	} else if req.Output != "gcode" && req.Output != "gcode.3mf" && req.Output != "3mf" && !(req.SupportFins && req.Output == "stl") {
 		fail(w, 400, "output_must_gcode_gcode")
 		return
 	}
@@ -753,11 +771,15 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "arrange_prime_tower_estimate")
 		return
 	}
+	if req.SupportFins && (req.Plate || len(req.Files) != 1 || !strings.EqualFold(filepath.Ext(req.Files[0]), ".stl")) {
+		fail(w, 400, "http_invalid", "Support Fins requires one baked STL without plate JSON")
+		return
+	}
 	if req.Orient && (req.Output == "3mf" || req.Plate || len(req.Files) != 1 || !strings.EqualFold(filepath.Ext(req.Files[0]), ".stl")) {
 		fail(w, 400, "orient_requires_one_stl")
 		return
 	}
-	if !req.Orient && !req.Arrange && !req.WipeTower && !req.Explode && req.Cut == "" && req.MeshOp == "" && req.Output != "3mf" && !overlayOutput(req.Output) {
+	if !req.SupportFins && !req.Orient && !req.Arrange && !req.WipeTower && !req.Explode && req.Cut == "" && req.MeshOp == "" && req.Output != "3mf" && !overlayOutput(req.Output) {
 		if err := validatePlateBounds(filepath.Join(j.Dir, "input"), req, presets.machine, rawPlate); err != nil {
 			var outside outsideBedError
 			if errors.As(err, &outside) {

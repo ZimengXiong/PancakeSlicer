@@ -503,6 +503,8 @@ export async function plateJob(s = getState(), ask = true): Promise<JobRequest |
     return plateJob(getState(), ask);
   }
   if (issues.empty.size) return `${slots.emptyText(issues)}. Choose its filament under the printer first.`;
+  const finConflicts = (await import('./plater/supportFins')).supportFinsConflicts(s);
+  if (finConflicts) return finConflicts;
   if (nativeSupportCapable(s) && (String(effectiveConfig(s, 'process').support_style) === 'native' || s.objects.some((o) => o.settings.support_style === 'native'))) {
     const conflicts = (await import('./plater/nativeSupport')).nativeSupportConflicts(s);
     if (conflicts && !ask) return conflicts;
