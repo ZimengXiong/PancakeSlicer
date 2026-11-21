@@ -61,7 +61,7 @@ private:
 };
 
 double safe_travel_z(const MaterialColumns &columns, const Nonplanar::HeadEnvelope &head,
-                     const Vec2d &a, const Vec2d &b, double hop);
+                     const Vec2d &a, const Vec2d &b, double hop, bool nozzle_only = false);
 enum class ClearanceHitClass { Body, Cone, Land };
 struct ClearanceHit
 {
