@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace Slic3r { class PrintConfig; }
+namespace Slic3r { class BoundingBoxf; class PrintConfig; }
 
 namespace Slic3r::Nonplanar {
 
@@ -65,6 +65,16 @@ struct HeadEnvelope
 
     double reach() const;
 };
+
+struct LowBox
+{
+    Vec2d  min, max;
+    double floor;
+    bool   infinite_x, infinite_y;
+};
+
+std::vector<LowBox> low_boxes(const HeadEnvelope &head, double gap, double max_relief);
+bool conflicts(const std::vector<LowBox> &boxes, const BoundingBoxf &a, double relief_a, const BoundingBoxf &b, double relief_b);
 
 bool operator==(const HeadBox &lhs, const HeadBox &rhs);
 bool operator==(const TipAllowance &lhs, const TipAllowance &rhs);

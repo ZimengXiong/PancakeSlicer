@@ -4,6 +4,7 @@
 #include "Print.hpp"
 #include "BoundingBox.hpp"
 #include "PrintConfig.hpp"
+#include "Nonplanar/HeadEnvelope.hpp"
 #include "libslic3r.h"
 
 #include <Eigen/Core>
@@ -29,6 +30,7 @@
 #include <libnest2d/utils/rotcalipers.hpp>
 
 #include <numeric>
+#include <optional>
 
 #include <boost/geometry/index/rtree.hpp>
 #include <utility>
@@ -114,6 +116,37 @@ void update_arrange_params(ArrangeParams& params, const DynamicPrintConfig* prin
     }
 }
 
+namespace {
+
+std::optional<Nonplanar::HeadEnvelope> arrange_clearance_head(const ArrangePolygons &items, const DynamicPrintConfig *print_cfg)
+{
+    if (std::none_of(items.begin(), items.end(), [](const ArrangePolygon &ap) { return ap.nonplanar_relief > 0.; }))
+        return std::nullopt;
+    PrintConfig config;
+    config.apply(*print_cfg, true);
+    return Nonplanar::resolve_head_envelope(config);
+}
+
+void apply_nonplanar_inflation(ArrangePolygon &ap, const std::optional<Nonplanar::HeadEnvelope> &head)
+{
+    ap.nonplanar_inflation = 0;
+    ap.nonplanar_inflation_capped = false;
+    if (!head || ap.nonplanar_relief <= 0.)
+        return;
+    const std::vector<Nonplanar::LowBox> boxes = Nonplanar::low_boxes(*head, head->contact_tolerance, ap.nonplanar_relief);
+    double inflation = 0.;
+    for (const Nonplanar::LowBox &box : boxes) {
+        const double x = std::max(std::abs(box.min.x()), std::abs(box.max.x()));
+        const double y = std::max(std::abs(box.min.y()), std::abs(box.max.y()));
+        const double required = box.infinite_x && box.infinite_y ? 0. : box.infinite_x ? y : box.infinite_y ? x : 0.5 * std::hypot(x, y);
+        inflation = std::max(inflation, required);
+    }
+    ap.nonplanar_inflation = coord_t(std::ceil(scaled(inflation)));
+    ap.inflation = std::max(ap.inflation, ap.nonplanar_inflation);
+}
+
+}
+
 void update_selected_items_inflation(ArrangePolygons& selected, const DynamicPrintConfig* print_cfg, ArrangeParams& params) {
     Points      bedpts = get_shrink_bedpts(print_cfg, params);
     BoundingBox bedbb = Polygon(bedpts).bounding_box();
@@ -130,9 +163,11 @@ void update_selected_items_inflation(ArrangePolygons& selected, const DynamicPri
     std::for_each(selected.begin(), selected.end(), [&](ArrangePolygon& ap) {
         brim_max = std::max(brim_max, ap.brim_width);
         if (ap.has_tree_support) plate_has_tree_support = true; });
+    const auto head = arrange_clearance_head(selected, print_cfg);
     std::for_each(selected.begin(), selected.end(), [&](ArrangePolygon& ap) {
         ap.inflation = params.min_obj_distance != 0 ? params.min_obj_distance / 2 :
             plate_has_tree_support ? scaled(brim_max / 2) : scaled(ap.brim_width);
+        apply_nonplanar_inflation(ap, head);
         BoundingBox apbb = ap.poly.contour.bounding_box();
         auto        diffx = bedbb.size().x() - apbb.size().x() - 5;
         auto        diffy = bedbb.size().y() - apbb.size().y() - 5;
@@ -140,6 +175,7 @@ void update_selected_items_inflation(ArrangePolygons& selected, const DynamicPri
             auto min_diff = std::min(diffx, diffy);
             ap.inflation = std::min(min_diff / 2, ap.inflation);
         }
+        ap.nonplanar_inflation_capped = ap.nonplanar_inflation > ap.inflation;
         });
 }
 
@@ -152,9 +188,14 @@ void update_unselected_items_inflation(ArrangePolygons& unselected, const Dynami
             if (region.is_virt_object) region.poly.translate(scaled(params.bed_shrink_x), scaled(params.bed_shrink_y));
         }
     }
+    const auto head = arrange_clearance_head(unselected, print_cfg);
     std::for_each(unselected.begin(), unselected.end(),
-        [&](auto& ap) { ap.inflation = !ap.is_virt_object ? (params.min_obj_distance == 0 ? scaled(ap.brim_width) : params.min_obj_distance / 2)
-        : (ap.is_extrusion_cali_object ? 0 : scale_(exclusion_gap)); });
+        [&](auto& ap) {
+            ap.inflation = !ap.is_virt_object ? (params.min_obj_distance == 0 ? scaled(ap.brim_width) : params.min_obj_distance / 2)
+            : (ap.is_extrusion_cali_object ? 0 : scale_(exclusion_gap));
+            if (!ap.is_virt_object)
+                apply_nonplanar_inflation(ap, head);
+        });
 }
 
 void update_selected_items_axis_align(ArrangePolygons& selected, const DynamicPrintConfig* print_cfg, const ArrangeParams& params)

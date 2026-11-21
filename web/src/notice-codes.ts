@@ -85,6 +85,7 @@ export const NOTICES = {
   operations_failed: { kind: 'error', text: (p: { detail: Param }) => `${p.detail}` },
   copyx_couldnt_fit_plate: { kind: 'error', text: (p: { away: Param; value: Param }) => `${p.away} copy${p.value} couldn't fit on the plate` },
   couldnt_auto_arrange_plate: { kind: 'error', text: (p: { detail: Param }) => `Oops! Couldn't auto-arrange the plate: ${p.detail}`, step: "Try clicking Arrange (A) again." },
+  arrange_nonplanar_clearance: { kind: 'warning', text: (p: { detail: Param }) => `${p.detail}`, step: 'Move the flagged objects apart if needed. Final slicing remains authoritative; this arrange check is not a safety proof.', ms: 12000 },
   clear_painted_regions_first: { kind: 'info', text: () => `Clear your painted regions first before running this action` },
   simplify_failed: { kind: 'error', text: (p: { detail: Param }) => `${p.detail}` },
   svg_failed: { kind: 'info', text: (p: { name: Param; value: Param }) => `${p.name}: ${p.value}` },

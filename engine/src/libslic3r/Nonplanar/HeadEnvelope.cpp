@@ -1,4 +1,5 @@
 #include "HeadEnvelope.hpp"
+#include "libslic3r/BoundingBox.hpp"
 #include "libslic3r/Point.hpp"
 #include <boost/filesystem/directory.hpp>
 
@@ -324,6 +325,36 @@ double HeadEnvelope::reach() const
             r = std::max(r, std::hypot(std::max(std::abs(lo.x()), std::abs(hi.x())), std::max(std::abs(lo.y()), std::abs(hi.y()))));
         }
     return r;
+}
+
+std::vector<LowBox> low_boxes(const HeadEnvelope &head, double gap, double max_relief)
+{
+    std::vector<LowBox> out;
+    for (const HeadBox &box : head.boxes) {
+        if (box.nozzle)
+            continue;
+        const double floor = gap + box.min.z() - head.margin;
+        if (floor >= max_relief)
+            continue;
+        const double grow = head.lateral_margin;
+        out.push_back({ Vec2d(box.min.x() - grow, box.min.y() - grow), Vec2d(box.max.x() + grow, box.max.y() + grow), floor,
+                        box.infinite_x, box.infinite_y });
+    }
+    return out;
+}
+
+bool conflicts(const std::vector<LowBox> &boxes, const BoundingBoxf &a, double relief_a, const BoundingBoxf &b, double relief_b)
+{
+    const double stand = std::min(relief_a, relief_b);
+    for (const LowBox &box : boxes) {
+        if (box.floor >= stand)
+            continue;
+        const bool x = box.infinite_x || (a.min.x() + box.min.x() < b.max.x() && a.max.x() + box.max.x() > b.min.x());
+        const bool y = box.infinite_y || (a.min.y() + box.min.y() < b.max.y() && a.max.y() + box.max.y() > b.min.y());
+        if (x && y)
+            return true;
+    }
+    return false;
 }
 
 bool operator==(const HeadBox &lhs, const HeadBox &rhs)

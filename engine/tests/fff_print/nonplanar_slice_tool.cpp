@@ -2744,6 +2744,43 @@ void arrange_only(const Args &args, Model &model, const DynamicPrintConfig &conf
     }
     arrangement::arrange(items, fixed, bed, params);
 
+    const bool clearance = std::any_of(items.begin(), items.end(), [](const arrangement::ArrangePolygon &item) { return item.nonplanar_relief > 0.; });
+    nlohmann::json clearance_info = nlohmann::json::object(), warnings = nlohmann::json::array();
+    if (clearance) {
+        PrintConfig printer;
+        printer.apply(config, true);
+        const Nonplanar::HeadEnvelope head = Nonplanar::resolve_head_envelope(printer);
+        double max_relief = 0.;
+        for (const arrangement::ArrangePolygon &item : items)
+            max_relief = std::max(max_relief, item.nonplanar_relief);
+        const std::vector<Nonplanar::LowBox> boxes = Nonplanar::low_boxes(head, head.contact_tolerance, max_relief);
+        std::vector<const arrangement::ArrangePolygon *> placed;
+        for (const arrangement::ArrangePolygons *list : { &items, &fixed })
+            for (const arrangement::ArrangePolygon &item : *list)
+                if (item.bed_idx >= 0)
+                    placed.push_back(&item);
+        for (size_t i = 0; i < placed.size(); ++i)
+            for (size_t j = i + 1; j < placed.size(); ++j) {
+                const arrangement::ArrangePolygon &a = *placed[i], &b = *placed[j];
+                if (a.bed_idx != b.bed_idx)
+                    continue;
+                const BoundingBox a_scaled = get_extents(a.transformed_poly()), b_scaled = get_extents(b.transformed_poly());
+                const BoundingBoxf a_box(unscaled(a_scaled.min), unscaled(a_scaled.max)), b_box(unscaled(b_scaled.min), unscaled(b_scaled.max));
+                if (!Nonplanar::conflicts(boxes, a_box, a.nonplanar_relief, b_box, b.nonplanar_relief) &&
+                    !Nonplanar::conflicts(boxes, b_box, b.nonplanar_relief, a_box, a.nonplanar_relief))
+                    continue;
+                const bool capped = a.nonplanar_inflation_capped || b.nonplanar_inflation_capped;
+                std::ostringstream message;
+                message << "Head-clearance preflight: " << a.name << " [#" << a.itemid << "] and " << b.name << " [#" << b.itemid
+                        << "] on plate " << a.bed_idx + 1 << " may be too close for " << head.id << " (curved relief " << std::setprecision(3)
+                        << a.nonplanar_relief << " / " << b.nonplanar_relief << " mm" << (capped ? "; inflation capped" : "") << ").";
+                warnings.push_back({ { "code", "nonplanar_head_clearance" }, { "plate", a.bed_idx + 1 }, { "objects", { a.name, b.name } },
+                                     { "items", { a.itemid, b.itemid } }, { "capped", capped }, { "message", message.str() } });
+            }
+        clearance_info = { { "head", head.id }, { "collision_tolerance", head.contact_tolerance },
+                           { "ignore_duct", printer.nonplanar_ignore_duct.value }, { "max_relief", max_relief }, { "conflicts", warnings.size() } };
+    }
+
     nlohmann::json out = { { "schema", "orca.arrange.v1" }, { "objects", nlohmann::json::array() } };
     int plates = 0, unplaced = 0;
     for (size_t o = 0; o < model.objects.size(); ++o)
@@ -2766,6 +2803,12 @@ void arrange_only(const Args &args, Model &model, const DynamicPrintConfig &conf
             place["rot"]   = Geometry::rad2deg(item.rotation);
             plates         = std::max(plates, item.bed_idx + 1);
         }
+        if (clearance) {
+            place["nonplanar_relief"] = item.nonplanar_relief;
+            place["nonplanar_inflation"] = unscaled(item.nonplanar_inflation);
+            place["nonplanar_actual_inflation"] = unscaled(item.inflation);
+            place["nonplanar_inflation_capped"] = item.nonplanar_inflation_capped;
+        }
         out["objects"][o]["instances"].push_back(std::move(place));
     }
     for (nlohmann::json &object : out["objects"])
@@ -2773,6 +2816,10 @@ void arrange_only(const Args &args, Model &model, const DynamicPrintConfig &conf
                   [](const nlohmann::json &a, const nlohmann::json &b) { return a.at("index") < b.at("index"); });
     out["plates"]   = plates;
     out["unplaced"] = unplaced;
+    if (clearance) {
+        out["nonplanar_clearance"] = std::move(clearance_info);
+        out["warnings"] = std::move(warnings);
+    }
     boost::nowide::ofstream file(args.arrange_only);
     file << out.dump(1) << "\n";
     if (!file)

@@ -140,7 +140,7 @@ export async function plateForm(s: State, operation: string): Promise<FormData> 
   return fd;
 }
 
-interface ArrangeResult { schema: string; plates: number; unplaced: number; objects: { instances: { plate: number | null; x?: number; y?: number; rot?: number }[] }[] }
+interface ArrangeResult { schema: string; plates: number; unplaced: number; warnings?: { code?: string; message: string }[]; objects: { instances: { plate: number | null; x?: number; y?: number; rot?: number }[] }[] }
 
 export async function arrangeNative() {
   const s = getState();
@@ -182,6 +182,11 @@ export async function arrangeNative() {
     }) }));
     undoable('Arrange', () => setState({ objects }));
     if (away) toast('copyx_couldnt_fit_plate', { away, value: away > 1 ? 's do' : ' does' });
+    const clearance = (result.warnings ?? []).filter((w) => w.code === 'nonplanar_head_clearance' && w.message);
+    if (clearance.length) {
+      const detail = clearance[0].message + (clearance.length > 1 ? `\n…and ${clearance.length - 1} more clearance warning${clearance.length > 2 ? 's' : ''}.` : '');
+      toast('arrange_nonplanar_clearance', { detail });
+    }
   } catch (e) {
     toast('couldnt_auto_arrange_plate', { detail: e instanceof Error ? e.message : e });
   } finally {

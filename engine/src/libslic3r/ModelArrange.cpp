@@ -17,7 +17,154 @@
 #include "ExPolygon.hpp"
 #include "Polygon.hpp"
 
+#include <limits>
+#include <numeric>
+
 namespace Slic3r {
+
+namespace {
+
+bool arrange_curved_mode(NonplanarMode mode)
+{
+    return curved_tops_mode(mode) || mode == NonplanarMode::ConformalLayers;
+}
+
+struct ArrangeReliefSettings
+{
+    NonplanarMode mode;
+    double        max_angle;
+    double        min_area;
+};
+
+double instance_nonplanar_relief(ModelInstance *instance, const DynamicPrintConfig &config)
+{
+    const auto *collision = config.option<ConfigOptionEnum<NonplanarCollisionCheck>>("nonplanar_collision_check");
+    if (collision == nullptr || collision->value == NonplanarCollisionCheck::Off)
+        return 0.;
+
+    const ModelObject *object = instance->get_object();
+    DynamicPrintConfig effective = config;
+    effective.apply(object->config.get(), true);
+    if (effective.opt_enum<RotaryLayout>("nonplanar_kinematics") != RotaryLayout::None || effective.opt_bool("belt_printer"))
+        return 0.;
+    const bool native_support = effective.opt_bool("enable_support") && effective.opt_enum<SupportMaterialStyle>("support_style") == smsNative;
+    const NonplanarMode automatic = native_support ? NonplanarMode::Off : NonplanarMode::NonplanarTop;
+    ArrangeReliefSettings base { effective.opt_enum<NonplanarMode>("nonplanar_mode"),
+                                 effective.opt_float("nonplanar_curved_max_angle"), effective.opt_float("nonplanar_curved_min_area") };
+    if (base.mode == NonplanarMode::Auto)
+        base.mode = automatic;
+
+    auto apply_range = [](ArrangeReliefSettings &settings, const DynamicPrintConfig &config, NonplanarMode automatic) {
+        if (const auto *mode = config.option<ConfigOptionEnum<NonplanarMode>>("nonplanar_mode")) {
+            settings.mode = mode->value;
+            if (settings.mode == NonplanarMode::Auto)
+                settings.mode = automatic;
+        }
+        if (const auto *angle = config.option<ConfigOptionFloat>("nonplanar_curved_max_angle"))
+            settings.max_angle = angle->value;
+        if (const auto *area = config.option<ConfigOptionFloat>("nonplanar_curved_min_area"))
+            settings.min_area = area->value;
+    };
+    auto at = [&](double z) {
+        ArrangeReliefSettings out = base;
+        for (const auto &[range, config] : object->layer_config_ranges)
+            if (z >= range.first && z < range.second)
+                apply_range(out, config.get(), automatic);
+        return out;
+    };
+    auto relevant = [&](NonplanarMode mode) { return arrange_curved_mode(mode == NonplanarMode::Auto ? automatic : mode); };
+    if (!relevant(base.mode)) {
+        bool any = false;
+        for (const auto &[range, config] : object->layer_config_ranges) {
+            ArrangeReliefSettings settings = base;
+            apply_range(settings, config.get(), automatic);
+            any |= relevant(settings.mode);
+        }
+        if (!any)
+            return 0.;
+    }
+
+    struct Facet { stl_triangle_vertex_indices vertices; double low, high, area, min_area; };
+    double relief = 0.;
+    const Transform3d matrix = instance->get_matrix();
+    for (const ModelVolume *volume : object->volumes) {
+        if (!volume->is_model_part())
+            continue;
+        const Transform3d transform = matrix * volume->get_matrix();
+        const double winding = transform.linear().determinant() < 0. ? -1. : 1.;
+        const indexed_triangle_set &mesh = volume->mesh().its;
+        std::vector<Facet> facets;
+        for (const stl_triangle_vertex_indices &face : mesh.indices) {
+            const Vec3d a = transform * mesh.vertices[face[0]].cast<double>();
+            const Vec3d b = transform * mesh.vertices[face[1]].cast<double>();
+            const Vec3d c = transform * mesh.vertices[face[2]].cast<double>();
+            const Vec3d normal = (b - a).cross(c - a) * winding;
+            const double length = normal.norm();
+            if (length <= 0. || normal.z() <= 0.)
+                continue;
+            const double nz = normal.z() / length;
+            const double low = std::min({ a.z(), b.z(), c.z() }), high = std::max({ a.z(), b.z(), c.z() });
+            std::vector<double> cuts { low, high };
+            for (const auto &[range, config] : object->layer_config_ranges)
+                for (double z : { range.first, range.second })
+                    if (z > low && z < high)
+                        cuts.push_back(z);
+            std::sort(cuts.begin(), cuts.end());
+            cuts.erase(std::unique(cuts.begin(), cuts.end()), cuts.end());
+            bool eligible = false;
+            double min_area = std::numeric_limits<double>::infinity();
+            auto accept = [&](double z) {
+                const ArrangeReliefSettings settings = at(z);
+                if (!relevant(settings.mode))
+                    return;
+                const double angle = settings.mode == NonplanarMode::ConformalLayers ? std::clamp(settings.max_angle, 1., 45.) :
+                                                                                       std::clamp(settings.max_angle, 0., 45.);
+                if (nz + 1e-9 < std::cos(Geometry::deg2rad(angle)))
+                    return;
+                eligible = true;
+                min_area = std::min(min_area, std::max(0., settings.min_area));
+            };
+            accept(cuts.front());
+            for (size_t i = 1; i < cuts.size() && !eligible; ++i) {
+                accept(cuts[i]);
+                if (!eligible && cuts[i] > cuts[i - 1])
+                    accept(0.5 * (cuts[i - 1] + cuts[i]));
+            }
+            if (eligible)
+                facets.push_back({ face, low, high, 0.5 * length, min_area });
+        }
+
+        std::vector<size_t> parent(facets.size());
+        std::iota(parent.begin(), parent.end(), 0);
+        auto root = [&](size_t i) { while (parent[i] != i) i = parent[i]; return i; };
+        auto join = [&](size_t a, size_t b) { a = root(a), b = root(b); if (a != b) parent[b] = a; };
+        std::map<std::pair<int, int>, size_t> edges;
+        for (size_t i = 0; i < facets.size(); ++i)
+            for (int k = 0; k < 3; ++k) {
+                const int a = facets[i].vertices[k], b = facets[i].vertices[(k + 1) % 3];
+                auto [it, inserted] = edges.emplace(std::minmax(a, b), i);
+                if (inserted)
+                    it->second = i;
+                else
+                    join(i, it->second);
+            }
+        std::vector<double> low(facets.size(), std::numeric_limits<double>::infinity()), high(facets.size(), -std::numeric_limits<double>::infinity());
+        std::vector<double> area(facets.size()), min_area(facets.size(), std::numeric_limits<double>::infinity());
+        for (size_t i = 0; i < facets.size(); ++i) {
+            const size_t r = root(i);
+            low[r] = std::min(low[r], facets[i].low);
+            high[r] = std::max(high[r], facets[i].high);
+            area[r] += facets[i].area;
+            min_area[r] = std::min(min_area[r], facets[i].min_area);
+        }
+        for (size_t i = 0; i < facets.size(); ++i)
+            if (parent[i] == i && area[i] + EPSILON >= min_area[i] && high[i] - low[i] >= 0.03)
+                relief = std::max(relief, high[i] - low[i]);
+    }
+    return relief;
+}
+
+}
 
 arrangement::ArrangePolygons get_arrange_polys(const Model &model, ModelInstancePtrs &instances)
 {
@@ -175,6 +322,7 @@ ArrangePolygon get_instance_arrange_poly(ModelInstance* instance, const Slic3r::
 
     auto size = obj->instance_convex_hull_bounding_box(instance).size();
     ap.height = size.z();
+    ap.nonplanar_relief = instance_nonplanar_relief(instance, config);
     ap.name = obj->name;
     return ap;
 }

@@ -66,6 +66,9 @@ struct ArrangePolygon {
     int       is_applied{ 0 };
     double    height{ 0 };
     double    brim_width{ 0 };
+    double    nonplanar_relief{ 0 };
+    coord_t   nonplanar_inflation{ 0 };
+    bool      nonplanar_inflation_capped{ false };
     std::string name;
 
     std::vector<double> allowed_rotations = {0.};
