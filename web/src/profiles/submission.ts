@@ -4,7 +4,7 @@ import { selectCompatibility } from './compatibility';
 import { recordOf } from './view';
 import { slotFilaments } from './slots';
 export function validateProfileSubmission(s:State):void {
-  const selections:[PresetType,string,number|undefined][]=[['machine',s.printer,undefined],['process',s.process,undefined],...slotFilaments(s).map((k,i)=>['filament',k,i+1] as [PresetType,string,number])];
+  const selections:[PresetType,string,number|undefined][]=[['machine',s.printer,undefined],['process',s.process,undefined],...slotFilaments(s).flatMap((k,i)=>k?[['filament',k,i+1] as [PresetType,string,number]]:[])];
   for(const [type,key,slot] of selections){
     const record=recordOf(s,type,key);
     if(!record)throw Object.assign(new Error('Please save or restore the selected profile before slicing.'),{code:'profile_unknown',recovery:'save_profile',profile:{kind:type,name:key,vendor:'',slot}});
