@@ -54,7 +54,8 @@ declare global {
     acceptLaunchFile?(id: number, index: number): Promise<void>;
     bambuConnect?(jobId: string, filename: string): Promise<void>;
     showDeviceUi?(address: string | null, apiAddress?: string): Promise<void>;
-    agents?: { get(): Promise<DesktopAgents>; set(enabled: boolean, printers: boolean): Promise<DesktopAgents>; client(id: string, add: boolean): Promise<DesktopAgents> } } }
+    agents?: { get(): Promise<DesktopAgents>; set(enabled: boolean, printers: boolean): Promise<DesktopAgents>; client(id: string, add: boolean): Promise<DesktopAgents>;
+      onCommand?(handler: (id: number, command: string, args: Record<string, unknown>) => void): () => void; reply(id: number, ok: boolean, result: unknown): Promise<void> } } }
   interface DesktopAgents { enabled: boolean; printers: boolean; launch: { command: string; args: string[]; env: Record<string, string> };
     clients: { id: string; name: string; available: boolean; configured: boolean; current: boolean }[] }
 }

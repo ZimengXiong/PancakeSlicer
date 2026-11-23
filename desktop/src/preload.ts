@@ -38,6 +38,12 @@ contextBridge.exposeInMainWorld('orcaDesktop', {
     get: () => ipcRenderer.invoke('orca-desktop:agents'),
     set: (enabled: boolean, printers: boolean) => ipcRenderer.invoke('orca-desktop:agents-set', enabled, printers),
     client: (id: string, add: boolean) => ipcRenderer.invoke('orca-desktop:agents-client', id, add),
+    onCommand(handler: (id: number, command: string, args: Record<string, unknown>) => void) {
+      const listener = (_e: Electron.IpcRendererEvent, id: number, command: string, args: Record<string, unknown>) => handler(id, command, args);
+      ipcRenderer.on('orca-desktop:agent-command', listener);
+      return () => { ipcRenderer.removeListener('orca-desktop:agent-command', listener); };
+    },
+    reply: (id: number, ok: boolean, result: unknown): Promise<void> => ipcRenderer.invoke('orca-desktop:agent-reply', id, ok, result),
   },
   onBeforeClose(handler: () => Promise<void>) {
     beforeClose.add(handler);

@@ -22,10 +22,11 @@ async function connect() {
   if (process.env.PANCAKESLICER_URL) {
     api = new PancakeApi(process.env.PANCAKESLICER_URL.replace(/\/+$/, ''), process.env.PANCAKESLICER_TOKEN || undefined);
     printerAccess = process.env.PANCAKESLICER_PRINTER_ACCESS === '1';
+    windowControl = null;
     return;
   }
   if (!connectionPath) throw new Error(`This MCP server is set up from PancakeSlicer's ${PREFERENCE}, or set PANCAKESLICER_URL for a self-hosted server.`);
-  let connection: { url?: string; token?: string; printers?: boolean; pid?: number };
+  let connection: { url?: string; token?: string; printers?: boolean; pid?: number; control?: string; controlToken?: string };
   try {
     connection = JSON.parse(await readFile(connectionPath, 'utf8'));
   } catch {
@@ -34,6 +35,36 @@ async function connect() {
   if (!connection.url || !alive(connection.pid)) throw new Error("PancakeSlicer isn't running. Open it (AI agent access stays on) and try again.");
   api = new PancakeApi(connection.url.replace(/\/+$/, ''), connection.token || undefined);
   printerAccess = connection.printers === true;
+  windowControl = connection.control && connection.controlToken ? { url: connection.control, token: connection.controlToken } : null;
+}
+
+let windowControl: { url: string; token: string } | null = null;
+
+interface WindowState {
+  tab: string; project: string | null; plate: number; printer: string; process: string;
+  filament_slots: { slot: number; filament: string }[];
+  objects: { id: number; name: string; slot: number }[];
+  job: { id?: string; state: string; stage?: string; progress?: number; stale?: boolean; error?: string; error_code?: string };
+}
+
+function needWindow() {
+  if (!windowControl) throw new Error('This needs the PancakeSlicer desktop window, which is not connected. Use background: true to slice without it.');
+  return windowControl;
+}
+
+async function inWindow(command: string, args: Record<string, unknown> = {}): Promise<WindowState> {
+  const control = needWindow();
+  let response: Response;
+  try {
+    response = await fetch(`${control.url}/command`, {
+      method: 'POST', headers: { Authorization: `Bearer ${control.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ command, args }),
+    });
+  } catch {
+    throw new Error("PancakeSlicer's window isn't answering. Is the app open?");
+  }
+  const body = await response.json().catch(() => ({})) as { result?: WindowState; error?: string };
+  if (!response.ok) throw new Error(body.error ?? `PancakeSlicer refused "${command}" (${response.status}).`);
+  return body.result as WindowState;
 }
 
 function needPrinterAccess() {
@@ -43,7 +74,7 @@ function needPrinterAccess() {
 const server = new McpServer({ name: 'pancakeslicer', version: '0.1.0' }, {
   instructions: [
     'Drives the running PancakeSlicer app: profiles, slicing, G-code checks and, when the user allows it, its LAN printers. The user controls access in PancakeSlicer\'s Preferences › AI agents; if a tool says access is off, tell the user where to turn it on instead of retrying.',
-    'Typical flow: list_profiles, then slice_model with an absolute path to an STL/OBJ/3MF/STEP file, then inspect_gcode when the filament or temperatures matter.',
+    'Work happens in the open PancakeSlicer window so the user can watch: slice_model opens the file as a new project and slices it; adjust_plate and slice_plate change and re-slice what is open; app_state reads it. Then inspect_gcode when the filament or temperatures matter.',
     'Before send_job: printer_status, then printer_light on and camera_snapshot to check that the plate is empty, then send_plan to read the filament to tray mapping.',
     'Never call send_job or printer_control without the user\'s explicit go-ahead for that exact job or action; approval for one job does not cover the next.',
     'A send_plan slot whose expected and reported filament types differ means the job would pull the wrong material. Stop and tell the user rather than sending.',
@@ -192,26 +223,99 @@ tool('list_profiles', {
 
 const settingValue = z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]);
 
-tool('slice_model', {
-  title: 'Slice a model',
-  description: 'Slice one STL, OBJ, 3MF or STEP file from disk with library profiles and wait for the result. Returns the job id, estimated time, weight and the profiles used. The model prints with one filament slot (default slot 1). Settings are per-job process overrides with engine keys (for example {"wall_loops":"3","enable_support":"0","brim_type":"no_brim"}); they do not change the saved profile.',
+const normalise = (settings: Record<string, string | number | boolean | string[]> = {}) =>
+  Object.fromEntries(Object.entries(settings).map(([k, v]) => [k, typeof v === 'boolean' ? (v ? '1' : '0') : Array.isArray(v) ? v : String(v)]));
+
+function modelPath(raw: string) {
+  const path = resolve(raw);
+  if (!/\.(stl|obj|3mf|step|stp)$/i.test(path)) throw new Error('Models must be .stl, .obj, .3mf, .step or .stp files.');
+  return path;
+}
+
+async function windowSlot(state: WindowState, slot: number | string | undefined) {
+  if (slot === undefined || typeof slot === 'number' || /^\d+$/.test(slot)) return slot === undefined ? undefined : Number(slot);
+  const lib = await api.library();
+  return slotIndex(lib.printers.find((p) => p.name === state.printer) ?? pick(lib.printers, undefined, 'printer'), slot) + 1;
+}
+
+async function adjustWindow(args: { process?: string; slot?: number | string; filament?: string; settings?: Record<string, string | number | boolean | string[]>; layer_height?: number; force_planar?: boolean }) {
+  let state = await inWindow('state');
+  if (args.process) state = await inWindow('set_process', { process: args.process });
+  const slot = await windowSlot(state, args.slot);
+  if (args.filament) state = await inWindow('set_slot_filament', { slot: slot ?? 1, filament: args.filament });
+  if (slot !== undefined) state = await inWindow('set_object_slot', { slot });
+  const settings = normalise(args.settings);
+  if (args.layer_height) settings.layer_height = String(args.layer_height);
+  if (args.force_planar) settings.nonplanar_mode = 'off';
+  if (Object.keys(settings).length) state = await inWindow('set_settings', { settings });
+  return state;
+}
+
+async function sliceWindow(timeoutS: number) {
+  const state = await inWindow('slice', { timeout_ms: timeoutS * 1000 });
+  if (state.job.state !== 'done' || !state.job.id) return { window: state };
+  const job = await api.waitJob(state.job.id, 120);
+  return { ...summary(job), print_profile: state.process, objects: state.objects, filament_slots: state.filament_slots };
+}
+
+const adjustments = {
+  process: z.string().optional().describe('Print process id or name (Draft, Everyday, Fine Detail, Strong or a user profile).'),
+  layer_height: z.number().positive().max(2).optional().describe('Layer height in mm.'),
+  slot: z.union([z.number().int().positive(), z.string()]).optional().describe('Filament slot the model prints with: 1-based number or tray name such as "ams0.2".'),
+  filament: z.string().optional().describe('Filament profile id or name to put in that slot.'),
+  settings: z.record(settingValue).optional().describe('Process setting overrides keyed by engine option name, for example {"wall_loops":"3","brim_type":"no_brim"}.'),
+  force_planar: z.boolean().optional().describe('Slice with flat layers only.'),
+};
+
+tool('app_state', {
+  title: 'What PancakeSlicer shows',
+  description: 'Read the open PancakeSlicer window: project, plate objects and their filament slots, the selected printer, process and filaments, and the last slice.',
+  inputSchema: {},
+  annotations: { readOnlyHint: true },
+}, async () => reply(await inWindow('state')));
+
+tool('open_model', {
+  title: 'Open a model in PancakeSlicer',
+  description: 'Open an STL, OBJ, 3MF or STEP file from disk in the PancakeSlicer window, as a new project by default, so the user sees it on the plate.',
   inputSchema: {
     path: z.string().describe('Absolute path to the model file on this computer.'),
-    printer: z.string().optional().describe('Printer profile id or name. Defaults to the first printer in the library.'),
-    process: z.string().optional().describe('Print process id or name (Draft, Everyday, Fine Detail, Strong or a user profile). Defaults to the printer\'s process.'),
-    layer_height: z.number().positive().max(2).optional().describe('Layer height in mm. Defaults to the process.'),
-    slot: z.union([z.number().int().positive(), z.string()]).optional().describe('Filament slot the model prints with: 1-based number or tray name such as "ams0.2". Default 1.'),
-    filament: z.string().optional().describe('Filament profile id or name to put in that slot for this job only.'),
-    settings: z.record(settingValue).optional().describe('Process setting overrides for this job, keyed by engine option name.'),
-    output: z.enum(['gcode.3mf', 'gcode']).default('gcode.3mf').describe('gcode.3mf for Bambu LAN printers, gcode for the others.'),
-    force_planar: z.boolean().default(false).describe('Slice planar only, skipping non-planar top surfaces.'),
-    wait_s: z.number().int().min(0).max(1800).default(600).describe('Seconds to wait for the slice; 0 returns at once.'),
+    new_project: z.boolean().default(true).describe('Start a new project for it; false adds it to the open plate.'),
+  },
+}, async ({ path, new_project }) => reply(await inWindow('open_model', { path: modelPath(path), new_project })));
+
+tool('adjust_plate', {
+  title: 'Change the plate settings',
+  description: 'Change what is open in the PancakeSlicer window the way the user would: process, layer height, filament slot and its filament, and process settings. The edits stay in the open project. Slice again with slice_plate.',
+  inputSchema: adjustments,
+}, async (args) => reply(await adjustWindow(args)));
+
+tool('slice_plate', {
+  title: 'Slice the open plate',
+  description: 'Press Slice plate in the PancakeSlicer window and wait; the window switches to the preview. Returns the job id, time, weight and profiles.',
+  inputSchema: { wait_s: z.number().int().min(10).max(1800).default(600) },
+}, async ({ wait_s }) => reply(await sliceWindow(wait_s)));
+
+tool('slice_model', {
+  title: 'Slice a model',
+  description: 'Open one STL, OBJ, 3MF or STEP file from disk in the PancakeSlicer window as a new project, apply the process, slot, filament and settings, slice it and wait: the user watches it happen and ends on the preview. Returns the job id, estimated time, weight and the profiles used. background: true slices out of sight instead (also used for self-hosted servers), with settings as per-job overrides.',
+  inputSchema: {
+    path: z.string().describe('Absolute path to the model file on this computer.'),
+    ...adjustments,
+    printer: z.string().optional().describe('Printer profile id or name, for background slicing; the window slices with the printer it has selected.'),
+    output: z.enum(['gcode.3mf', 'gcode']).default('gcode.3mf').describe('For background slicing: gcode.3mf for Bambu LAN printers, gcode for the others.'),
+    background: z.boolean().default(false).describe('Slice without the window.'),
+    wait_s: z.number().int().min(0).max(1800).default(600).describe('Seconds to wait for the slice.'),
   },
 }, async (args) => {
-  const path = resolve(args.path);
-  const ext = extname(path).toLowerCase();
-  if (!['.stl', '.obj', '.3mf', '.step', '.stp'].includes(ext)) throw new Error('slice_model takes .stl, .obj, .3mf, .step or .stp files.');
+  const path = modelPath(args.path);
   if (!(await stat(path)).isFile()) throw new Error(`${path} is not a file.`);
+  if (!args.background && windowControl) {
+    const opened = await inWindow('state');
+    if (args.printer && args.printer !== opened.printer) throw new Error(`The window has ${opened.printer} selected. Ask the user to switch printers, or pass background: true.`);
+    await inWindow('open_model', { path, new_project: true });
+    await adjustWindow(args);
+    return reply(await sliceWindow(Math.max(10, args.wait_s)));
+  }
   const lib = await api.library();
   const printer = pick(lib.printers, args.printer, 'printer');
   const profile = pick(lib.processes, args.process ?? printer.process, 'process');
@@ -220,17 +324,17 @@ tool('slice_model', {
   if (args.filament) filaments[index] = pick(lib.filaments, args.filament, 'filament').id;
   if (!filaments[index]) throw new Error(`Slot ${index + 1} of ${printer.name} has no filament. Pass filament or assign one in PancakeSlicer.`);
   const project: Record<string, unknown> = {};
-  if (args.settings) project.process = Object.fromEntries(Object.entries(args.settings).map(([k, v]) => [k, typeof v === 'boolean' ? (v ? '1' : '0') : Array.isArray(v) ? v : String(v)]));
+  if (args.settings) project.process = normalise(args.settings);
   const library = { printer: printer.id, print: profile.id, slots: printer.slots.map((s) => s.id), filaments, layerHeight: args.layer_height ?? 0, usedSlots: [index + 1], project };
   const form: Record<string, string> = { library: JSON.stringify(library), output: args.output };
   if (args.force_planar) form.force_planar = '1';
-  if (index > 0 && ext !== '.3mf') {
+  if (index > 0 && extname(path).toLowerCase() !== '.3mf') {
     const [x, y] = await bedCentre(printer.model);
     form.plate = JSON.stringify({ objects: [{ file: basename(path), name: basename(path), extruder: index + 1, instances: [{ x, y, rot: 0 }] }] });
   }
   const id = await api.submitJob(path, form);
   const job = args.wait_s ? await api.waitJob(id, args.wait_s) : await api.job(id);
-  return reply({ ...summary(job), print_profile: profile.name, slot: index + 1, tray: printer.slots[index].tray, filament: nameOf(lib, filaments[index]) });
+  return reply({ ...summary(job), background: true, print_profile: profile.name, slot: index + 1, tray: printer.slots[index].tray, filament: nameOf(lib, filaments[index]) });
 });
 
 tool('get_job', {

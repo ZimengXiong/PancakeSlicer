@@ -33,12 +33,12 @@ export function writeAgentSettings(userData: string, next: AgentSettings): Agent
   return settings;
 }
 
-export function publishConnection(userData: string, settings: AgentSettings, url: string, token: string) {
+export function publishConnection(userData: string, settings: AgentSettings, url: string, token: string, control?: { url: string; token: string }) {
   if (!settings.enabled || !url) {
     removeConnection(userData);
     return;
   }
-  writeJsonAtomic(connectionFile(userData), { url, token, printers: settings.printers, pid: process.pid }, 0o600);
+  writeJsonAtomic(connectionFile(userData), { url, token, printers: settings.printers, pid: process.pid, ...(control ? { control: control.url, controlToken: control.token } : {}) }, 0o600);
 }
 
 export function removeConnection(userData: string) {

@@ -1,7 +1,7 @@
 
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, session, shell, type MenuItemConstructorOptions } from 'electron';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -400,14 +400,78 @@ function menu() {
 const agentLaunch = () => mcpLaunch(process.execPath,
   app.isPackaged ? path.join(process.resourcesPath, 'app.asar.unpacked', 'out', 'mcp.cjs') : path.join(__dirname, 'mcp.cjs'), app.getPath('userData'));
 let serviceReady = false;
+const CONTROL_TOKEN = randomBytes(32).toString('hex');
+const AGENT_MODEL = /\.(stl|obj|3mf|step|stp)$/i;
+let controlUrl = '';
+let commandId = 0;
+const windowCommands = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
 
 function syncAgentConnection() {
   const data = app.getPath('userData');
   try {
-    publishConnection(data, readAgentSettings(data), serviceReady ? DESKTOP_ORIGIN : '', ACCESS_TOKEN);
+    publishConnection(data, readAgentSettings(data), serviceReady ? DESKTOP_ORIGIN : '', ACCESS_TOKEN, controlUrl ? { url: controlUrl, token: CONTROL_TOKEN } : undefined);
   } catch (error) {
     console.error('AI agent access could not be updated.', error);
   }
+}
+
+function windowCommand(command: string, args: Record<string, unknown>, timeoutMs: number): Promise<unknown> {
+  const target = win;
+  if (!target || !origin || target.webContents.isDestroyed()) return Promise.reject(new Error("The PancakeSlicer window isn't open."));
+  if (target.isMinimized()) target.restore();
+  const id = ++commandId;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { windowCommands.delete(id); reject(new Error(`PancakeSlicer didn't finish "${command}" in time.`)); }, timeoutMs);
+    windowCommands.set(id, { resolve, reject, timer });
+    target.webContents.send('orca-desktop:agent-command', id, command, args);
+  });
+}
+
+const refused = (status: number, message: string) => Object.assign(new Error(message), { status });
+
+async function controlRequest(body: { command?: unknown; args?: unknown }) {
+  if (!readAgentSettings(app.getPath('userData')).enabled) throw refused(403, 'AI agent access is off in Preferences › AI agents.');
+  const command = typeof body.command === 'string' ? body.command : '';
+  const args: Record<string, unknown> = body.args && typeof body.args === 'object' ? { ...(body.args as Record<string, unknown>) } : {};
+  if (command === 'open_model') {
+    const file = typeof args.path === 'string' ? args.path : '';
+    if (!path.isAbsolute(file) || !AGENT_MODEL.test(file)) throw refused(400, 'open_model needs an absolute path to an STL, OBJ, 3MF or STEP file.');
+    const stat = await fs.promises.stat(file);
+    if (!stat.isFile() || stat.size > MAX_LAUNCH_MODEL_BYTES) throw refused(400, 'That model is not a file or is too large to open.');
+    args.name = path.basename(file);
+    args.data = await fs.promises.readFile(file);
+    delete args.path;
+  }
+  const timeout = command === 'slice' ? (Number(args.timeout_ms) || 600_000) + 15_000 : 120_000;
+  return windowCommand(command, args, timeout);
+}
+
+function startControl(): Promise<void> {
+  const control = http.createServer((req, res) => {
+    const send = (status: number, value: unknown) => {
+      res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify(value));
+    };
+    if (req.method !== 'POST' || req.url !== '/command') return send(404, { error: 'Not found.' });
+    const auth = Buffer.from(req.headers.authorization ?? ''), want = Buffer.from(`Bearer ${CONTROL_TOKEN}`);
+    if (auth.length !== want.length || !timingSafeEqual(auth, want)) return send(401, { error: 'Not authorised.' });
+    let raw = '';
+    req.setEncoding('utf8');
+    req.on('data', (chunk: string) => { raw += chunk; if (raw.length > 1 << 20) req.destroy(); });
+    req.on('end', () => {
+      let body: { command?: unknown; args?: unknown };
+      try { body = JSON.parse(raw); } catch { return send(400, { error: 'Expected JSON.' }); }
+      controlRequest(body).then((result) => send(200, { result }), (error: Error & { status?: number }) => send(error.status ?? 409, { error: error.message }));
+    });
+  });
+  return new Promise((resolve, reject) => {
+    control.once('error', reject);
+    control.listen(0, '127.0.0.1', () => {
+      const address = control.address();
+      if (address && typeof address === 'object') controlUrl = `http://127.0.0.1:${address.port}`;
+      resolve();
+    });
+  });
 }
 
 function agentState() {
@@ -429,6 +493,15 @@ function ipc() {
     writeAgentSettings(app.getPath('userData'), { enabled: enabled === true, printers: printers === true });
     syncAgentConnection();
     return agentState();
+  });
+  ipcMain.handle('orca-desktop:agent-reply', (e, id: unknown, ok: unknown, result: unknown) => {
+    fromApp(e);
+    const pending = typeof id === 'number' ? windowCommands.get(id) : undefined;
+    if (!pending) return;
+    windowCommands.delete(id as number);
+    clearTimeout(pending.timer);
+    if (ok === true) pending.resolve(result);
+    else pending.reject(new Error(String(result)));
   });
   ipcMain.handle('orca-desktop:agents-client', (e, id: unknown, add: unknown) => {
     fromApp(e);
@@ -558,7 +631,9 @@ async function start() {
   ipc();
   const serving = startServer();
   process.once('exit', () => removeConnection(app.getPath('userData')));
-  void serving.then(() => { serviceReady = true; syncAgentConnection(); }, () => undefined);
+  const controlling = app.commandLine.hasSwitch('service-only') ? Promise.resolve()
+    : startControl().catch((error) => console.error('Agent control could not start.', error));
+  void Promise.all([serving, controlling]).then(() => { serviceReady = true; syncAgentConnection(); }, () => undefined);
   if (app.commandLine.hasSwitch('service-only')) { origin = await serving; return; }
   const rendererSession = session.fromPartition('orca-service-renderer', { cache: false });
   if (rendererSession.isPersistent() || rendererSession.getStoragePath() !== null) throw new Error('Oops! The app window needs an isolated in-memory session to run safely.');
