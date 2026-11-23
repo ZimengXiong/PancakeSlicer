@@ -3,6 +3,12 @@ import { Check } from './Check';
 import { InfoTip } from './InfoTip';
 import { copyToClipboard } from '../clipboard';
 
+const RELOAD: Record<string, string> = {
+  'claude-desktop': 'Added, quit Claude from the tray and reopen',
+  'claude-code': 'Added, start a new session',
+  cursor: 'Added, restart Cursor',
+};
+
 export function AgentPreferences() {
   const bridge = window.orcaDesktop?.agents;
   const [state, setAgents] = useState<DesktopAgents | null>(null);
@@ -24,7 +30,7 @@ export function AgentPreferences() {
         <span>{!c.available ? <span className="hint-text">Not installed</span>
           : c.current ? <button type="button" className="btn" onClick={() => void run(bridge.client(c.id, false))}>Remove</button>
           : <button type="button" className="btn" onClick={() => void run(bridge.client(c.id, true))}>{c.configured ? 'Update' : 'Add'}</button>}
-          {c.current && <span className="hint-text"> Added, restart {c.name}</span>}</span>
+          {c.current && <span className="hint-text"> {RELOAD[c.id] ?? `Added, restart ${c.name}`}</span>}</span>
       </div>)}
       <div className="form-row"><span>Other clients</span>
         <span><button type="button" className="btn" onClick={() => setCopied(!!config && copyToClipboard(config))}>Copy MCP config</button>{copied && <span className="hint-text"> Copied.</span>}</span></div>
