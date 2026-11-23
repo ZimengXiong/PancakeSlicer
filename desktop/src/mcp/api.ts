@@ -59,7 +59,7 @@ export class PancakeApi {
     try {
       response = await fetch(this.base + path, { ...init, headers: this.headers(init.headers as Record<string, string>) });
     } catch (error) {
-      throw new ApiError(`PancakeSlicer isn't answering at ${this.base} (${(error as Error).message}). Start the app or set PANCAKESLICER_URL.`, 0);
+      throw new ApiError(`PancakeSlicer isn't answering at ${this.base} (${(error as Error).message}). Is the app open?`, 0);
     }
     if (!response.ok) {
       const text = await response.text();

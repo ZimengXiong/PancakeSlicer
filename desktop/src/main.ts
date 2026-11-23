@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { addToClient, agentClients, mcpLaunch, publishConnection, readAgentSettings, removeConnection, removeFromClient, writeAgentSettings } from './agents';
 
 const MAC = process.platform === 'darwin';
 const EXE = process.platform === 'win32' ? '.exe' : '';
@@ -396,7 +397,46 @@ function menu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+const agentLaunch = () => mcpLaunch(process.execPath,
+  app.isPackaged ? path.join(process.resourcesPath, 'app.asar.unpacked', 'out', 'mcp.cjs') : path.join(__dirname, 'mcp.cjs'), app.getPath('userData'));
+let serviceReady = false;
+
+function syncAgentConnection() {
+  const data = app.getPath('userData');
+  try {
+    publishConnection(data, readAgentSettings(data), serviceReady ? DESKTOP_ORIGIN : '', ACCESS_TOKEN);
+  } catch (error) {
+    console.error('AI agent access could not be updated.', error);
+  }
+}
+
+function agentState() {
+  const launch = agentLaunch();
+  return { ...readAgentSettings(app.getPath('userData')), clients: agentClients(launch), launch };
+}
+
 function ipc() {
+  const fromApp = (e: Electron.IpcMainInvokeEvent) => {
+    if (!origin || e.sender !== win?.webContents || e.senderFrame !== e.sender.mainFrame || e.senderFrame.origin !== origin)
+      throw new Error('not the app');
+  };
+  ipcMain.handle('orca-desktop:agents', (e) => {
+    fromApp(e);
+    return agentState();
+  });
+  ipcMain.handle('orca-desktop:agents-set', (e, enabled: unknown, printers: unknown) => {
+    fromApp(e);
+    writeAgentSettings(app.getPath('userData'), { enabled: enabled === true, printers: printers === true });
+    syncAgentConnection();
+    return agentState();
+  });
+  ipcMain.handle('orca-desktop:agents-client', (e, id: unknown, add: unknown) => {
+    fromApp(e);
+    if (typeof id !== 'string') throw new Error('Unknown AI client.');
+    if (add === true) addToClient(id, agentLaunch());
+    else removeFromClient(id);
+    return agentState();
+  });
   ipcMain.handle('orca-desktop:bambu-connect', (e, jobId: unknown, filename: unknown) => {
     if (!origin || new URL(e.senderFrame?.url ?? 'about:blank').origin !== origin) throw new Error('not the app');
     return openInBambuConnect(jobId, filename);
@@ -517,6 +557,8 @@ async function start() {
   menu();
   ipc();
   const serving = startServer();
+  process.once('exit', () => removeConnection(app.getPath('userData')));
+  void serving.then(() => { serviceReady = true; syncAgentConnection(); }, () => undefined);
   if (app.commandLine.hasSwitch('service-only')) { origin = await serving; return; }
   const rendererSession = session.fromPartition('orca-service-renderer', { cache: false });
   if (rendererSession.isPersistent() || rendererSession.getStoragePath() !== null) throw new Error('Oops! The app window needs an isolated in-memory session to run safely.');

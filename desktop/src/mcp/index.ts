@@ -1,5 +1,4 @@
-#!/usr/bin/env node
-import { mkdir, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -7,11 +6,43 @@ import { z } from 'zod';
 import { ApiError, PancakeApi, type JobStatus, type LibraryDocument, type LibraryPrinter, type ProfileRef } from './api.js';
 import { inspectOutput } from './gcode.js';
 
-const api = new PancakeApi((process.env.PANCAKESLICER_URL ?? 'http://127.0.0.1:29731').replace(/\/+$/, ''), process.env.PANCAKESLICER_TOKEN || undefined);
+const PREFERENCE = 'Preferences › AI agents';
+const connectionArg = process.argv.indexOf('--connection');
+const connectionPath = connectionArg >= 0 ? process.argv[connectionArg + 1] : undefined;
+
+let api: PancakeApi;
+let printerAccess = false;
+
+function alive(pid: unknown) {
+  if (typeof pid !== 'number') return true;
+  try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; }
+}
+
+async function connect() {
+  if (process.env.PANCAKESLICER_URL) {
+    api = new PancakeApi(process.env.PANCAKESLICER_URL.replace(/\/+$/, ''), process.env.PANCAKESLICER_TOKEN || undefined);
+    printerAccess = process.env.PANCAKESLICER_PRINTER_ACCESS === '1';
+    return;
+  }
+  if (!connectionPath) throw new Error(`This MCP server is set up from PancakeSlicer's ${PREFERENCE}, or set PANCAKESLICER_URL for a self-hosted server.`);
+  let connection: { url?: string; token?: string; printers?: boolean; pid?: number };
+  try {
+    connection = JSON.parse(await readFile(connectionPath, 'utf8'));
+  } catch {
+    throw new Error(`PancakeSlicer isn't letting AI agents in. Open PancakeSlicer and turn on "Let AI agents use PancakeSlicer" in ${PREFERENCE}.`);
+  }
+  if (!connection.url || !alive(connection.pid)) throw new Error("PancakeSlicer isn't running. Open it (AI agent access stays on) and try again.");
+  api = new PancakeApi(connection.url.replace(/\/+$/, ''), connection.token || undefined);
+  printerAccess = connection.printers === true;
+}
+
+function needPrinterAccess() {
+  if (!printerAccess) throw new Error(`PancakeSlicer doesn't let AI agents use printers. Ask the user to turn on "Let agents send prints and control printers" in ${PREFERENCE}${process.env.PANCAKESLICER_URL ? ' (or set PANCAKESLICER_PRINTER_ACCESS=1)' : ''}.`);
+}
 
 const server = new McpServer({ name: 'pancakeslicer', version: '0.1.0' }, {
   instructions: [
-    'Drives a running PancakeSlicer (desktop app or self-hosted service) over its HTTP API: profiles, slicing, G-code checks and sending to LAN printers.',
+    'Drives the running PancakeSlicer app: profiles, slicing, G-code checks and, when the user allows it, its LAN printers. The user controls access in PancakeSlicer\'s Preferences › AI agents; if a tool says access is off, tell the user where to turn it on instead of retrying.',
     'Typical flow: list_profiles, then slice_model with an absolute path to an STL/OBJ/3MF/STEP file, then inspect_gcode when the filament or temperatures matter.',
     'Before send_job: printer_status, then printer_light on and camera_snapshot to check that the plate is empty, then send_plan to read the filament to tray mapping.',
     'Never call send_job or printer_control without the user\'s explicit go-ahead for that exact job or action; approval for one job does not cover the next.',
@@ -32,10 +63,13 @@ function failure(error: unknown) {
   return { isError: true, content: [{ type: 'text' as const, text: `${e.message ?? String(error)}${detail}` }] };
 }
 
-function tool<T extends z.ZodRawShape>(name: string, config: { title: string; description: string; inputSchema: T; annotations?: Record<string, boolean> },
+function tool<T extends z.ZodRawShape>(name: string, config: { title: string; description: string; inputSchema: T; annotations?: Record<string, boolean>; printers?: boolean },
   run: (args: z.objectOutputType<T, z.ZodTypeAny>) => Promise<{ content: Content[] }>) {
-  server.registerTool(name, config, (async (args: z.objectOutputType<T, z.ZodTypeAny>) => {
+  const { printers, ...definition } = config;
+  server.registerTool(name, definition, (async (args: z.objectOutputType<T, z.ZodTypeAny>) => {
     try {
+      await connect();
+      if (printers) needPrinterAccess();
       return await run(args);
     } catch (error) {
       return failure(error);
@@ -180,14 +214,14 @@ tool('slice_model', {
   if (!(await stat(path)).isFile()) throw new Error(`${path} is not a file.`);
   const lib = await api.library();
   const printer = pick(lib.printers, args.printer, 'printer');
-  const process = pick(lib.processes, args.process ?? printer.process, 'process');
+  const profile = pick(lib.processes, args.process ?? printer.process, 'process');
   const index = slotIndex(printer, args.slot);
   const filaments = printer.slots.map((s) => s.filament);
   if (args.filament) filaments[index] = pick(lib.filaments, args.filament, 'filament').id;
   if (!filaments[index]) throw new Error(`Slot ${index + 1} of ${printer.name} has no filament. Pass filament or assign one in PancakeSlicer.`);
   const project: Record<string, unknown> = {};
   if (args.settings) project.process = Object.fromEntries(Object.entries(args.settings).map(([k, v]) => [k, typeof v === 'boolean' ? (v ? '1' : '0') : Array.isArray(v) ? v : String(v)]));
-  const library = { printer: printer.id, print: process.id, slots: printer.slots.map((s) => s.id), filaments, layerHeight: args.layer_height ?? 0, usedSlots: [index + 1], project };
+  const library = { printer: printer.id, print: profile.id, slots: printer.slots.map((s) => s.id), filaments, layerHeight: args.layer_height ?? 0, usedSlots: [index + 1], project };
   const form: Record<string, string> = { library: JSON.stringify(library), output: args.output };
   if (args.force_planar) form.force_planar = '1';
   if (index > 0 && ext !== '.3mf') {
@@ -196,7 +230,7 @@ tool('slice_model', {
   }
   const id = await api.submitJob(path, form);
   const job = args.wait_s ? await api.waitJob(id, args.wait_s) : await api.job(id);
-  return reply({ ...summary(job), print_profile: process.name, slot: index + 1, tray: printer.slots[index].tray, filament: nameOf(lib, filaments[index]) });
+  return reply({ ...summary(job), print_profile: profile.name, slot: index + 1, tray: printer.slots[index].tray, filament: nameOf(lib, filaments[index]) });
 });
 
 tool('get_job', {
@@ -275,6 +309,7 @@ tool('printer_status', {
 tool('printer_light', {
   title: 'Chamber light',
   description: 'Switch the printer\'s chamber light on or off, for example before camera_snapshot.',
+  printers: true,
   inputSchema: { on: z.boolean(), printer: z.string().optional() },
 }, async ({ on, printer }) => {
   const { connection } = await printerFor(printer);
@@ -284,6 +319,7 @@ tool('printer_light', {
 tool('camera_snapshot', {
   title: 'Camera snapshot',
   description: 'Grab one frame from the printer\'s camera, for example to check that the build plate is empty before sending a job. Turn the light on first for a usable picture.',
+  printers: true,
   inputSchema: { printer: z.string().optional(), camera: z.string().optional().describe('Camera id; defaults to the first.') },
   annotations: { readOnlyHint: true },
 }, async ({ printer, camera }) => {
@@ -311,6 +347,7 @@ tool('send_plan', {
 tool('send_job', {
   title: 'Send a job to the printer',
   description: 'Upload a finished job to a connected printer and start it, or upload only (start=false) so the user starts it on the printer. Only call this after the user has explicitly approved this exact job; set confirm=true to show that. Check send_plan and the plate first.',
+  printers: true,
   inputSchema: {
     job: z.string(),
     confirm: z.literal(true).describe('Must be true: the user approved sending this job.'),
@@ -343,6 +380,7 @@ tool('send_job', {
 tool('printer_control', {
   title: 'Pause, resume or stop a print',
   description: 'Pause, resume or stop the current print. Only with the user\'s explicit go-ahead; stop cannot be undone.',
+  printers: true,
   inputSchema: { action: z.enum(['pause', 'resume', 'stop']), confirm: z.literal(true), printer: z.string().optional() },
   annotations: { destructiveHint: true },
 }, async ({ action, printer }) => {
@@ -350,4 +388,7 @@ tool('printer_control', {
   return reply(await api.control(connection.printer, action));
 });
 
-await server.connect(new StdioServerTransport());
+server.connect(new StdioServerTransport()).catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

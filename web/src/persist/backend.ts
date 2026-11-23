@@ -53,7 +53,10 @@ declare global {
     readLaunchFiles?(after: number): Promise<{ id: number; files: { index: number; name: string; data: Uint8Array<ArrayBuffer>; lastModified: number }[] } | null>;
     acceptLaunchFile?(id: number, index: number): Promise<void>;
     bambuConnect?(jobId: string, filename: string): Promise<void>;
-    showDeviceUi?(address: string | null, apiAddress?: string): Promise<void> } }
+    showDeviceUi?(address: string | null, apiAddress?: string): Promise<void>;
+    agents?: { get(): Promise<DesktopAgents>; set(enabled: boolean, printers: boolean): Promise<DesktopAgents>; client(id: string, add: boolean): Promise<DesktopAgents> } } }
+  interface DesktopAgents { enabled: boolean; printers: boolean; launch: { command: string; args: string[]; env: Record<string, string> };
+    clients: { id: string; name: string; available: boolean; configured: boolean; current: boolean }[] }
 }
 const storageListeners = new Set<() => void>();
 let pendingReferenceWrites = 0;

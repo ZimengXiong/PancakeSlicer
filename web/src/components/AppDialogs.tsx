@@ -8,6 +8,7 @@ import { setThemePref, subscribeTheme, themePref, type ThemePref } from '../them
 import { cameraPrefsSnapshot, setCameraPrefs, subscribeCamera, type CameraPrefs } from '../camera';
 import { InfoTip } from './InfoTip';
 import { Modal, ModalBody, ModalFooter, ModalTitle } from './Modal';
+import { AgentPreferences } from './AgentPreferences';
 
 const About = preloadable(() => import('./About'));
 const PlateSettings = preloadable(() => import('./PlateSettings'));
@@ -56,6 +57,7 @@ function Preferences() {
         <h3 className="modal-group">Advanced</h3>
         <label className="modal-check"><Check checked={developerMode} onCheckedChange={(next) => setDeveloperMode(next)} />Developer mode</label>
         {<label className="modal-check"><Check checked={mixed} onCheckedChange={(next) => setMixedTemperatures(next)} />Allow mixed filament temperatures</label>}
+        <AgentPreferences />
       </ModalBody>
       <ModalFooter><button type="button" className="btn-primary" onClick={close}>Close</button></ModalFooter>
     </Modal>
