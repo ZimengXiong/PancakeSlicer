@@ -1284,13 +1284,15 @@ static bool nonplanar_triangle_height(const NonplanarFacet &facet, double x, dou
                                       double margin, double &z, double &distance2)
 {
     const auto &a = facet.vertex[0], &b = facet.vertex[1], &c = facet.vertex[2];
-    const double den = (b.y-a.y)*(c.x-a.x) - (b.x-a.x)*(c.y-a.y);
+    const double bx = double(b.x) - a.x, by = double(b.y) - a.y;
+    const double cx = double(c.x) - a.x, cy = double(c.y) - a.y;
+    const double den = by*cx - bx*cy;
     if (std::abs(den) < 1e-12) return false;
-    const double w1 = ((y-a.y)*(c.x-a.x) - (x-a.x)*(c.y-a.y)) / den;
-    const double w2 = ((b.y-a.y)*(x-a.x) - (b.x-a.x)*(y-a.y)) / den;
+    const double w1 = ((y-a.y)*cx - (x-a.x)*cy) / den;
+    const double w2 = (by*(x-a.x) - bx*(y-a.y)) / den;
     const double w0 = 1.0 - w1 - w2;
     if (w0 >= -1e-7 && w1 >= -1e-7 && w2 >= -1e-7) {
-        z = w0*a.z + w1*b.z + w2*c.z;
+        z = a.z + w1*(double(b.z)-a.z) + w2*(double(c.z)-a.z);
         distance2 = 0.0;
         return true;
     }
@@ -1298,7 +1300,7 @@ static bool nonplanar_triangle_height(const NonplanarFacet &facet, double x, dou
     const auto *vertices = facet.vertex;
     for (int i = 0; i < 3; ++i) {
         const auto &p = vertices[i], &q = vertices[(i+1)%3];
-        const double dx = q.x-p.x, dy = q.y-p.y;
+        const double dx = double(q.x)-p.x, dy = double(q.y)-p.y;
         const double len2 = dx*dx + dy*dy;
         if (len2 < 1e-12) continue;
         const double t = std::max(0.0, std::min(1.0, ((x-p.x)*dx + (y-p.y)*dy)/len2));
@@ -1306,7 +1308,7 @@ static bool nonplanar_triangle_height(const NonplanarFacet &facet, double x, dou
         const double d2 = ex*ex + ey*ey;
         if (d2 < distance2) {
             distance2 = d2;
-            z = p.z + t*(q.z-p.z);
+            z = p.z + t*(double(q.z)-p.z);
         }
     }
     return distance2 <= margin*margin;

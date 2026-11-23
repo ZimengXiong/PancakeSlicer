@@ -277,7 +277,7 @@ bool lift_rim(ExtrusionPath &path, const NonplanarClearanceModel &head)
 }
 
 bool ramp_inset(ExtrusionEntityCollection &inset, const ExtrusionEntityCollection &rim,
-                const NonplanarClearanceModel &head)
+                const NonplanarClearanceModel &head, double max_surface_error)
 {
     struct Bead { Vec3d a, b; double width; };
     std::vector<Bead> beads;
@@ -393,6 +393,8 @@ bool ramp_inset(ExtrusionEntityCollection &inset, const ExtrusionEntityCollectio
                     << " exceeds bead-height range: delta " << z[i] - nominal[i] << " height " << p.height;
                 return false;
             }
+            if (std::abs(z[i] - nominal[i]) > max_surface_error)
+                return false;
             changed |= std::abs(z[i] - nominal[i]) > 1e-6;
             points[i].z() = scale_(z[i]);
         }
@@ -577,6 +579,7 @@ void finish_curved_top_boundaries(const PrintObject &object, const std::vector<L
         }
         region->project_nonplanar_surfaces();
         bool safe = true;
+        const double max_surface_error = cap.home->region().config().nonplanar_max_surface_error.value;
         const auto head = NonplanarClearanceModel::for_object(object, flow.height());
         for (size_t i = 1; i < region->fills.entities.size(); ++i) {
             auto *collection = static_cast<ExtrusionEntityCollection *>(region->fills.entities[i]);
@@ -604,6 +607,16 @@ void finish_curved_top_boundaries(const PrintObject &object, const std::vector<L
                         << ": points " << p.polyline.points.size() << " closed " << closed << " clear " << clear
                         << " gap " << unscale(Vec3crd(p.polyline.points.back() - p.polyline.points.front())).norm();
                 safe &= clear;
+                if (!clear)
+                    continue;
+                if (!std::equal(mesh_points.begin(), mesh_points.end(), p.polyline.points.begin(), p.polyline.points.end(),
+                    [max_surface_error](const Point3 &mesh, const Point3 &finished) {
+                        return std::abs(unscale<double>(finished.z() - mesh.z())) <= max_surface_error;
+                    })) {
+                    BOOST_LOG_TRIVIAL(info) << "Curved top boundary " << id << ": rim exceeds surface error; retaining original roads";
+                    safe = false;
+                    continue;
+                }
                 std::vector<double> nominal;
                 for (const Point3 &q : mesh_points) nominal.push_back(unscale<double>(q.z()));
                 auto connected = std::make_unique<ExtrusionMultiPath>();
@@ -629,10 +642,10 @@ void finish_curved_top_boundaries(const PrintObject &object, const std::vector<L
         const bool ring_clear = safe;
         if (safe)
             safe = ramp_inset(*static_cast<ExtrusionEntityCollection *>(region->fills.entities.front()),
-                              *static_cast<ExtrusionEntityCollection *>(region->fills.entities[1]), head);
+                              *static_cast<ExtrusionEntityCollection *>(region->fills.entities[1]), head, max_surface_error);
         if (!safe) {
             BOOST_LOG_TRIVIAL(info) << "Curved top boundary " << id
-                << (ring_clear ? ": inset transition exceeds its bead-height range; retaining original roads" :
+                << (ring_clear ? ": inset transition exceeds its bead-height range or surface error; retaining original roads" :
                                  ": closed road fails its same-run access check; retaining original roads");
             continue;
         }
