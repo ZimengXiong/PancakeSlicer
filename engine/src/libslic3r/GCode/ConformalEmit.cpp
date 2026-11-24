@@ -386,7 +386,7 @@ double emit_conformal_extrusion(GCodeWriter &writer, const std::vector<Conformal
         for (size_t i = 0; i + 1 < points.size(); ++i)
             if (primes(i))
                 road += (points[i + 1].pose.tip - points[i].pose.tip).norm();
-        const double length = std::min(road, std::max(params.prime_length, EPSILON));
+        const double length = writer.get_gcode_flavor() == gcfKlipper ? 0. : std::min(road, std::max(params.prime_length, EPSILON));
         if (length <= EPSILON) {
             if (params.prime_speed > 0.) {
                 if (rotary)
