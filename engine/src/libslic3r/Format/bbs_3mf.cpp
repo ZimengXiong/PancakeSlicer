@@ -29,6 +29,11 @@
 #include "bbs_3mf.hpp"
 
 #include <atomic>
+#include <filesystem>
+#include <sys/stat.h>
+#ifdef _WIN32
+#include <io.h>
+#endif
 #include <boost/assert/source_location.hpp>
 #include <ios>
 #include <iterator>
@@ -2526,14 +2531,30 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         return Nonplanar::save_head_envelope(Nonplanar::load_head_envelope(text));
     }
 
+    static bool extract_3mf_file(mz_zip_archive &archive, const mz_zip_archive_file_stat &stat, const std::string &path)
+    {
+        if (stat.m_is_directory || !stat.m_is_supported)
+            return false;
+        FILE *file = boost::nowide::fopen(path.c_str(), "wb");
+        if (!file)
+            return false;
+        const bool extracted = mz_zip_reader_extract_to_cfile(&archive, stat.m_file_index, file, 0);
+        if (fclose(file) != 0 || !extracted)
+            return false;
+#ifndef MINIZ_NO_TIME
+        boost::system::error_code ec;
+        boost::filesystem::last_write_time(std::filesystem::u8path(path).native(), stat.m_time, ec);
+#endif
+        return true;
+    }
+
     void _BBS_3MF_Importer::_extract_project_config_from_archive(mz_zip_archive& archive, const mz_zip_archive_file_stat& stat, DynamicPrintConfig& config, ConfigSubstitutionContext& config_substitutions, Model& model)
     {
         if (stat.m_uncomp_size > 0) {
             const std::string& temp_path = model.get_backup_path();
 
-            std::string dest_file = temp_path + std::string("/") + "_temp_3.config";;
-            std::string dest_zip_file = encode_path(dest_file.c_str());
-            mz_bool res = mz_zip_reader_extract_to_file(&archive, stat.m_file_index, dest_zip_file.c_str(), 0);
+            std::string dest_file = temp_path + "/_temp_3.config";
+            const bool res = extract_3mf_file(archive, stat, dest_file);
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", extract  %1% from 3mf %2%, ret %3%\n") % dest_file % stat.m_filename % res;
             if (res == 0) {
                 add_error("Error while extract project config file to file");
@@ -2556,9 +2577,8 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
     void _BBS_3MF_Importer::_extract_project_embedded_presets_from_archive(mz_zip_archive& archive, const mz_zip_archive_file_stat& stat, std::vector<Preset*>&project_presets, Model& model, Preset::Type type, bool use_json)
     {
         if (stat.m_uncomp_size > 0) {
-            std::string dest_file = m_backup_path + std::string("/") + "_temp_2.config";;
-            std::string dest_zip_file = encode_path(dest_file.c_str());
-            mz_bool res = mz_zip_reader_extract_to_file(&archive, stat.m_file_index, dest_zip_file.c_str(), 0);
+            std::string dest_file = m_backup_path + "/_temp_2.config";
+            const bool res = extract_3mf_file(archive, stat, dest_file);
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", extract  %1% from 3mf %2%, ret %3%\n") % dest_file % stat.m_filename % res;
             if (res == 0) {
                 add_error("Error while extract auxiliary file to file");
@@ -2641,8 +2661,8 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 size_t n = mz_zip_reader_get_extra(&archive, stat.m_file_index, extra.data(), extra.size());
                 dest_file = ZipUnicodePathExtraField::decode(extra.substr(0, n), stat.m_filename);
             }
-            std::string temp_path = model.get_auxiliary_file_temp_path();
-            boost::filesystem::path dir = boost::filesystem::path(temp_path);
+            const std::string temp_path = model.get_auxiliary_file_temp_path();
+            const boost::filesystem::path dir(temp_path);
             std::size_t found = dest_file.find(AUXILIARY_DIR);
             if (found != std::string::npos)
                 dest_file = dest_file.substr(found + AUXILIARY_STR_LEN);
@@ -2654,17 +2674,9 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 return;
             }
 
-            if (dest_file.find('/') != std::string::npos) {
-                boost::filesystem::path src_path = boost::filesystem::path(dest_file);
-                boost::filesystem::path parent_path = src_path.parent_path();
-                std::string temp_path = dir.string() + std::string("/") + parent_path.string();
-                boost::filesystem::path parent_full_path =  boost::filesystem::path(temp_path);
-                if (!boost::filesystem::exists(parent_full_path))
-                    boost::filesystem::create_directories(parent_full_path);
-            }
-            dest_file = dir.string() + std::string("/") + dest_file;
-            std::string dest_zip_file = encode_path(dest_file.c_str());
-            mz_bool res = mz_zip_reader_extract_to_file(&archive, stat.m_file_index, dest_zip_file.c_str(), 0);
+            dest_file = temp_path + "/" + dest_file;
+            boost::filesystem::create_directories(boost::filesystem::path(dest_file).parent_path());
+            const bool res = extract_3mf_file(archive, stat, dest_file);
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", extract  %1% from 3mf %2%, ret %3%\n") % dest_file % stat.m_filename % res;
             if (res == 0) {
                 add_error("Error while extract auxiliary file to file");
@@ -2676,17 +2688,16 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
     void _BBS_3MF_Importer::_extract_file_from_archive(mz_zip_archive& archive, const mz_zip_archive_file_stat& stat)
     {
         if (stat.m_uncomp_size > 0) {
-            std::string src_file = decode_path(stat.m_filename);
+            std::string src_file = stat.m_is_utf8 ? stat.m_filename : decode_path(stat.m_filename);
 
-            boost::filesystem::path backup_root(m_backup_path);
+            const boost::filesystem::path backup_root(m_backup_path);
             if (!is_path_within_root(src_file, backup_root)) {
                 BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(", path traversal detected in file: %1%, skipping") % src_file;
                 return;
             }
 
-            boost::filesystem::path dest_path = boost::filesystem::path(m_backup_path + "/" + src_file);
-            std::string dest_zip_file = encode_path(dest_path.string().c_str());
-            mz_bool res = mz_zip_reader_extract_to_file(&archive, stat.m_file_index, dest_zip_file.c_str(), 0);
+            const std::string dest_path = m_backup_path + "/" + src_file;
+            const bool res = extract_3mf_file(archive, stat, dest_path);
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", extract  %1% from 3mf %2%, ret %3%\n") % dest_path % stat.m_filename % res;
             if (res == 0) {
                 add_error("Error while extract file to temp directory");
@@ -5234,7 +5245,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         bool _add_sla_support_points_file_to_archive(mz_zip_archive& archive, Model& model);
         bool _add_sla_drain_holes_file_to_archive(mz_zip_archive& archive, Model& model);
         bool _add_print_config_file_to_archive(mz_zip_archive& archive, const DynamicPrintConfig &config);
-        bool _add_project_config_file_to_archive(mz_zip_archive& archive, const DynamicPrintConfig &config, Model& model, const std::vector<Preset*> &project_presets);
+        bool _add_project_config_file_to_archive(mz_zip_archive& archive, const DynamicPrintConfig &config, const std::vector<Preset*> &project_presets);
         bool _add_project_embedded_presets_to_archive(mz_zip_archive& archive, Model& model, std::vector<Preset*> project_presets);
         bool _add_model_config_file_to_archive(mz_zip_archive& archive, const Model& model, PlateDataPtrs& plate_data_list, const ObjectToObjectDataMap &objects_data, const DynamicPrintConfig& config, int export_plate_idx = -1, bool save_gcode = true, bool use_loaded_id = false);
         bool _add_cut_information_file_to_archive(mz_zip_archive &archive, Model &model);
@@ -5658,7 +5669,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             }
 
             if (config != nullptr && !m_minimal_published) {
-                if (!_add_project_config_file_to_archive(archive, *config, model, project_presets)) { return false; }
+                if (!_add_project_config_file_to_archive(archive, *config, project_presets)) { return false; }
             }
 
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ":" << __LINE__ << boost::format(", before add project embedded settings\n");
@@ -5774,13 +5785,35 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         auto end = nocomp_exts + sizeof(nocomp_exts) / sizeof(nocomp_exts[0]);
         bool nocomp = std::find_if(nocomp_exts, end, [&path_in_zip](auto & ext) { return boost::algorithm::ends_with(path_in_zip, ext); }) != end;
 #if WRITE_ZIP_LANGUAGE_ENCODING
-        bool result = mz_zip_writer_add_file(&archive, path_in_zip.c_str(), encode_path(src_file_path.c_str()).c_str(), NULL, 0, nocomp ? MZ_NO_COMPRESSION : MZ_DEFAULT_LEVEL);
+        const std::string &zip_path = path_in_zip;
+        const std::string extra;
+        const mz_uint flags = nocomp ? MZ_NO_COMPRESSION : MZ_DEFAULT_LEVEL;
 #else
-        std::string native_path = encode_path(path_in_zip.c_str());
-        std::string extra = ZipUnicodePathExtraField::encode(path_in_zip, native_path);
-        bool result = mz_zip_writer_add_file_ex(&archive, native_path.c_str(), encode_path(src_file_path.c_str()).c_str(), NULL, 0, nocomp ? MZ_ZIP_FLAG_ASCII_FILENAME : MZ_DEFAULT_COMPRESSION,
-                extra.c_str(), extra.length(), extra.c_str(), extra.length());
+        const std::string zip_path = encode_path(path_in_zip.c_str());
+        const std::string extra = ZipUnicodePathExtraField::encode(path_in_zip, zip_path);
+        const mz_uint flags = nocomp ? MZ_ZIP_FLAG_ASCII_FILENAME : MZ_DEFAULT_COMPRESSION;
 #endif
+        bool result = false;
+        if (FILE *file = boost::nowide::fopen(src_file_path.c_str(), "rb")) {
+#ifdef _WIN32
+            struct _stat64 info;
+            const int stat_status = _fstat64(_fileno(file), &info);
+#else
+            struct stat info;
+            const int stat_status = fstat(fileno(file), &info);
+#endif
+            if (stat_status == 0) {
+#ifndef MINIZ_NO_TIME
+                const MZ_TIME_T modified = info.st_mtime;
+                const MZ_TIME_T *modified_time = &modified;
+#else
+                const MZ_TIME_T *modified_time = nullptr;
+#endif
+                result = mz_zip_writer_add_cfile(&archive, zip_path.c_str(), file, info.st_size, modified_time,
+                    nullptr, 0, flags, extra.data(), extra.size(), extra.data(), extra.size()) && !ferror(file);
+            }
+            result = fclose(file) == 0 && result;
+        }
         if (!result) {
             add_error("Unable to add file " + src_file_path + " to archive");
             BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << ":" <<__LINE__ << boost::format(", Unable to add file %1% to archive %2%\n") % src_file_path % path_in_zip;
@@ -6789,7 +6822,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         return true;
     }
 
-    bool _BBS_3MF_Exporter::_add_project_config_file_to_archive(mz_zip_archive& archive, const DynamicPrintConfig &config, Model& model, const std::vector<Preset*> &project_presets)
+    bool _BBS_3MF_Exporter::_add_project_config_file_to_archive(mz_zip_archive& archive, const DynamicPrintConfig &config, const std::vector<Preset*> &project_presets)
     {
         DynamicPrintConfig project_config(config);
         const auto *head_id = config.option<ConfigOptionString>("nonplanar_head");
@@ -6815,10 +6848,14 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         } else
             project_config.erase("nonplanar_head");
         project_config.erase("nonplanar_head_snapshot");
-        const std::string& temp_path = model.get_backup_path();
-        std::string temp_file = temp_path + std::string("/") + "_temp_1.config";
-        project_config.save_to_json(temp_file, std::string("project_settings"), std::string("project"), std::string(SLIC3R_VERSION));
-        return _add_file_to_archive(archive, BBS_PROJECT_CONFIG_FILE, temp_file);
+        std::ostringstream stream;
+        project_config.save_to_json(stream, "project_settings", "project", SLIC3R_VERSION);
+        const std::string text = stream.str();
+        if (!mz_zip_writer_add_mem(&archive, BBS_PROJECT_CONFIG_FILE.c_str(), text.data(), text.size(), MZ_DEFAULT_LEVEL)) {
+            add_error("Unable to add project config file to archive");
+            return false;
+        }
+        return true;
     }
 
     bool _BBS_3MF_Exporter::_add_project_embedded_presets_to_archive(mz_zip_archive& archive, Model& model, std::vector<Preset*> project_presets)

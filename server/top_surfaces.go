@@ -411,7 +411,7 @@ func (s *Server) measureSurfaces(ctx context.Context, sum, head string) (*surfac
 	}
 	defer os.RemoveAll(dir)
 	mesh := filepath.Join(dir, "input.stl")
-	if err := s.blobs.link(sum, mesh); err != nil {
+	if err := s.blobs.stage(sum, mesh, false); err != nil {
 		return nil, err
 	}
 	input, err := readBinarySTL(mesh)

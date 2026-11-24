@@ -597,7 +597,8 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	}
 	names := map[string]bool{}
 	var missing []string
-	for _, f := range files {
+	editProject := r.FormValue("project_edits") != "" || r.FormValue("project_instances") != "" || r.FormValue("project_settings") != ""
+	for i, f := range files {
 		name := f.Name
 		ext := strings.ToLower(filepath.Ext(name))
 		other := ext == ".step" || ext == ".stp" || ext == ".drc" || req.MeshOp == "svg" && ext == ".svg"
@@ -611,7 +612,8 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		}
 		names[name] = true
 		req.Files = append(req.Files, name)
-		if err := s.blobs.link(f.SHA256, filepath.Join(j.Dir, "input", name)); errors.Is(err, fs.ErrNotExist) {
+		writable := i == 0 && ext == ".3mf" && editProject
+		if err := s.blobs.stage(f.SHA256, filepath.Join(j.Dir, "input", name), writable); errors.Is(err, fs.ErrNotExist) {
 			missing = append(missing, f.SHA256)
 		} else if err != nil {
 			fail(w, 500, "http_internal", err.Error())

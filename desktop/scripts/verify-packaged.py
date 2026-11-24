@@ -49,6 +49,8 @@ def main():
         exe='.exe' if (engine/'nonplanar_slice_tool.exe').is_file() else ''
         for name,key in [('nonplanar_slice_tool'+exe,'native_binary_sha256'),('orca-webapp-server'+exe,'server_binary_sha256'),('surface-manifest.json','native_manifest_sha256'),('artifact-qualification.ready','native_qualification_sha256'),('support-fins/support-fins.mjs','support_fins_sha256')]:
             if digest(engine/name)!=components[key]:raise RuntimeError('Packaged file changed after qualification: '+name)
+        if exe and digest(engine/'pancakeslicer-server-guard.exe')!=components['server_guard_sha256']:
+            raise RuntimeError('Packaged server guard changed after qualification')
         resources,count=stage.resource_identity(engine/'resources')
         if resources!=components['native_resources_sha256'] or resources!=manifest['resources_sha256'] or resources!=ready['resources_sha256'] or count!=manifest['resource_file_count']:
             raise RuntimeError('Packaged resources differ from qualification')

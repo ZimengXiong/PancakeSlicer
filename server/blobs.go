@@ -111,12 +111,12 @@ func (b *blobStore) put(w http.ResponseWriter, r *http.Request, maxUpload int64)
 	writeJSON(w, 201, map[string]string{"sha256": sum})
 }
 
-func (b *blobStore) link(sum, dst string) error {
+func (b *blobStore) stage(sum, dst string, writable bool) error {
 	src := b.path(sum)
 	if !b.has(sum) {
 		return fs.ErrNotExist
 	}
-	if os.Link(src, dst) == nil {
+	if !writable && os.Link(src, dst) == nil {
 		return nil
 	}
 	in, err := os.Open(src)

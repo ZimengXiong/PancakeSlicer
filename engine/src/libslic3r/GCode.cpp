@@ -1,6 +1,6 @@
 #include <atomic>
 #include "libslic3r/Nonplanar/Research.hpp"
-#include <fstream>
+#include <filesystem>
 #include "ArcFitter.hpp"
 #include "BoundingBox.hpp"
 #include "Circle.hpp"
@@ -2729,11 +2729,11 @@ void GCode::do_export(Print* print, const char* path, GCodeProcessorResult* resu
 
     boost::nowide::remove(path);
 
-    fs::path file_path(path);
-    fs::path folder = file_path.parent_path();
-    if (!fs::exists(folder)) {
-        fs::create_directory(folder);
-        BOOST_LOG_TRIVIAL(error) << "[WARNING]: the parent path " + folder.string() +" is not there, create it!" << std::endl;
+    const auto file_path = std::filesystem::u8path(path);
+    const auto folder = file_path.parent_path();
+    if (!folder.empty() && !std::filesystem::exists(folder)) {
+        std::filesystem::create_directory(folder);
+        BOOST_LOG_TRIVIAL(error) << "[WARNING]: the parent path " + folder.u8string() +" is not there, create it!" << std::endl;
     }
 
     static std::atomic<unsigned> tmp_counter{0};
@@ -2747,8 +2747,8 @@ void GCode::do_export(Print* print, const char* path, GCodeProcessorResult* resu
     if (! file.is_open()) {
         std::string err_msg = std::string("G-code export to ") + path + " failed.\nCannot open the file for writing.\n";
         BOOST_LOG_TRIVIAL(error) << err_msg << std::endl;
-        if (!fs::exists(folder)) {
-            std::string add_err_msg = "the parent path " + folder.string() +" is not there!!!";
+        if (!folder.empty() && !std::filesystem::exists(folder)) {
+            std::string add_err_msg = "the parent path " + folder.u8string() +" is not there!!!";
             BOOST_LOG_TRIVIAL(error) << add_err_msg << std::endl;
             err_msg += add_err_msg;
         }
@@ -2871,25 +2871,9 @@ void GCode::do_export(Print* print, const char* path, GCodeProcessorResult* resu
         boost::nowide::remove(path_tmp.c_str());
         throw;
     }
-    if (std::any_of(print->objects().begin(), print->objects().end(), [](const PrintObject *object) {
-            return curved_tops_mode(object->config().nonplanar_mode.value);
-        })) {
-        std::fstream header(path_tmp, std::ios::in | std::ios::out | std::ios::binary);
-        std::string prefix(8192, '\0');
-        header.read(prefix.data(), std::streamsize(prefix.size()));
-        prefix.resize(size_t(header.gcount()));
-        auto counter = [&](const std::string &key, size_t value) {
-            const size_t at = prefix.find(key);
-            if (at == std::string::npos) throw Slic3r::RuntimeError("Missing curved tops clearance header.");
-            char digits[32];
-            std::snprintf(digits, sizeof(digits), "%-20zu", value);
-            header.clear();
-            header.seekp(std::streamoff(at + key.size()));
-            header.write(digits, 20);
-        };
-        counter("; nonplanar_grazes = ", m_processor.result().clearance_report.cone_graze_moves);
-        counter("; nonplanar_hits = ", m_processor.result().clearance_report.hit_moves);
-    }
+    const bool curved_tops = std::any_of(print->objects().begin(), print->objects().end(), [](const PrintObject *object) {
+        return curved_tops_mode(object->config().nonplanar_mode.value);
+    });
     if (Nonplanar::wave_enabled(*print)) {
         const auto &processed = m_processor.result();
         bool printing = false;
@@ -2939,8 +2923,10 @@ void GCode::do_export(Print* print, const char* path, GCodeProcessorResult* resu
             ++found->displaced_points;
             found->displaced_length += (b - a).cast<double>().norm();
         }
-        Nonplanar::write_wave_verification(path_tmp, processed.clearance_report.cone_graze_moves,
-                                           processed.clearance_report.hit_moves, wave_results);
+    }
+    if (curved_tops || !wave_results.empty()) {
+        const auto &clearance = m_processor.result().clearance_report;
+        Nonplanar::write_wave_verification(path_tmp, clearance.cone_graze_moves, clearance.hit_moves, wave_results);
     }
     if (!retain_raw_positions && print->config().nonplanar_kinematics.value == RotaryLayout::None)
         m_processor.result().joints.clear();
@@ -2957,10 +2943,7 @@ void GCode::do_export(Print* print, const char* path, GCodeProcessorResult* resu
             m_processor.result().gcode_check_result.error_code |= (1 << 11);
         }
     }
-    const bool curved_retry = m_processor.result().clearance_report.hit_moves > 0 &&
-        std::any_of(print->objects().begin(), print->objects().end(), [](const PrintObject *object) {
-            return curved_tops_mode(object->config().nonplanar_mode.value);
-        });
+    const bool curved_retry = curved_tops && m_processor.result().clearance_report.hit_moves > 0;
     if (result != nullptr) {
         *result = std::move(m_processor.extract_result());
         result->filename = path;
@@ -3962,6 +3945,21 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
 
     std::string thumbnails_value = print.config().option<ConfigOptionString>("thumbnails")->value;
     bool has_BTT_thumbnail = (thumbnails_value.find("BTT_TFT") != std::string::npos);
+    const bool has_curved_tops = std::any_of(print.objects().begin(), print.objects().end(), [](const PrintObject *object) {
+        return curved_tops_mode(object->config().nonplanar_mode.value);
+    });
+    const bool has_wave_results = std::any_of(print.objects().begin(), print.objects().end(), [](const PrintObject *object) {
+        return object->config().nonplanar_wave.value != NonplanarWave::Off;
+    });
+    auto write_clearance_slots = [&] {
+        const size_t pending_grazes = std::hash<std::string>{}(m_processor.result().filename);
+        file.write_format("; nonplanar_grazes = %-20zu\n; nonplanar_hits = %-20d\n", pending_grazes, 0);
+        for (size_t i = 0; i < print.objects().size(); ++i)
+            if (print.objects()[i]->config().nonplanar_wave.value != NonplanarWave::Off) {
+                const std::string pending = "{\"object\":" + std::to_string(i) + "}";
+                file.write_format("; nonplanar_wave_result = %-768s\n", pending.c_str());
+            }
+    };
 
     if(!has_BTT_thumbnail){
         file.write_format("; HEADER_BLOCK_START\n");
@@ -3969,17 +3967,13 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
                           Slic3r::Utils::local_timestamp().c_str());
         file.write_format("; pancakeslicer_build = %s\n", Slic3r::nonplanar_build_label().c_str());
         file.write_format("; nonplanar_clearance_mode = %s\n", ConfigOptionEnum<NonplanarMode>(print_clearance_mode(print)).serialize().c_str());
+        if (has_curved_tops || has_wave_results)
+            write_clearance_slots();
         if (Nonplanar::wave_enabled(print)) {
             for (const auto &[object, field] : m_wave_fields)
                 file.write_format("; nonplanar_wave = %s A=%g λ=%g\n", object->config().nonplanar_wave.serialize().c_str(),
                                   field.amplitude(), object->config().nonplanar_wave_wavelength.value);
-            file.write_format("; nonplanar_grazes = %-20d\n; nonplanar_hits = %-20d\n", 0, 0);
         }
-        for (size_t i = 0; i < print.objects().size(); ++i)
-            if (print.objects()[i]->config().nonplanar_wave.value != NonplanarWave::Off) {
-                const std::string pending = "{\"object\":" + std::to_string(i) + "}";
-                file.write_format("; nonplanar_wave_result = %-768s\n", pending.c_str());
-            }
         for (const PrintObject *object : print.objects())
             if (const Nonplanar::OneShotState *oneshot = object->oneshot_state(); oneshot != nullptr && oneshot->solved) {
                 file.write_format("; oneshot_student = %s, polish_k = %d\n", oneshot->student.c_str(), oneshot->polish_k);
@@ -3991,9 +3985,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
         for (const PrintObject *object : print.objects())
             if (!object->native_summary().empty())
                 file.write_format("; nonplanar_native = %s: %s\n", object->model_object()->name.c_str(), object->native_summary().c_str());
-        if (std::any_of(print.objects().begin(), print.objects().end(), [](const PrintObject *object) {
-                return curved_tops_mode(object->config().nonplanar_mode.value);
-            })) {
+        if (has_curved_tops) {
             size_t kept = 0, candidates = 0;
             double footprint = 0., curved_length = 0., upward_area = 0.;
             for (const PrintObject *object : print.objects()) {
@@ -4012,8 +4004,6 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
             file.write("; curved_top_area_denominator = sum of XY-projected areas of all upward-facing mesh facets\n");
             if (kept == 0)
                 file.write("; planar_fallback_reason = no selected surface has curved roads after head clearance and geometric limits\n");
-            if (!Nonplanar::wave_enabled(print))
-                file.write_format("; nonplanar_grazes = %-20d\n; nonplanar_hits = %-20d\n", 0, 0);
         }
         if (is_bbl_printers)
             file.write_format(";%s\n", GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Estimated_Printing_Time_Placeholder).c_str());
@@ -4141,6 +4131,12 @@ void GCode::_do_export(Print& print, GCodeOutputStream &file, ThumbnailsGenerato
                 GCodeThumbnails::export_thumbnails_to_file(
                     thumbnail_cb, print.get_plate_index(), thumbnails, [&file](const char* sz) { file.write(sz); }, [&print]() { print.throw_if_canceled(); });
         }
+    }
+
+    if (has_BTT_thumbnail && (has_curved_tops || has_wave_results)) {
+        file.write("; HEADER_BLOCK_START\n");
+        write_clearance_slots();
+        file.write("; HEADER_BLOCK_END\n\n");
     }
 
     this->write_belt_header(file, print);

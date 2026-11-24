@@ -13,6 +13,7 @@
 #include <boost/nowide/fstream.hpp>
 #include <nlohmann/json.hpp>
 #include <algorithm>
+#include <functional>
 #include <ios>
 #include <string>
 #include <cmath>
@@ -35,49 +36,70 @@ bool wave_enabled(const Print &print)
 void write_wave_verification(const std::string &path, size_t grazes, size_t hits, const std::vector<WaveResult> &results)
 {
     boost::nowide::fstream file(path, std::ios::in | std::ios::out | std::ios::binary);
+    const std::string grazes_prefix = "; nonplanar_grazes = ";
+    const std::string hits_prefix = "; nonplanar_hits = ";
+    const std::string result_prefix = "; nonplanar_wave_result = ";
+    const std::string error = "Could not update non-planar verification in the G-code header.";
+
+    auto pad_slot = [&error](std::string value, size_t width) {
+        if (value.size() > width)
+            throw Slic3r::RuntimeError(error);
+        value.resize(width, ' ');
+        return value;
+    };
+
+    const std::string pending_grazes = grazes_prefix + pad_slot(std::to_string(std::hash<std::string>{}(path)), 20);
     std::string line;
-    for (int i = 0; i < 1000 && file; ++i) {
-        const auto start = file.tellg();
-        if (!std::getline(file, line))
+    bool in_header = false;
+    auto pos = file.tellg();
+    while (std::getline(file, line)) {
+        if (line == "; HEADER_BLOCK_START")
+            in_header = true;
+        else if (line == "; HEADER_BLOCK_END")
+            in_header = false;
+        else if (in_header && line == pending_grazes)
             break;
-        const auto next = file.tellg();
-        for (const auto &counter : { std::pair<const char *, size_t>{ "; nonplanar_grazes = ", grazes },
-                                     std::pair<const char *, size_t>{ "; nonplanar_hits = ", hits } }) {
-            const std::string prefix = counter.first;
-            if (line.rfind(prefix, 0) != 0)
-                continue;
-            std::string value = std::to_string(counter.second);
-            value.resize(20, ' ');
-            file.seekp(start + std::streamoff(prefix.size()));
-            file.write(value.data(), std::streamsize(value.size()));
-            file.flush();
-            file.seekg(next);
-        }
-        const std::string prefix = "; nonplanar_wave_result = ";
-        if (line.rfind(prefix, 0) == 0) {
-            const auto pending = nlohmann::json::parse(line.substr(prefix.size()));
-            const size_t object = pending.at("object").get<size_t>();
-            const auto found = std::find_if(results.begin(), results.end(), [object](const WaveResult &r) { return r.object == object; });
-            if (found != results.end()) {
-                const bool active = found->displaced_length > 0.;
-                const std::string mode = ConfigOptionEnum<NonplanarWave>(found->mode).serialize();
-                nlohmann::json value = {{"object", object}, {"mode", mode}, {"effective_mode", active ? mode : "off"},
-                    {"effective_amplitude", active ? found->amplitude : 0.}, {"status", active ? "applied" : "planar"},
-                    {"fallback_reason", active ? "" : found->fallback_reason}, {"displaced_points", found->displaced_points},
-                    {"displaced_length_mm", found->displaced_length}, {"max_bead_height", found->max_bead_height}};
-                std::string payload = value.dump();
-                payload.resize(768, ' ');
-                file.seekp(start + std::streamoff(prefix.size()));
-                file.write(payload.data(), std::streamsize(payload.size()));
-                file.flush();
-                file.seekg(next);
-            }
-        }
-        if (line == "; HEADER_BLOCK_END")
-            break;
+        pos = file.tellg();
     }
     if (!file)
-        throw Slic3r::RuntimeError("Could not update wave clearance counters in the G-code header.");
+        throw Slic3r::RuntimeError(results.empty() ? "Missing curved tops clearance header." : error);
+
+    std::vector<std::pair<std::streampos, std::string>> patches;
+    patches.emplace_back(pos + std::streamoff(grazes_prefix.size()), pad_slot(std::to_string(grazes), 20));
+    pos = file.tellg();
+    if (!std::getline(file, line) || line != hits_prefix + pad_slot("0", 20))
+        throw Slic3r::RuntimeError(error);
+    patches.emplace_back(pos + std::streamoff(hits_prefix.size()), pad_slot(std::to_string(hits), 20));
+
+    for (const WaveResult &result : results) {
+        const size_t object = result.object;
+        const std::string pending = "{\"object\":" + std::to_string(object) + "}";
+        pos = file.tellg();
+        if (!std::getline(file, line) || line != result_prefix + pad_slot(pending, 768))
+            throw Slic3r::RuntimeError(error);
+
+        const bool active = result.displaced_length > 0.;
+        const std::string mode = ConfigOptionEnum<NonplanarWave>(result.mode).serialize();
+        nlohmann::json value = {{"object", object}, {"mode", mode}, {"effective_mode", active ? mode : "off"},
+            {"effective_amplitude", active ? result.amplitude : 0.}, {"status", active ? "applied" : "planar"},
+            {"fallback_reason", active ? "" : result.fallback_reason}, {"displaced_points", result.displaced_points},
+            {"displaced_length_mm", result.displaced_length}, {"max_bead_height", result.max_bead_height}};
+        patches.emplace_back(pos + std::streamoff(result_prefix.size()), pad_slot(value.dump(), 768));
+    }
+
+    while (std::getline(file, line) && line != "; HEADER_BLOCK_END")
+        if (line == "; HEADER_BLOCK_START" || line.rfind(result_prefix, 0) == 0)
+            throw Slic3r::RuntimeError(error);
+    if (!file)
+        throw Slic3r::RuntimeError(error);
+
+    for (const auto &[offset, value] : patches) {
+        file.seekp(offset);
+        file.write(value.data(), std::streamsize(value.size()));
+    }
+    file.close();
+    if (!file)
+        throw Slic3r::RuntimeError(error);
 }
 
 WaveField::WaveField(const PrintObject &object)
