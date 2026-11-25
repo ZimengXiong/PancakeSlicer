@@ -125,7 +125,9 @@
 
 #include <stdio.h>
 #ifdef _WIN32
+#include <boost/nowide/convert.hpp>
 #include <io.h>
+#include <windows.h>
 #else
 #include <unistd.h>
 #endif
@@ -1380,7 +1382,19 @@ OrientSlice slice_orientation_child(const Args &args, const Vec3d &up, const fs:
 {
     const auto quote = [](const std::string &v) {
 #ifdef _WIN32
-        return "\"" + v + "\"";
+        std::string q = "\"";
+        size_t backslashes = 0;
+        for (char c : v) {
+            if (c == '\\') {
+                ++backslashes;
+                continue;
+            }
+            q.append(c == '"' ? 2 * backslashes + 1 : backslashes, '\\');
+            q += c;
+            backslashes = 0;
+        }
+        q.append(2 * backslashes, '\\');
+        return q + '"';
 #else
         std::string q = "'";
         for (char c : v)
@@ -1398,11 +1412,57 @@ OrientSlice slice_orientation_child(const Args &args, const Vec3d &up, const fs:
     std::ostringstream u;
     u.precision(17);
     u << up.x() << "," << up.y() << "," << up.z();
-    cmd += "--confirm-up " + quote(u.str()) + " > " + quote(out.string());
+    cmd += "--confirm-up " + quote(u.str());
+    ScopeGuard remove_out([&out] {
+        boost::system::error_code ec;
+        fs::remove(out, ec);
+    });
 #ifdef _WIN32
-    cmd = "\"" + cmd + "\"";
+    DWORD rc;
+    {
+        std::wstring command = boost::nowide::widen(cmd);
+        const auto failure = [](const char *operation) {
+            const std::error_code error(int(GetLastError()), std::system_category());
+            OrientSlice result;
+            result.error = std::string(operation) + ": " + error.message();
+            return result;
+        };
+        SECURITY_ATTRIBUTES inheritable{ sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE };
+        const HANDLE output = CreateFileW(out.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &inheritable,
+                                          CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (output == INVALID_HANDLE_VALUE)
+            return failure("cannot open child slice output");
+        ScopeGuard close_output([output] { CloseHandle(output); });
+        const HANDLE process = GetCurrentProcess();
+        HANDLE input = nullptr, error = nullptr;
+        if (!DuplicateHandle(process, GetStdHandle(STD_INPUT_HANDLE), process, &input, 0, TRUE, DUPLICATE_SAME_ACCESS)) {
+            input = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &inheritable,
+                                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (input == INVALID_HANDLE_VALUE)
+                return failure("cannot open child slice input");
+        }
+        ScopeGuard close_input([input] { CloseHandle(input); });
+        if (!DuplicateHandle(process, GetStdHandle(STD_ERROR_HANDLE), process, &error, 0, TRUE, DUPLICATE_SAME_ACCESS))
+            error = output;
+        ScopeGuard close_error([error, output] { if (error != output) CloseHandle(error); });
+        STARTUPINFOW startup{};
+        startup.cb = sizeof(startup);
+        startup.dwFlags = STARTF_USESTDHANDLES;
+        startup.hStdInput = input;
+        startup.hStdOutput = output;
+        startup.hStdError = error;
+        PROCESS_INFORMATION child{};
+        if (!CreateProcessW(nullptr, command.data(), nullptr, nullptr, TRUE, 0, nullptr, nullptr, &startup, &child))
+            return failure("cannot start child slice");
+        CloseHandle(child.hThread);
+        ScopeGuard close_child([&child] { CloseHandle(child.hProcess); });
+        if (WaitForSingleObject(child.hProcess, INFINITE) != WAIT_OBJECT_0 || !GetExitCodeProcess(child.hProcess, &rc))
+            return failure("cannot get child slice status");
+    }
+#else
+    cmd += " > " + quote(out.string());
+    const int rc = std::system(cmd.c_str());
 #endif
-    const int   rc = std::system(cmd.c_str());
     OrientSlice sl;
     boost::nowide::ifstream in(out.string());
     for (std::string line; std::getline(in, line);) {
@@ -1414,8 +1474,6 @@ OrientSlice slice_orientation_child(const Args &args, const Vec3d &up, const fs:
         else if (key == "orient_slice_error")
             std::getline(ls, sl.error);
     }
-    in.close();
-    fs::remove(out);
     if (! sl.ok && sl.error.empty())
         sl.error = "slice exited with status " + std::to_string(rc);
     return sl;

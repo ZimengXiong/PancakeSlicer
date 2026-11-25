@@ -4,13 +4,16 @@ import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const MAC = process.platform === 'darwin';
-const EXE = process.platform === 'win32' ? '.exe' : '';
-const DESKTOP_PORT = '29731';
-const DESKTOP_ORIGIN = `http://127.0.0.1:${DESKTOP_PORT}`;
+const WINDOWS = process.platform === 'win32';
+const EXE = WINDOWS ? '.exe' : '';
+const PREFERRED_PORT = 29731;
+const SERVER_GUARD = 'pancakeslicer-server-guard.exe';
 const ACCESS_TOKEN = randomBytes(32).toString('hex');
 const LAUNCH_MODEL = /\.(stl|obj|3mf|step|stp)$/i;
 const MAX_LAUNCH_MODEL_BYTES = 256 * 1024 * 1024;
@@ -20,6 +23,7 @@ const OPERATING_SYSTEM = `${process.platform} ${os.release()} ${process.arch}`;
 const DIAGNOSTIC_LOG_LINES = 200;
 
 let server: ChildProcess | null = null;
+let stoppingServer: Promise<void> | undefined;
 let origin = '';
 let win: BrowserWindow | null = null;
 let quitting = false;
@@ -108,7 +112,13 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 function queueLaunchArguments(argv: readonly string[], cwd: string) {
-  const paths = argv.filter((arg) => LAUNCH_MODEL.test(arg)).map((arg) => path.resolve(cwd, arg));
+  const paths: string[] = [];
+  for (let arg of argv) {
+    if (/^file:/i.test(arg)) {
+      try { arg = fileURLToPath(arg); } catch { continue; }
+    }
+    if (LAUNCH_MODEL.test(arg)) paths.push(path.resolve(cwd, arg));
+  }
   if (!paths.length) return;
   launchModels.set(++launchId, new Map(paths.entries()));
   if (win && origin && !win.webContents.isDestroyed()) win.webContents.send('orca-desktop:launch-files-available');
@@ -161,6 +171,7 @@ interface BundleIdentity {
   native_binary_sha256: string;
   native_resources_sha256: string;
   server_binary_sha256: string;
+  server_guard_sha256?: string;
   native_manifest_sha256: string;
   native_qualification_sha256: string;
   support_fins_sha256: string;
@@ -186,6 +197,7 @@ async function bundleIdentity(web: string, engine: string): Promise<BundleIdenti
     ['surface-manifest.json', 'native_manifest_sha256'], ['artifact-qualification.ready', 'native_qualification_sha256'],
     ['support-fins/support-fins.mjs', 'support_fins_sha256'],
   ] as const).map(async ([name, key]) => /^[a-f0-9]{64}$/.test(expected[key]) && await fileHash(path.join(engine, name)) === expected[key]));
+  if (WINDOWS) hashes.push(typeof expected.server_guard_sha256 === 'string' && /^[a-f0-9]{64}$/.test(expected.server_guard_sha256) && await fileHash(path.join(engine, SERVER_GUARD)) === expected.server_guard_sha256);
   if (!hashes.every(Boolean)) throw new Error('Oops! One of the app\'s bundled files looks modified or corrupted. Try reinstalling PancakeSlicer.');
   if (!/^[a-f0-9]{64}$/.test(expected.native_resources_sha256)) throw new Error('Oops! Required app resources are missing from this installation. Try reinstalling PancakeSlicer.');
   const schemas = JSON.parse(fs.readFileSync(path.join(engine, 'schemas.json'), 'utf8')) as Record<string, number>;
@@ -193,9 +205,9 @@ async function bundleIdentity(web: string, engine: string): Promise<BundleIdenti
   return { ...expected, schemas };
 }
 
-function healthy(nonce: string, expected: BundleIdentity): Promise<boolean> {
+function healthy(serverOrigin: string, nonce: string, expected: BundleIdentity): Promise<boolean> {
   return new Promise((resolve) => {
-    const req = http.get(`${DESKTOP_ORIGIN}/api/healthz`, { timeout: 1000, headers: { 'Cache-Control': 'no-store' } }, (res) => {
+    const req = http.get(`${serverOrigin}/api/healthz`, { timeout: 1000, headers: { 'Cache-Control': 'no-store' } }, (res) => {
       if (res.statusCode !== 200) { res.resume(); resolve(false); return; }
       let body = '';
       res.setEncoding('utf8');
@@ -252,9 +264,27 @@ function reportProblem() {
   void shell.openExternal(`https://github.com/ZimengXiong/PancakeSlicer/issues/new?${query}`);
 }
 
+function probePort(port: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer((socket) => socket.destroy());
+    probe.once('error', reject);
+    probe.listen(port, '127.0.0.1', () => {
+      const address = probe.address() as net.AddressInfo;
+      probe.close((error) => error ? reject(error) : resolve(address.port));
+    });
+  });
+}
+
 async function startServer(): Promise<string> {
   const { web, engine } = payload();
   const expected = await bundleIdentity(web, engine);
+  const port = await probePort(PREFERRED_PORT).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== 'EADDRINUSE' && error.code !== 'EACCES') throw error;
+    return probePort(0);
+  });
+  if (quitting) throw new Error('The app is closing.');
+  const listen = `127.0.0.1:${port}`;
+  const serverOrigin = `http://${listen}`;
   const data = app.getPath('userData');
   const logs = path.join(data, 'logs');
   fs.mkdirSync(logs, { recursive: true });
@@ -287,8 +317,9 @@ async function startServer(): Promise<string> {
 
   if (process.platform === 'linux' && fs.existsSync(lib)) env.LD_LIBRARY_PATH = [lib, env.LD_LIBRARY_PATH].filter(Boolean).join(':');
   let lastError = '';
-  const child = spawn(path.join(engine, `orca-webapp-server${EXE}`), [
-    '--listen', `127.0.0.1:${DESKTOP_PORT}`,
+  const executable = path.join(engine, `orca-webapp-server${EXE}`);
+  const args = [
+    '--listen', listen,
     '--static', web,
     '--tool', path.join(engine, `nonplanar_slice_tool${EXE}`),
     '--resources', path.join(engine, 'resources'),
@@ -297,40 +328,50 @@ async function startServer(): Promise<string> {
     '--job-timeout', '0',
 
     '--printer-network', 'lan',
-  ], { env, stdio: ['ignore', log, log], windowsHide: true });
+  ];
+  const child = spawn(WINDOWS ? path.join(engine, SERVER_GUARD) : executable, WINDOWS ? [executable, ...args] : args,
+    { env, stdio: [WINDOWS ? 'pipe' : 'ignore', log, log], windowsHide: true });
   fs.closeSync(log);
   server = child;
+  child.stdin?.on('error', () => {});
   let exited = false, ready = false;
   child.on('exit', (code, signal) => {
     exited = true;
-    lastError ||= `Bundled service exited (${signal ?? code}); the fixed desktop origin may be occupied.\n${details}`;
-    if (ready && server === child && !quitting) fail(`Oops! The local slicing service stopped unexpectedly.\n${details}`);
+    lastError ||= `Bundled service exited (${signal ?? code}).\n${details}`;
+    if (ready && server === child && !quitting) void fail(`Oops! The local slicing service stopped unexpectedly.\n${details}`);
   });
-  child.on('error', () => { exited = true; lastError = `Oops! We couldn't start the local slicing service.\n${details}`; });
+  child.on('error', () => {
+    if (child.pid !== undefined) return;
+    exited = true;
+    lastError = `Oops! We couldn't start the local slicing service.\n${details}`;
+  });
   // A cold start on a slow PC with on-access virus scanning can take minutes, so wait for as long as the service lives.
   while (!exited) {
-    if (await healthy(nonce, expected) && !exited) { ready = true; return DESKTOP_ORIGIN; }
+    if (await healthy(serverOrigin, nonce, expected) && !exited && !quitting) { ready = true; return serverOrigin; }
     await new Promise((r) => setTimeout(r, 100));
   }
-  stopServer();
+  await stopServer();
   throw new Error(lastError);
 }
 
 function stopServer(): Promise<void> {
+  if (stoppingServer) return stoppingServer;
   const child = server;
   server = null;
-  if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
   const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
-  child.kill('SIGTERM');
-  const timer = setTimeout(() => { if (child.exitCode === null) child.kill('SIGKILL'); }, 3000);
-  return exited.finally(() => clearTimeout(timer));
+  if (WINDOWS) child.stdin?.end();
+  else child.kill('SIGTERM');
+  const timer = setTimeout(() => child.kill('SIGKILL'), WINDOWS ? 6000 : 3000);
+  stoppingServer = exited.finally(() => clearTimeout(timer));
+  return stoppingServer;
 }
 
-function fail(message: string) {
+async function fail(message: string) {
   if (quitting) return;
   quitting = true;
+  await stopServer();
   dialog.showErrorBox('PancakeSlicer', message);
-  stopServer();
   app.exit(1);
 }
 
@@ -432,7 +473,7 @@ async function openInBambuConnect(jobId: unknown, filename: unknown) {
   fs.mkdirSync(dir, { recursive: true });
   const target = path.join(dir, filename);
   await new Promise<void>((resolve, reject) => {
-    http.get(`${DESKTOP_ORIGIN}/api/jobs/${jobId}/download`, (res) => {
+    http.get(`${origin}/api/jobs/${jobId}/download`, (res) => {
       if (res.statusCode !== 200) { res.resume(); reject(new Error(`Oops! The sliced file isn't available anymore (HTTP ${res.statusCode}). Please slice the plate again.`)); return; }
       const out = fs.createWriteStream(target);
       res.pipe(out);
@@ -449,7 +490,7 @@ async function openInBambuConnect(jobId: unknown, filename: unknown) {
 
 function deviceHttpUrl(address: unknown) {
   const url = typeof address === 'string' ? URL.parse(address) : null;
-  if (!url || !['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.port === DESKTOP_PORT) return null;
+  if (!url || !['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.port === URL.parse(origin)?.port) return null;
   const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
   if (host === 'localhost' || host.endsWith('.localhost') || host === '::1' || host === '127.0.0.1' || host.startsWith('127.')) return null;
   // Origins are interpolated into CSP source expressions.
@@ -471,7 +512,7 @@ function restrictNetwork(target: Electron.Session, appContents?: Electron.WebCon
     // Navigation requests are attributed to their initiator, including redirects.
     if (resourceType === 'subFrame') {
       callback({ cancel: !selected || deviceHttpUrl(details.url)?.origin !== selected.origin
-        || (initiatorOrigin !== DESKTOP_ORIGIN && !fromPrinter) });
+        || (initiatorOrigin !== origin && !fromPrinter) });
       return;
     }
     if (fromPrinter) {
@@ -483,11 +524,11 @@ function restrictNetwork(target: Electron.Session, appContents?: Electron.WebCon
       callback({ cancel: !allow });
       return;
     }
-    const local = url.origin === DESKTOP_ORIGIN;
+    const local = url.origin === origin;
     const update = url.protocol === 'https:' && url.hostname === 'api.github.com'
       && url.pathname === '/repos/ZimengXiong/PancakeSlicer/releases' && url.search === '?per_page=30';
     const embedded = ['blob:', 'data:', 'devtools:'].includes(url.protocol);
-    const allow = (initiatorOrigin === undefined || initiatorOrigin === DESKTOP_ORIGIN)
+    const allow = (initiatorOrigin === undefined || initiatorOrigin === origin)
       && !hasParentFrame(details) && (local || update || embedded);
     if (!allow) console.error(`Blocked outbound request: ${url.origin}${url.pathname}`);
     callback({ cancel: !allow });
@@ -503,13 +544,13 @@ function restrictNetwork(target: Electron.Session, appContents?: Electron.WebCon
     const headers = { ...details.responseHeaders };
     const key = Object.keys(headers).find((name) => name.toLowerCase() === 'content-security-policy') ?? 'Content-Security-Policy';
     const endpoints = [...new Set([selected.origin, selected.apiOrigin, ...selected.sockets])];
-    headers[key] = [...(headers[key] ?? []), `connect-src ${endpoints.join(' ')}; frame-src 'self'; form-action 'self'; object-src 'none'; frame-ancestors ${DESKTOP_ORIGIN} 'self'`];
+    headers[key] = [...(headers[key] ?? []), `connect-src ${endpoints.join(' ')}; frame-src 'self'; form-action 'self'; object-src 'none'; frame-ancestors ${origin} 'self'`];
     callback({ responseHeaders: headers });
   });
   target.setPermissionCheckHandler((_contents, _permission, requestingOrigin, details) =>
-    details.isMainFrame && URL.parse(requestingOrigin)?.origin === DESKTOP_ORIGIN);
+    details.isMainFrame && URL.parse(requestingOrigin)?.origin === origin);
   target.setPermissionRequestHandler((_contents, _permission, callback, details) =>
-    callback(details.isMainFrame && URL.parse(details.requestingUrl)?.origin === DESKTOP_ORIGIN));
+    callback(details.isMainFrame && URL.parse(details.requestingUrl)?.origin === origin));
 }
 
 async function start() {
@@ -517,6 +558,7 @@ async function start() {
   menu();
   ipc();
   const serving = startServer();
+  void serving.catch(() => {});
   if (app.commandLine.hasSwitch('service-only')) { origin = await serving; return; }
   const rendererSession = session.fromPartition('orca-service-renderer', { cache: false });
   if (rendererSession.isPersistent() || rendererSession.getStoragePath() !== null) throw new Error('Oops! The app window needs an isolated in-memory session to run safely.');
@@ -577,7 +619,7 @@ async function start() {
   });
   await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(STARTING_PAGE)}`);
   origin = await serving;
-  await rendererSession.cookies.set({ url: DESKTOP_ORIGIN, name: 'orca_access', httpOnly: true, sameSite: 'strict',
+  await rendererSession.cookies.set({ url: origin, name: 'orca_access', httpOnly: true, sameSite: 'strict',
     value: createHmac('sha256', ACCESS_TOKEN).update('orca-web-access-v1').digest('hex') });
   if (win && !closing) await win.loadURL(origin);
 }
@@ -589,8 +631,7 @@ app.on('before-quit', (e) => {
   e.preventDefault();
   void prepareQuit();
 });
-app.on('will-quit', () => void stopServer());
-process.on('exit', () => void stopServer());
+process.on('exit', () => { if (!WINDOWS) server?.kill('SIGTERM'); });
 process.on('SIGTERM', () => app.quit());
 process.on('SIGINT', () => app.quit());
 

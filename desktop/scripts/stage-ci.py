@@ -189,11 +189,18 @@ def main():
         f'-s -w -X main.buildRevision={revision} -X main.buildImage=pancakeslicer-desktop-{args.os}-{args.arch}',
         '-o', server, '.', cwd=ROOT / 'server', env=env)
     server.chmod(0o755)
+    executables = {native, server}
+    guard = None
+    if args.os == 'win':
+        guard = engine / 'pancakeslicer-server-guard.exe'
+        run('go', 'build', '-trimpath', '-ldflags', '-s -w', '-o', guard,
+            ROOT / 'desktop/src/server_guard_windows.go', cwd=ROOT / 'server', env=env)
+        executables.add(guard)
     shutil.copytree(ROOT / 'server/support-fins', engine / 'support-fins')
     shutil.copy2(ROOT / 'server/schemas.json', engine / 'schemas.json')
     if args.os == 'mac':
         run('codesign', '--force', '--sign', '-', server)
-    payload_modes(engine, {native, server})
+    payload_modes(engine, executables)
     payload_modes(web, set())
     resource_hash, count = resource_identity(resources)
     qualification = build / f'qualification-{args.os}-{args.arch}'
@@ -232,6 +239,8 @@ def main():
                   'native_manifest_sha256': digest(engine / 'surface-manifest.json'),
                   'native_qualification_sha256': digest(engine / 'artifact-qualification.ready'),
                   'support_fins_sha256': digest(engine / 'support-fins/support-fins.mjs')}
+    if guard is not None:
+        components['server_guard_sha256'] = digest(guard)
     write_json(engine / 'COMPONENTS.json', components)
     write_json(web / 'COMPONENTS.json', components)
     (web / 'REVISION.txt').write_text(revision + '\n', encoding='utf-8')
