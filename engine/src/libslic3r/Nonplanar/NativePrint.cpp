@@ -971,7 +971,8 @@ void build_native_patch(PrintObject &object, const std::shared_ptr<const LayerFi
         append(profile, std::vector<coordf_t> { anchor, conformal_field->band_height(), height, conformal_field->band_height() });
         model_object->layer_height_profile.set(profile);
     }
-    model_object->add_instance();
+    const Point placed = object.instances().front().shift_without_plate_offset();
+    model_object->add_instance()->set_offset(Vec3d(unscale<double>(placed.x()), unscale<double>(placed.y()), 0.));
     const NativeSliceOverride registered(name, std::move(shifted), std::move(painted_enforcers), std::move(painted_blockers));
     Print                     print;
     const NestedFieldSlice    nested;
