@@ -36,6 +36,8 @@ contextBridge.exposeInMainWorld('orcaDesktop', {
   showDeviceUi: (address: string | null, apiAddress?: string): Promise<void> => ipcRenderer.invoke('orca-desktop:device-ui', address, apiAddress),
   agents: {
     get: () => ipcRenderer.invoke('orca-desktop:agents'),
+    copyConfig: (format?: 'json' | 'codex') => ipcRenderer.invoke('orca-desktop:agents-copy-config', format),
+    setSliceTimeout: (seconds: number) => ipcRenderer.invoke('orca-desktop:agents-slice-timeout', seconds),
     set: (enabled: boolean, printers: boolean) => ipcRenderer.invoke('orca-desktop:agents-set', enabled, printers),
     client: (id: string, add: boolean) => ipcRenderer.invoke('orca-desktop:agents-client', id, add),
     onCommand(handler: (id: number, command: string, args: Record<string, unknown>) => void) {

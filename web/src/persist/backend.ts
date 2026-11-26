@@ -54,9 +54,9 @@ declare global {
     acceptLaunchFile?(id: number, index: number): Promise<void>;
     bambuConnect?(jobId: string, filename: string): Promise<void>;
     showDeviceUi?(address: string | null, apiAddress?: string): Promise<void>;
-    agents?: { get(): Promise<DesktopAgents>; set(enabled: boolean, printers: boolean): Promise<DesktopAgents>; client(id: string, add: boolean): Promise<DesktopAgents>;
+    agents?: { get(): Promise<DesktopAgents>; copyConfig(format?: 'json' | 'codex'): Promise<void>; setSliceTimeout(seconds: number): Promise<Pick<DesktopAgents, 'sliceTimeoutS'>>; set(enabled: boolean, printers: boolean): Promise<Pick<DesktopAgents, 'enabled' | 'printers'>>; client(id: string, add: boolean): Promise<DesktopAgents>;
       onCommand?(handler: (id: number, command: string, args: Record<string, unknown>) => void): () => void; reply(id: number, ok: boolean, result: unknown): Promise<void> } } }
-  interface DesktopAgents { enabled: boolean; printers: boolean; launch: { command: string; args: string[]; env: Record<string, string> };
+  interface DesktopAgents { enabled: boolean; printers: boolean; sliceTimeoutS: number; minSliceTimeoutS: number; maxSliceTimeoutS: number; launch: { command: string; args: string[]; env: Record<string, string> };
     clients: { id: string; name: string; available: boolean; configured: boolean; current: boolean }[] }
 }
 const storageListeners = new Set<() => void>();

@@ -3,6 +3,7 @@ import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import { DEFAULT_SLICE_TIMEOUT_S, isSliceTimeout, MAX_SLICE_TIMEOUT_S, MIN_SLICE_TIMEOUT_S } from '../slice-timeout.js';
 import { ApiError, PancakeApi, type JobStatus, type LibraryDocument, type LibraryPrinter, type ProfileRef } from './api.js';
 import { inspectOutput } from './gcode.js';
 
@@ -23,10 +24,10 @@ async function connect() {
     api = new PancakeApi(process.env.PANCAKESLICER_URL.replace(/\/+$/, ''), process.env.PANCAKESLICER_TOKEN || undefined);
     printerAccess = process.env.PANCAKESLICER_PRINTER_ACCESS === '1';
     windowControl = null;
-    return;
+    return 600;
   }
   if (!connectionPath) throw new Error(`This MCP server is set up from PancakeSlicer's ${PREFERENCE}, or set PANCAKESLICER_URL for a self-hosted server.`);
-  let connection: { url?: string; token?: string; printers?: boolean; pid?: number; control?: string; controlToken?: string };
+  let connection: { url?: string; token?: string; printers?: boolean; pid?: number; control?: string; controlToken?: string; sliceTimeoutS?: number };
   try {
     connection = JSON.parse(await readFile(connectionPath, 'utf8'));
   } catch {
@@ -36,6 +37,7 @@ async function connect() {
   api = new PancakeApi(connection.url.replace(/\/+$/, ''), connection.token || undefined);
   printerAccess = connection.printers === true;
   windowControl = connection.control && connection.controlToken ? { url: connection.control, token: connection.controlToken } : null;
+  return isSliceTimeout(connection.sliceTimeoutS) ? connection.sliceTimeoutS : DEFAULT_SLICE_TIMEOUT_S;
 }
 
 let windowControl: { url: string; token: string } | null = null;
@@ -95,13 +97,13 @@ function failure(error: unknown) {
 }
 
 function tool<T extends z.ZodRawShape>(name: string, config: { title: string; description: string; inputSchema: T; annotations?: Record<string, boolean>; printers?: boolean },
-  run: (args: z.objectOutputType<T, z.ZodTypeAny>) => Promise<{ content: Content[] }>) {
+  run: (args: z.objectOutputType<T, z.ZodTypeAny>, sliceTimeoutS: number) => Promise<{ content: Content[] }>) {
   const { printers, ...definition } = config;
   server.registerTool(name, definition, (async (args: z.objectOutputType<T, z.ZodTypeAny>) => {
     try {
-      await connect();
+      const sliceTimeoutS = await connect();
       if (printers) needPrinterAccess();
-      return await run(args);
+      return await run(args, sliceTimeoutS);
     } catch (error) {
       return failure(error);
     }
@@ -292,8 +294,8 @@ tool('adjust_plate', {
 tool('slice_plate', {
   title: 'Slice the open plate',
   description: 'Press Slice plate in the PancakeSlicer window and wait; the window switches to the preview. Returns the job id, time, weight and profiles.',
-  inputSchema: { wait_s: z.number().int().min(10).max(1800).default(600) },
-}, async ({ wait_s }) => reply(await sliceWindow(wait_s)));
+  inputSchema: { wait_s: z.number().int().min(MIN_SLICE_TIMEOUT_S).max(MAX_SLICE_TIMEOUT_S).optional().describe('Seconds to wait. If omitted, uses the timeout in Preferences › AI agents.') },
+}, async ({ wait_s }, sliceTimeoutS) => reply(await sliceWindow(wait_s ?? sliceTimeoutS)));
 
 tool('slice_model', {
   title: 'Slice a model',
@@ -304,9 +306,10 @@ tool('slice_model', {
     printer: z.string().optional().describe('Printer profile id or name, for background slicing; the window slices with the printer it has selected.'),
     output: z.enum(['gcode.3mf', 'gcode']).default('gcode.3mf').describe('For background slicing: gcode.3mf for Bambu LAN printers, gcode for the others.'),
     background: z.boolean().default(false).describe('Slice without the window.'),
-    wait_s: z.number().int().min(0).max(1800).default(600).describe('Seconds to wait for the slice.'),
+    wait_s: z.number().int().min(0).max(MAX_SLICE_TIMEOUT_S).optional().describe('Seconds to wait. If omitted, uses the configured timeout. Set to 0 with background slicing to return the job immediately.'),
   },
-}, async (args) => {
+}, async (args, sliceTimeoutS) => {
+  const waitS = args.wait_s ?? sliceTimeoutS;
   const path = modelPath(args.path);
   if (!(await stat(path)).isFile()) throw new Error(`${path} is not a file.`);
   if (!args.background && windowControl) {
@@ -314,7 +317,7 @@ tool('slice_model', {
     if (args.printer && args.printer !== opened.printer) throw new Error(`The window has ${opened.printer} selected. Ask the user to switch printers, or pass background: true.`);
     await inWindow('open_model', { path, new_project: true });
     await adjustWindow(args);
-    return reply(await sliceWindow(Math.max(10, args.wait_s)));
+    return reply(await sliceWindow(Math.max(MIN_SLICE_TIMEOUT_S, waitS)));
   }
   const lib = await api.library();
   const printer = pick(lib.printers, args.printer, 'printer');
@@ -333,7 +336,7 @@ tool('slice_model', {
     form.plate = JSON.stringify({ objects: [{ file: basename(path), name: basename(path), extruder: index + 1, instances: [{ x, y, rot: 0 }] }] });
   }
   const id = await api.submitJob(path, form);
-  const job = args.wait_s ? await api.waitJob(id, args.wait_s) : await api.job(id);
+  const job = waitS ? await api.waitJob(id, waitS) : await api.job(id);
   return reply({ ...summary(job), background: true, print_profile: profile.name, slot: index + 1, tray: printer.slots[index].tray, filament: nameOf(lib, filaments[index]) });
 });
 

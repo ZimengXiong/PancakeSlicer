@@ -7,8 +7,9 @@ import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { addToClient, agentClients, mcpLaunch, publishConnection, readAgentSettings, removeConnection, removeFromClient, writeAgentSettings } from './agents';
+import { agentClients, configureAgentClient, formatMcpConfig, mcpLaunch, publishConnection, readAgentSettings, removeConnection, writeAgentSettings } from './agents';
 import { fileURLToPath } from 'node:url';
+import { isSliceTimeout, MAX_SLICE_TIMEOUT_S, MIN_SLICE_TIMEOUT_S } from './slice-timeout.js';
 
 const MAC = process.platform === 'darwin';
 const WINDOWS = process.platform === 'win32';
@@ -440,7 +441,7 @@ function menu() {
 
 const agentLaunch = () => mcpLaunch(process.execPath,
   app.isPackaged ? path.join(process.resourcesPath, 'app.asar.unpacked', 'out', 'mcp.cjs') : path.join(__dirname, 'mcp.cjs'), app.getPath('userData'));
-let serviceReady = false;
+let serviceUrl = '';
 const CONTROL_TOKEN = randomBytes(32).toString('hex');
 const AGENT_MODEL = /\.(stl|obj|3mf|step|stp)$/i;
 let controlUrl = '';
@@ -450,7 +451,7 @@ const windowCommands = new Map<number, { resolve: (value: unknown) => void; reje
 function syncAgentConnection() {
   const data = app.getPath('userData');
   try {
-    publishConnection(data, readAgentSettings(data), serviceReady ? DESKTOP_ORIGIN : '', ACCESS_TOKEN, controlUrl ? { url: controlUrl, token: CONTROL_TOKEN } : undefined);
+    publishConnection(data, readAgentSettings(data), serviceUrl, ACCESS_TOKEN, controlUrl ? { url: controlUrl, token: CONTROL_TOKEN } : undefined);
   } catch (error) {
     console.error('AI agent access could not be updated.', error);
   }
@@ -471,7 +472,8 @@ function windowCommand(command: string, args: Record<string, unknown>, timeoutMs
 const refused = (status: number, message: string) => Object.assign(new Error(message), { status });
 
 async function controlRequest(body: { command?: unknown; args?: unknown }) {
-  if (!readAgentSettings(app.getPath('userData')).enabled) throw refused(403, 'AI agent access is off in Preferences › AI agents.');
+  const settings = readAgentSettings(app.getPath('userData'));
+  if (!settings.enabled) throw refused(403, 'AI agent access is off in Preferences › AI agents.');
   const command = typeof body.command === 'string' ? body.command : '';
   const args: Record<string, unknown> = body.args && typeof body.args === 'object' ? { ...(body.args as Record<string, unknown>) } : {};
   if (command === 'open_model') {
@@ -483,8 +485,10 @@ async function controlRequest(body: { command?: unknown; args?: unknown }) {
     args.data = await fs.promises.readFile(file);
     delete args.path;
   }
-  const timeout = command === 'slice' ? (Number(args.timeout_ms) || 600_000) + 15_000 : 120_000;
-  return windowCommand(command, args, timeout);
+  if (command !== 'slice') return windowCommand(command, args, 120_000);
+  const requested = Number(args.timeout_ms) / 1000;
+  const timeoutMs = (isSliceTimeout(requested) ? requested : settings.sliceTimeoutS) * 1000;
+  return windowCommand(command, { ...args, timeout_ms: timeoutMs }, timeoutMs + 15_000);
 }
 
 function startControl(): Promise<void> {
@@ -515,9 +519,10 @@ function startControl(): Promise<void> {
   });
 }
 
-function agentState() {
+async function agentState() {
   const launch = agentLaunch();
-  return { ...readAgentSettings(app.getPath('userData')), clients: agentClients(launch), launch };
+  const { customConfigs, ...settings } = readAgentSettings(app.getPath('userData'));
+  return { ...settings, minSliceTimeoutS: MIN_SLICE_TIMEOUT_S, maxSliceTimeoutS: MAX_SLICE_TIMEOUT_S, clients: await agentClients(launch, customConfigs), launch };
 }
 
 function ipc() {
@@ -529,11 +534,24 @@ function ipc() {
     fromApp(e);
     return agentState();
   });
+  ipcMain.handle('orca-desktop:agents-copy-config', (e, format: unknown) => {
+    fromApp(e);
+    clipboard.writeText(formatMcpConfig(agentLaunch(), format));
+  });
   ipcMain.handle('orca-desktop:agents-set', (e, enabled: unknown, printers: unknown) => {
     fromApp(e);
-    writeAgentSettings(app.getPath('userData'), { enabled: enabled === true, printers: printers === true });
+    const data = app.getPath('userData');
+    const saved = writeAgentSettings(data, { ...readAgentSettings(data), enabled: enabled === true, printers: printers === true });
     syncAgentConnection();
-    return agentState();
+    return { enabled: saved.enabled, printers: saved.printers };
+  });
+  ipcMain.handle('orca-desktop:agents-slice-timeout', (e, seconds: unknown) => {
+    fromApp(e);
+    if (!isSliceTimeout(seconds)) throw new Error(`Enter a whole number from ${MIN_SLICE_TIMEOUT_S} to ${MAX_SLICE_TIMEOUT_S} seconds.`);
+    const data = app.getPath('userData');
+    writeAgentSettings(data, { ...readAgentSettings(data), sliceTimeoutS: seconds });
+    syncAgentConnection();
+    return { sliceTimeoutS: seconds };
   });
   ipcMain.handle('orca-desktop:agent-reply', (e, id: unknown, ok: unknown, result: unknown) => {
     fromApp(e);
@@ -544,11 +562,11 @@ function ipc() {
     if (ok === true) pending.resolve(result);
     else pending.reject(new Error(String(result)));
   });
-  ipcMain.handle('orca-desktop:agents-client', (e, id: unknown, add: unknown) => {
+  ipcMain.handle('orca-desktop:agents-client', async (e, id: unknown, add: unknown) => {
     fromApp(e);
     if (typeof id !== 'string') throw new Error('Unknown AI client.');
-    if (add === true) addToClient(id, agentLaunch());
-    else removeFromClient(id);
+    const { customConfigs } = readAgentSettings(app.getPath('userData'));
+    await configureAgentClient(id, add === true ? agentLaunch() : null, customConfigs);
     return agentState();
   });
   ipcMain.handle('orca-desktop:bambu-connect', (e, jobId: unknown, filename: unknown) => {
@@ -675,7 +693,10 @@ async function start() {
   process.once('exit', () => removeConnection(app.getPath('userData')));
   const controlling = app.commandLine.hasSwitch('service-only') ? Promise.resolve()
     : startControl().catch((error) => console.error('Agent control could not start.', error));
-  void Promise.all([serving, controlling]).then(() => { serviceReady = true; syncAgentConnection(); }, () => undefined);
+  void Promise.all([serving, controlling]).then(([url]) => {
+    serviceUrl = url;
+    syncAgentConnection();
+  }, () => undefined);
   if (app.commandLine.hasSwitch('service-only')) { origin = await serving; return; }
   const rendererSession = session.fromPartition('orca-service-renderer', { cache: false });
   if (rendererSession.isPersistent() || rendererSession.getStoragePath() !== null) throw new Error('Oops! The app window needs an isolated in-memory session to run safely.');
