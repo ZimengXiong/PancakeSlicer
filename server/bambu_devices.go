@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"math"
 	"strconv"
@@ -26,11 +27,11 @@ type NozzleTemp struct {
 
 type bambuDevice struct {
 	Extruder *struct {
-		Info []struct {
+		Info bambuList[struct {
 			ID   int     `json:"id"`
 			Temp uint32  `json:"temp"`
 			Snow *uint32 `json:"snow"`
-		} `json:"info"`
+		}] `json:"info"`
 	} `json:"extruder"`
 	Airduct *struct {
 		ModeCur  int `json:"modeCur"`
@@ -47,13 +48,23 @@ type bambuDevice struct {
 	} `json:"airduct"`
 	Nozzle *struct {
 		Exist int `json:"exist"`
-		Info  []struct {
+		Info  bambuList[struct {
 			ID       int             `json:"id"`
 			Diameter json.RawMessage `json:"diameter"`
 			Type     string          `json:"type"`
 			Stat     *int            `json:"stat"`
-		} `json:"info"`
+		}] `json:"info"`
 	} `json:"nozzle"`
+}
+
+type bambuList[T any] []T
+
+func (l *bambuList[T]) UnmarshalJSON(raw []byte) error {
+	if text := bytes.TrimSpace(raw); len(text) == 0 || text[0] != '[' {
+		*l = nil
+		return nil
+	}
+	return json.Unmarshal(raw, (*[]T)(l))
 }
 
 func bambuNumber(raw json.RawMessage) *float64 {
@@ -84,7 +95,7 @@ func bambuNozzleType(code string) (string, string) {
 }
 
 func (b *bambuReport) nozzles() []NozzleStatus {
-	if b.Device != nil && b.Device.Nozzle != nil {
+	if b.Device != nil && b.Device.Nozzle != nil && len(b.Device.Nozzle.Info) > 0 {
 		system := b.Device.Nozzle
 		dual := system.Exist&2 != 0
 		for _, row := range system.Info {
