@@ -2,6 +2,54 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 
+export const MAX_TIMER_SECONDS = Math.floor((2 ** 31 - 1) / 1000);
+
+export function statusWait(waitS: number | undefined, request: AbortSignal) {
+  if (waitS === undefined) return { request, signal: request };
+  const timeout = waitS === 0 ? AbortSignal.abort() : AbortSignal.timeout(waitS * 1000);
+  return { request, signal: AbortSignal.any([request, timeout]) };
+}
+
+type StatusWait = ReturnType<typeof statusWait>;
+
+export function waitForStatus<T>(status: T, read: (signal: AbortSignal) => Promise<T>, pending: (status: T) => boolean, wait: StatusWait): Promise<T> {
+  return new Promise((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    function cleanup() {
+      clearTimeout(timer);
+      wait.signal.removeEventListener('abort', finish);
+    }
+
+    function finish() {
+      cleanup();
+      if (wait.request.aborted) reject(wait.request.reason);
+      else resolve(status);
+    }
+
+    function schedule() {
+      if (wait.signal.aborted || !pending(status)) finish();
+      else timer = setTimeout(refresh, 500);
+    }
+
+    async function refresh() {
+      try {
+        const latest = await read(wait.signal);
+        if (wait.signal.aborted) return;
+        status = latest;
+        schedule();
+      } catch (error) {
+        if (wait.signal.aborted) return;
+        cleanup();
+        reject(error);
+      }
+    }
+
+    wait.signal.addEventListener('abort', finish, { once: true });
+    schedule();
+  });
+}
+
 export class ApiError extends Error {
   constructor(message: string, readonly status: number, readonly code?: string, readonly body?: unknown) {
     super(message);
@@ -82,6 +130,12 @@ export class PancakeApi {
     return answer.document;
   }
 
+  resolvePrinter(selection: string) {
+    return this.json<{ printer: { status: { ok: boolean; message?: string }; values?: { printable_area?: string | string[] } } }>('/api/resolve', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: selection,
+    });
+  }
+
   async uploadBlob(data: Uint8Array<ArrayBuffer>): Promise<string> {
     const sum = createHash('sha256').update(data).digest('hex');
     const { missing } = await this.json<{ missing: string[] }>('/api/blobs/missing', {
@@ -110,16 +164,11 @@ export class PancakeApi {
     }
   }
 
-  job(id: string) { return this.json<JobStatus>(`/api/jobs/${encodeURIComponent(id)}`); }
+  job(id: string, signal?: AbortSignal) { return this.json<JobStatus>(`/api/jobs/${encodeURIComponent(id)}`, { signal }); }
 
-  async waitJob(id: string, timeoutS: number): Promise<JobStatus> {
-    const until = Date.now() + timeoutS * 1000;
-    for (;;) {
-      const status = await this.job(id);
-      if (status.state !== 'queued' && status.state !== 'running') return status;
-      if (Date.now() > until) return status;
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-    }
+  async waitJob(id: string, wait: StatusWait): Promise<JobStatus> {
+    return waitForStatus(await this.job(id, wait.request), (signal) => this.job(id, signal),
+      ({ state }) => state === 'queued' || state === 'running', wait);
   }
 
   cancelJob(id: string) { return this.request(`/api/jobs/${encodeURIComponent(id)}/cancel`, { method: 'POST' }); }
@@ -174,7 +223,7 @@ export class PancakeApi {
     });
   }
 
-  sendState(job: string) { return this.json<Record<string, any>>(`/api/jobs/${encodeURIComponent(job)}/send`); }
+  sendState(job: string, signal: AbortSignal) { return this.json<Record<string, any>>(`/api/jobs/${encodeURIComponent(job)}/send`, { signal }); }
 
   device(printer: string, body: Record<string, unknown>) {
     return this.json<Record<string, any>>(`/api/printer-connections/${encodeURIComponent(printer)}/device`, {

@@ -3,8 +3,7 @@ import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { DEFAULT_SLICE_TIMEOUT_S, isSliceTimeout, MAX_SLICE_TIMEOUT_S, MIN_SLICE_TIMEOUT_S } from '../slice-timeout.js';
-import { ApiError, PancakeApi, type JobStatus, type LibraryDocument, type LibraryPrinter, type ProfileRef } from './api.js';
+import { ApiError, MAX_TIMER_SECONDS, PancakeApi, statusWait, waitForStatus, type JobStatus, type LibraryDocument, type LibraryPrinter, type ProfileRef } from './api.js';
 import { inspectOutput } from './gcode.js';
 
 const PREFERENCE = 'Preferences › AI agents';
@@ -24,10 +23,10 @@ async function connect() {
     api = new PancakeApi(process.env.PANCAKESLICER_URL.replace(/\/+$/, ''), process.env.PANCAKESLICER_TOKEN || undefined);
     printerAccess = process.env.PANCAKESLICER_PRINTER_ACCESS === '1';
     windowControl = null;
-    return 600;
+    return;
   }
   if (!connectionPath) throw new Error(`This MCP server is set up from PancakeSlicer's ${PREFERENCE}, or set PANCAKESLICER_URL for a self-hosted server.`);
-  let connection: { url?: string; token?: string; printers?: boolean; pid?: number; control?: string; controlToken?: string; sliceTimeoutS?: number };
+  let connection: { url?: string; token?: string; printers?: boolean; pid?: number; control?: string; controlToken?: string };
   try {
     connection = JSON.parse(await readFile(connectionPath, 'utf8'));
   } catch {
@@ -37,13 +36,15 @@ async function connect() {
   api = new PancakeApi(connection.url.replace(/\/+$/, ''), connection.token || undefined);
   printerAccess = connection.printers === true;
   windowControl = connection.control && connection.controlToken ? { url: connection.control, token: connection.controlToken } : null;
-  return isSliceTimeout(connection.sliceTimeoutS) ? connection.sliceTimeoutS : DEFAULT_SLICE_TIMEOUT_S;
 }
 
 let windowControl: { url: string; token: string } | null = null;
 
 interface WindowState {
+  status?: 'dialog_pending' | 'choice_required';
+  dialog?: { title: string; message?: string; options: { id: string; label: string }[]; choices?: string[]; retry_parameter?: string; open?: boolean };
   tab: string; project: string | null; plate: number; printer: string; process: string;
+  document_generation: number; slice_generation: number;
   filament_slots: { slot: number; filament: string }[];
   objects: { id: number; name: string; slot: number }[];
   job: { id?: string; state: string; stage?: string; progress?: number; stale?: boolean; error?: string; error_code?: string };
@@ -54,12 +55,12 @@ function needWindow() {
   return windowControl;
 }
 
-async function inWindow(command: string, args: Record<string, unknown> = {}): Promise<WindowState> {
+async function inWindow(command: string, args: Record<string, unknown> = {}, signal?: AbortSignal): Promise<WindowState> {
   const control = needWindow();
   let response: Response;
   try {
     response = await fetch(`${control.url}/command`, {
-      method: 'POST', headers: { Authorization: `Bearer ${control.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ command, args }),
+      method: 'POST', headers: { Authorization: `Bearer ${control.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ command, args }), signal,
     });
   } catch {
     throw new Error("PancakeSlicer's window isn't answering. Is the app open?");
@@ -76,8 +77,11 @@ function needPrinterAccess() {
 const server = new McpServer({ name: 'pancakeslicer', version: '0.1.0' }, {
   instructions: [
     'Drives the running PancakeSlicer app: profiles, slicing, G-code checks and, when the user allows it, its LAN printers. The user controls access in PancakeSlicer\'s Preferences › AI agents; if a tool says access is off, tell the user where to turn it on instead of retrying.',
-    'Work happens in the open PancakeSlicer window so the user can watch: slice_model opens the file as a new project and slices it; adjust_plate and slice_plate change and re-slice what is open; app_state reads it. Then inspect_gcode when the filament or temperatures matter.',
-    'Before send_job: printer_status, then printer_light on and camera_snapshot to check that the plate is empty, then send_plan to read the filament to tray mapping.',
+    'Slicing and uploading to a printer can take several minutes. Set wait_s to fit the MCP client timeout. If a slice is still running, poll its job ID with get_job and a short wait_s. If the upload has not returned a job ID yet, use app_state to find it. Then inspect_gcode when the filament or temperatures matter.',
+    'If a tool returns dialog_pending, ask the user to respond in PancakeSlicer, then check app_state. The window command can continue after the dialog closes. Follow any next instructions in the result.',
+    'If a tool returns choice_required, the dialog has closed. After the user chooses, retry with the given retry_parameter and option ID, or stop if the user chooses Cancel. Follow any next instructions in the result.',
+    'Before send_job: printer_status, then printer_light on and camera_snapshot to check that the plate is empty, then send_plan to read the filament to tray mapping. Use the same printer ID from printer_status for the checks, approval and send.',
+    'If printer_status reports a saved credential problem, explain it and direct the user to Device › Connection settings to update the credential privately.',
     'Never call send_job or printer_control without the user\'s explicit go-ahead for that exact job or action; approval for one job does not cover the next.',
     'A send_plan slot whose expected and reported filament types differ means the job would pull the wrong material. Stop and tell the user rather than sending.',
   ].join(' '),
@@ -87,7 +91,8 @@ type Content = { type: 'text'; text: string } | { type: 'image'; data: string; m
 
 function reply(value: unknown, extra: Content[] = []) {
   const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
-  return { content: [{ type: 'text' as const, text }, ...extra] };
+  const pending = value && typeof value === 'object' && 'status' in value && (value.status === 'dialog_pending' || value.status === 'choice_required');
+  return { content: [{ type: 'text' as const, text }, ...extra], ...(pending ? { structuredContent: value } : {}) };
 }
 
 function failure(error: unknown) {
@@ -97,13 +102,13 @@ function failure(error: unknown) {
 }
 
 function tool<T extends z.ZodRawShape>(name: string, config: { title: string; description: string; inputSchema: T; annotations?: Record<string, boolean>; printers?: boolean },
-  run: (args: z.objectOutputType<T, z.ZodTypeAny>, sliceTimeoutS: number) => Promise<{ content: Content[] }>) {
+  run: (args: z.objectOutputType<T, z.ZodTypeAny>, signal: AbortSignal) => Promise<{ content: Content[] }>) {
   const { printers, ...definition } = config;
-  server.registerTool(name, definition, (async (args: z.objectOutputType<T, z.ZodTypeAny>) => {
+  server.registerTool(name, definition, (async (args: z.objectOutputType<T, z.ZodTypeAny>, { signal }: { signal: AbortSignal }) => {
     try {
-      const sliceTimeoutS = await connect();
+      await connect();
       if (printers) needPrinterAccess();
-      return await run(args, sliceTimeoutS);
+      return await run(args, signal);
     } catch (error) {
       return failure(error);
     }
@@ -140,14 +145,18 @@ function slotIndex(printer: LibraryPrinter, slot: number | string | undefined) {
   return i;
 }
 
-async function bedCentre(model: string): Promise<[number, number]> {
-  try {
-    const { printers } = await api.json<{ printers: { id: string; bed?: string }[] }>('/api/catalog/printers');
-    const bed = printers.find((p) => p.id === model)?.bed?.split('x').map(Number);
-    if (bed && bed[0] > 0 && bed[1] > 0) return [bed[0] / 2, bed[1] / 2];
-  } catch {
+async function bedCenter(printer: LibraryPrinter, selection: string): Promise<[number, number]> {
+  const { printer: resolved } = await api.resolvePrinter(selection);
+  if (!resolved.status.ok) throw new Error(`Could not resolve the bed for ${printer.name}: ${resolved.status.message ?? 'unknown printer settings'}.`);
+  const area = resolved.values?.printable_area;
+  const coordinates = typeof area === 'string' ? area.split(/[,;]/) : area ?? [];
+  const points = coordinates.map((point) => point.split('x').map((value) => value.trim() ? Number(value) : NaN));
+  if (points.length < 3 || points.some((point) => point.length !== 2 || !point.every(Number.isFinite))) {
+    throw new Error(`${printer.name} has no valid printable area for model placement.`);
   }
-  return [128, 128];
+  const xs = points.map(([x]) => x);
+  const ys = points.map(([, y]) => y);
+  return [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2];
 }
 
 function seconds(s: number | undefined) {
@@ -242,10 +251,20 @@ async function windowSlot(state: WindowState, slot: number | string | undefined)
 
 async function adjustWindow(args: { process?: string; slot?: number | string; filament?: string; settings?: Record<string, string | number | boolean | string[]>; layer_height?: number; force_planar?: boolean }) {
   let state = await inWindow('state');
-  if (args.process) state = await inWindow('set_process', { process: args.process });
+  if (state.status === 'dialog_pending') return state;
+  if (args.process) {
+    state = await inWindow('set_process', { process: args.process });
+    if (state.status === 'dialog_pending') return state;
+  }
   const slot = await windowSlot(state, args.slot);
-  if (args.filament) state = await inWindow('set_slot_filament', { slot: slot ?? 1, filament: args.filament });
-  if (slot !== undefined) state = await inWindow('set_object_slot', { slot });
+  if (args.filament) {
+    state = await inWindow('set_slot_filament', { slot: slot ?? 1, filament: args.filament });
+    if (state.status === 'dialog_pending') return state;
+  }
+  if (slot !== undefined) {
+    state = await inWindow('set_object_slot', { slot });
+    if (state.status === 'dialog_pending') return state;
+  }
   const settings = normalise(args.settings);
   if (args.layer_height) settings.layer_height = String(args.layer_height);
   if (args.force_planar) settings.nonplanar_mode = 'off';
@@ -253,10 +272,37 @@ async function adjustWindow(args: { process?: string; slot?: number | string; fi
   return state;
 }
 
-async function sliceWindow(timeoutS: number) {
-  const state = await inWindow('slice', { timeout_ms: timeoutS * 1000 });
-  if (state.job.state !== 'done' || !state.job.id) return { window: state };
-  const job = await api.waitJob(state.job.id, 120);
+const sliceChoices = {
+  missing_slots: z.enum(['remap', 'cancel']).optional().describe('When a used filament slot is unavailable, remap it to an available slot or cancel. Omit to return the choices.'),
+  native_support_conflict: z.enum(['continue', 'cancel']).optional().describe('When native supports conflict with plate settings, slice anyway or cancel. Omit to return the choices.'),
+};
+
+const waitSeconds = z.number().int().nonnegative().max(MAX_TIMER_SECONDS).optional()
+  .describe('Seconds to wait for completion after starting or looking up the operation. Omit for no server-side wait limit. Set to 0 to return the current status. The MCP client may have its own timeout.');
+
+async function sliceWindow(waitS: number | undefined, choices: { missing_slots?: 'remap' | 'cancel'; native_support_conflict?: 'continue' | 'cancel' }, signal: AbortSignal) {
+  const started = await inWindow('slice', { missing_slots: choices.missing_slots, native_support_conflict: choices.native_support_conflict }, signal);
+  if (started.status === 'choice_required') return {
+    ...started, next: 'Retry with slice_plate using the indicated parameter and selected option, or stop if the user chooses Cancel.',
+  };
+  if (started.status === 'dialog_pending') return started;
+
+  const wait = statusWait(waitS, signal);
+  const state = await waitForStatus(started, async (statusSignal) => {
+    const current = await inWindow('state', {}, statusSignal);
+    if (current.document_generation !== started.document_generation || current.plate !== started.plate || current.slice_generation !== started.slice_generation) {
+      throw new Error('The window changed before the slice received a job ID. Check app_state for the current plate.');
+    }
+    return current;
+  }, ({ job }) => job.state === 'submitting' && !job.id, wait);
+  if (!state.job.id || wait.signal.aborted && state.job.state !== 'done') return {
+    job: state.job.id,
+    window: state,
+    next: state.job.state === 'submitting' ? 'Use app_state to find the job ID after upload.'
+      : state.job.state === 'running' ? 'Poll this job with get_job.' : undefined,
+  };
+  const job = await api.waitJob(state.job.id, wait);
+  if (job.state === 'queued' || job.state === 'running') return { ...summary(job), window: state, next: 'Poll this job with get_job.' };
   return { ...summary(job), print_profile: state.process, objects: state.objects, filament_slots: state.filament_slots };
 }
 
@@ -276,14 +322,18 @@ tool('app_state', {
   annotations: { readOnlyHint: true },
 }, async () => reply(await inWindow('state')));
 
+const import3mf = z.enum(['objects_only', 'objects_and_settings']).optional()
+  .describe('Choose how to import a 3MF in the desktop window. Omit to return the available choices. If the archive contains no settings, either choice imports objects only.');
+
 tool('open_model', {
   title: 'Open a model in PancakeSlicer',
   description: 'Open an STL, OBJ, 3MF or STEP file from disk in the PancakeSlicer window, as a new project by default, so the user sees it on the plate.',
   inputSchema: {
     path: z.string().describe('Absolute path to the model file on this computer.'),
     new_project: z.boolean().default(true).describe('Start a new project for it; false adds it to the open plate.'),
+    import_3mf: import3mf,
   },
-}, async ({ path, new_project }) => reply(await inWindow('open_model', { path: modelPath(path), new_project })));
+}, async ({ path, new_project, import_3mf }) => reply(await inWindow('open_model', { path: modelPath(path), new_project, import_3mf })));
 
 tool('adjust_plate', {
   title: 'Change the plate settings',
@@ -293,31 +343,42 @@ tool('adjust_plate', {
 
 tool('slice_plate', {
   title: 'Slice the open plate',
-  description: 'Press Slice plate in the PancakeSlicer window and wait; the window switches to the preview. Returns the job id, time, weight and profiles.',
-  inputSchema: { wait_s: z.number().int().min(MIN_SLICE_TIMEOUT_S).max(MAX_SLICE_TIMEOUT_S).optional().describe('Seconds to wait. If omitted, uses the timeout in Preferences › AI agents.') },
-}, async ({ wait_s }, sliceTimeoutS) => reply(await sliceWindow(wait_s ?? sliceTimeoutS)));
+  description: 'Slice the open plate. Slicing can take several minutes. If wait_s elapses, the slice continues and the tool returns the job ID when available.',
+  inputSchema: { ...sliceChoices, wait_s: waitSeconds },
+}, async (args, signal) => reply(await sliceWindow(args.wait_s, args, signal)));
 
 tool('slice_model', {
   title: 'Slice a model',
-  description: 'Open one STL, OBJ, 3MF or STEP file from disk in the PancakeSlicer window as a new project, apply the process, slot, filament and settings, slice it and wait: the user watches it happen and ends on the preview. Returns the job id, estimated time, weight and the profiles used. background: true slices out of sight instead (also used for self-hosted servers), with settings as per-job overrides.',
+  description: 'Open one STL, OBJ, 3MF or STEP file as a new project, apply the settings, and slice it. Slicing can take several minutes. Use wait_s to limit the wait and get_job to check an unfinished slice. background: true slices without the window, as on self-hosted servers.',
   inputSchema: {
     path: z.string().describe('Absolute path to the model file on this computer.'),
     ...adjustments,
+    import_3mf: import3mf,
+    ...sliceChoices,
     printer: z.string().optional().describe('Printer profile id or name, for background slicing; the window slices with the printer it has selected.'),
     output: z.enum(['gcode.3mf', 'gcode']).default('gcode.3mf').describe('For background slicing: gcode.3mf for Bambu LAN printers, gcode for the others.'),
     background: z.boolean().default(false).describe('Slice without the window.'),
-    wait_s: z.number().int().min(0).max(MAX_SLICE_TIMEOUT_S).optional().describe('Seconds to wait. If omitted, uses the configured timeout. Set to 0 with background slicing to return the job immediately.'),
+    wait_s: waitSeconds,
   },
-}, async (args, sliceTimeoutS) => {
-  const waitS = args.wait_s ?? sliceTimeoutS;
+}, async (args, signal) => {
   const path = modelPath(args.path);
   if (!(await stat(path)).isFile()) throw new Error(`${path} is not a file.`);
   if (!args.background && windowControl) {
     const opened = await inWindow('state');
+    if (opened.status === 'dialog_pending') return reply(opened);
     if (args.printer && args.printer !== opened.printer) throw new Error(`The window has ${opened.printer} selected. Ask the user to switch printers, or pass background: true.`);
-    await inWindow('open_model', { path, new_project: true });
-    await adjustWindow(args);
-    return reply(await sliceWindow(Math.max(MIN_SLICE_TIMEOUT_S, waitS)));
+    const imported = await inWindow('open_model', { path, new_project: true, import_3mf: args.import_3mf });
+    if (imported.status === 'choice_required') return reply(imported);
+    if (imported.status === 'dialog_pending') return reply({
+      ...imported,
+      next: 'After the user responds, check app_state for the open_model result. If the model opened, use adjust_plate with the requested settings and then slice_plate.',
+    });
+    const adjusted = await adjustWindow(args);
+    if (adjusted.status === 'dialog_pending') return reply({
+      ...adjusted,
+      next: 'After the user responds, check app_state, apply any remaining settings with adjust_plate, and then use slice_plate.',
+    });
+    return reply(await sliceWindow(args.wait_s, args, signal));
   }
   const lib = await api.library();
   const printer = pick(lib.printers, args.printer, 'printer');
@@ -332,20 +393,20 @@ tool('slice_model', {
   const form: Record<string, string> = { library: JSON.stringify(library), output: args.output };
   if (args.force_planar) form.force_planar = '1';
   if (index > 0 && extname(path).toLowerCase() !== '.3mf') {
-    const [x, y] = await bedCentre(printer.model);
+    const [x, y] = await bedCenter(printer, form.library);
     form.plate = JSON.stringify({ objects: [{ file: basename(path), name: basename(path), extruder: index + 1, instances: [{ x, y, rot: 0 }] }] });
   }
   const id = await api.submitJob(path, form);
-  const job = waitS ? await api.waitJob(id, waitS) : await api.job(id);
+  const job = await api.waitJob(id, statusWait(args.wait_s, signal));
   return reply({ ...summary(job), background: true, print_profile: profile.name, slot: index + 1, tray: printer.slots[index].tray, filament: nameOf(lib, filaments[index]) });
 });
 
 tool('get_job', {
   title: 'Get a slice job',
-  description: 'Report a slice job\'s state and, once done, its time, weight and profiles. Set wait_s to wait for a running job.',
-  inputSchema: { job: z.string(), wait_s: z.number().int().min(0).max(1800).default(0) },
+  description: 'Report a slice job’s state and its results when done. An active slice can take several minutes. Set wait_s to 0 for a status check.',
+  inputSchema: { job: z.string(), wait_s: waitSeconds },
   annotations: { readOnlyHint: true },
-}, async ({ job, wait_s }) => reply(summary(wait_s ? await api.waitJob(job, wait_s) : await api.job(job))));
+}, async ({ job, wait_s }, signal) => reply(summary(await api.waitJob(job, statusWait(wait_s, signal)))));
 
 tool('cancel_job', {
   title: 'Cancel a slice job',
@@ -381,27 +442,46 @@ tool('inspect_gcode', {
   return reply({ filename, ...inspectOutput(data, filename) });
 });
 
-async function printerFor(wanted?: string) {
+async function printerFor(wanted?: string, selector: 'id-or-name' | 'printer-id' = 'id-or-name') {
   const live = await api.live();
   if (!live.enabled) throw new Error('Printer connections are switched off on this PancakeSlicer.');
-  if (!live.connections.length) throw new Error('PancakeSlicer has no printer connections. Add the printer in its Device tab first.');
-  const lower = wanted?.toLowerCase();
-  const connection = !wanted ? live.connections[0]
-    : live.connections.find((c) => c.printer === wanted || c.id === wanted || c.name.toLowerCase() === lower)
-      ?? live.connections.find((c) => c.name.toLowerCase().includes(lower!));
-  if (!connection) throw new Error(`No printer connection "${wanted}". Known: ${live.connections.map((c) => c.name).join(', ')}.`);
+  const connections = live.connections.filter((connection) => connection.printer);
+  if (!connections.length) throw new Error('No printer connection is assigned to a profile. Set up a printer in the Device tab first.');
+
+  const describe = (entries: typeof connections) => entries.map((c) => `${c.name} (${c.printer})`).join(', ');
+  let matches = connections;
+  if (wanted !== undefined) {
+    matches = connections.filter((c) => c.printer === wanted);
+    if (!matches.length && selector === 'id-or-name') {
+      const name = wanted.toLowerCase();
+      matches = connections.filter((c) => c.id === wanted);
+      if (!matches.length) matches = connections.filter((c) => c.name.toLowerCase() === name);
+      if (!matches.length) matches = connections.filter((c) => c.name.toLowerCase().includes(name));
+    }
+  }
+  if (!matches.length) throw new Error(`No printer connection "${wanted}". Printer IDs: ${describe(connections)}.`);
+  if (matches.length > 1) {
+    const message = wanted === undefined ? 'Several printers are connected.' : `"${wanted}" matches several printer connections.`;
+    throw new Error(`${message} Choose a printer ID: ${describe(matches)}.`);
+  }
+  const [connection] = matches;
   return { connection, status: live.status?.find((s) => s.printer === connection.printer), live };
 }
+
+const printerSelector = z.string().trim().min(1).optional()
+  .describe('Printer profile ID, connection ID, or unique name. Optional when only one printer profile is connected.');
+const printerId = z.string().trim().min(1)
+  .describe('Exact printer profile ID from connection.printer in printer_status for the printer the user approved.');
 
 tool('printer_status', {
   title: 'Printer status',
   description: 'Live status of a connected printer: state, current file and layer, temperatures, chamber light, and the AMS or external spool trays with the filament type the printer reports. Also lists recent transfers to it.',
-  inputSchema: { printer: z.string().optional().describe('Printer profile id, connection id or name. Defaults to the first connection.') },
+  inputSchema: { printer: printerSelector },
   annotations: { readOnlyHint: true },
 }, async ({ printer }) => {
   const { connection, status, live } = await printerFor(printer);
   return reply({
-    connection: { printer: connection.printer, name: connection.name, kind: connection.kind, model: connection.model, host: connection.host },
+    connection: { printer: connection.printer, id: connection.id, name: connection.name, kind: connection.kind, model: connection.model, host: connection.host },
     status: status ? {
       link: status.link, online: status.online, state: status.state, detail: status.detail, file: status.file,
       layer: status.layer, layers: status.layers, progress: status.progress, remaining_min: status.remaining,
@@ -417,7 +497,7 @@ tool('printer_light', {
   title: 'Chamber light',
   description: 'Switch the printer\'s chamber light on or off, for example before camera_snapshot.',
   printers: true,
-  inputSchema: { on: z.boolean(), printer: z.string().optional() },
+  inputSchema: { on: z.boolean(), printer: printerSelector },
 }, async ({ on, printer }) => {
   const { connection } = await printerFor(printer);
   return reply(await api.device(connection.printer, { control: 'light', value: on ? 1 : 0 }));
@@ -427,7 +507,7 @@ tool('camera_snapshot', {
   title: 'Camera snapshot',
   description: 'Grab one frame from the printer\'s camera, for example to check that the build plate is empty before sending a job. Turn the light on first for a usable picture.',
   printers: true,
-  inputSchema: { printer: z.string().optional(), camera: z.string().optional().describe('Camera id; defaults to the first.') },
+  inputSchema: { printer: printerSelector, camera: z.string().optional().describe('Camera id; defaults to the first.') },
   annotations: { readOnlyHint: true },
 }, async ({ printer, camera }) => {
   const { connection } = await printerFor(printer);
@@ -442,44 +522,44 @@ tool('camera_snapshot', {
 tool('send_plan', {
   title: 'Preview a send',
   description: 'Show how a finished job\'s filament slots map to the Bambu printer\'s trays, with the filament each slot expects and what the printer reports in that tray. A used slot whose types differ would print the wrong material.',
-  inputSchema: { job: z.string(), printer: z.string().optional() },
+  inputSchema: { job: z.string(), printer: printerSelector },
   annotations: { readOnlyHint: true },
 }, async ({ job, printer }) => {
   const { connection } = await printerFor(printer);
   const plan = await api.sendPlan(job, connection.printer);
   const mismatches = plan.slots.filter((s) => s.used && s.expected?.type && s.reported?.type && s.expected.type !== s.reported.type);
-  return reply({ printer: connection.name, ...plan, mismatches: mismatches.length ? mismatches.map((s) => `slot ${s.filament} (${s.tray}): job expects ${s.expected.type}, printer has ${s.reported.type}`) : undefined });
+  return reply({ printer: connection.name, printer_id: connection.printer, ...plan, mismatches: mismatches.length ? mismatches.map((s) => `slot ${s.filament} (${s.tray}): job expects ${s.expected.type}, printer has ${s.reported.type}`) : undefined });
 });
 
 tool('send_job', {
   title: 'Send a job to the printer',
-  description: 'Upload a finished job to a connected printer and start it, or upload only (start=false) so the user starts it on the printer. Only call this after the user has explicitly approved this exact job; set confirm=true to show that. Check send_plan and the plate first.',
+  description: 'Upload a finished job to a connected printer and start it, or upload only (start=false). Uploading can take several minutes. If wait_s elapses, the transfer continues. Check printer_status for progress. Set confirm=true only after the user explicitly approves this job on this printer. Check send_plan and the plate first.',
   printers: true,
   inputSchema: {
     job: z.string(),
     confirm: z.literal(true).describe('Must be true: the user approved sending this job.'),
-    printer: z.string().optional(),
+    printer: printerId,
     start: z.boolean().default(true).describe('false uploads without starting.'),
     filename: z.string().optional().describe('Name on the printer; must end with the job\'s extension.'),
     bed_leveling: z.boolean().optional(),
     timelapse: z.boolean().default(false),
     flow_cali: z.boolean().default(false),
     vibration_cali: z.boolean().optional(),
+    wait_s: waitSeconds,
   },
   annotations: { destructiveHint: true },
-}, async ({ job, printer, start, filename, bed_leveling, timelapse, flow_cali, vibration_cali }) => {
-  const { connection } = await printerFor(printer);
+}, async ({ job, printer, start, filename, bed_leveling, timelapse, flow_cali, vibration_cali, wait_s }, signal) => {
+  const { connection } = await printerFor(printer, 'printer-id');
   const body: Record<string, unknown> = { printer: connection.printer, start, timelapse, flow_cali };
   if (filename) body.filename = filename;
   if (bed_leveling !== undefined) body.bed_leveling = bed_leveling;
   if (vibration_cali !== undefined) body.vibration_cali = vibration_cali;
-  await api.send(job, body);
-  let state: Record<string, any> = {};
-  for (let i = 0; i < 600; i++) {
-    state = await api.sendState(job);
-    if (state.state !== 'uploading' && state.state !== 'starting') break;
-    await new Promise((r) => setTimeout(r, 1000));
-  }
+  const accepted = await api.send(job, body);
+  const state = await waitForStatus(accepted, async (statusSignal) => {
+    const current = await api.sendState(job, statusSignal);
+    if (current.id !== accepted.id) throw new Error('A different transfer is now recorded for this job. Check printer_status.');
+    return current;
+  }, ({ state }) => state === 'uploading' || state === 'starting', statusWait(wait_s, signal));
   const { sent, total, ...rest } = state;
   return reply({ ...rest, uploaded: total ? `${Math.round((sent / total) * 100)}%` : undefined });
 });
@@ -488,10 +568,10 @@ tool('printer_control', {
   title: 'Pause, resume or stop a print',
   description: 'Pause, resume or stop the current print. Only with the user\'s explicit go-ahead; stop cannot be undone.',
   printers: true,
-  inputSchema: { action: z.enum(['pause', 'resume', 'stop']), confirm: z.literal(true), printer: z.string().optional() },
+  inputSchema: { action: z.enum(['pause', 'resume', 'stop']), confirm: z.literal(true), printer: printerId },
   annotations: { destructiveHint: true },
 }, async ({ action, printer }) => {
-  const { connection } = await printerFor(printer);
+  const { connection } = await printerFor(printer, 'printer-id');
   return reply(await api.control(connection.printer, action));
 });
 

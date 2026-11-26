@@ -142,7 +142,7 @@ export async function importFiles(files: FileList | File[], opts: { sourceUrl?: 
   const generation = documentGeneration();
   let imported = 0;
   for (const file of list.filter((f) => /\.3mf$/i.test(f.name))) {
-    imported += await (await import('./plater/import-project')).importObjects(file, false, opts.sourceUrl, canImport);
+    imported += await (await import('./plater/import-project')).importObjects(file, { sourceUrl: opts.sourceUrl, canImport });
     if (generation !== documentGeneration() || !canImport()) return imported;
   }
   list = list.filter((f) => !/\.3mf$/i.test(f.name));
@@ -232,7 +232,7 @@ async function meshStep(s: ReturnType<typeof getState>, f: File, signal?: AbortS
 }
 
 export async function openProject(file: File) {
-  await (await import('./plater/import-project')).importObjects(file, true);
+  await (await import('./plater/import-project')).importObjects(file, { allowNew: true });
 }
 
 export function clearPlate(preserveProfiles = false) {
@@ -408,6 +408,7 @@ export async function jobRequest(s = getState(), saving = false): Promise<JobReq
 };
 
 let sliceGeneration = 0;
+export const getSliceGeneration = () => sliceGeneration;
 
 export function outsideVolumeWarning(s = getState()): string | null {
   const machine = printerPreset(s);
@@ -483,7 +484,15 @@ export function runJob(api: Api, request: JobRequest, signature: string, sink: J
   };
 }
 
-export async function plateJob(s = getState(), ask = true): Promise<JobRequest | string | null> {
+type SliceConfirmation = {
+  kind: 'remapSlots' | 'nativeSupportConflict';
+  title: string;
+  message: string;
+  buttons?: [string, string];
+};
+type ConfirmSlice = (confirmation: SliceConfirmation) => boolean | Promise<boolean>;
+
+export async function plateJob(s = getState(), ask = true, confirm: ConfirmSlice = ({ title, message, buttons }) => confirmDialog(title, message, buttons)): Promise<JobRequest | string | null> {
   const offers = await import('./flow/project-slots');
   if (offers.offerUndecided()) return offers.OFFER_UNDECIDED;
   const outside = outsideVolumeWarning(s);
@@ -491,9 +500,10 @@ export async function plateJob(s = getState(), ask = true): Promise<JobRequest |
   const slots = await import('./printers/slot-check'), issues = slots.slotIssues(s);
   if (issues.missing.size) {
     const text = [`${slots.missingText(issues)}.`, ...(issues.empty.size ? [`${slots.emptyText(issues)}. Choose its filament under the printer.`] : [])].join('\n');
-    if (!ask || !(await confirmDialog('Oops, that slot isn\'t available', text, ['Move to a free slot', 'Cancel']))) return ask ? null : text;
+    if (!ask) return text;
+    if (!await confirm({ kind: 'remapSlots', title: 'Oops, that slot isn\'t available', message: text, buttons: ['Move to a free slot', 'Cancel'] })) return null;
     slots.remapMissing(issues);
-    return plateJob(getState(), ask);
+    return plateJob(getState(), ask, confirm);
   }
   if (issues.empty.size) return `${slots.emptyText(issues)}. Choose its filament under the printer first.`;
   const finConflicts = (await import('./plater/supportFins')).supportFinsConflicts(s);
@@ -501,14 +511,14 @@ export async function plateJob(s = getState(), ask = true): Promise<JobRequest |
   if (nativeSupportCapable(s) && (String(effectiveConfig(s, 'process').support_style) === 'native' || s.objects.some((o) => o.settings.support_style === 'native'))) {
     const conflicts = (await import('./plater/nativeSupport')).nativeSupportConflicts(s);
     if (conflicts && !ask) return conflicts;
-    if (conflicts && !(await confirmDialog('Native support', `${conflicts} Would you like to slice anyway?`))) return null;
+    if (conflicts && !await confirm({ kind: 'nativeSupportConflict', title: 'Native support', message: `${conflicts} Would you like to slice anyway?` })) return null;
   }
   return jobRequest(slots.slicedSlots(s));
 }
 
 let cancelJob: (() => void) | null = null;
 
-export async function slice(calib?: { kind: string; params: string; head?: string }) {
+export async function slice(calib?: { kind: string; params: string; head?: string }, confirm?: ConfirmSlice) {
   if (DEMO) return void toast('demo_no_engine');
   const [{methodAvailability}, {methodSelectionProblem}] = await Promise.all([import('./profiles/method-context'), import('./profiles/capabilities')]);
   const s = getState();
@@ -520,8 +530,8 @@ export async function slice(calib?: { kind: string; params: string; head?: strin
   const signature = plateSignature(s);
   const { library, output } = jobFields(s);
   const request = calib ? { library, project: calibProject(s, calib.kind), output, events: [], files: [], calib: calib.kind, calib_params: calib.params, calib_head: calib.head }
-    : await plateJob(s).catch((e: unknown) => String(e));
-  if (!current() || request === null) return;
+    : await plateJob(s, true, confirm).catch((e: unknown) => String(e));
+  if (!current() || request === null) return false;
   if (typeof request === 'string') return void setState({ job: { state: 'failed', pct: 0, stage: '', error: request, errorCode: 'slice_refused' } });
   const navigation = beginSlicePreview(signature);
   void loadPreviewView();

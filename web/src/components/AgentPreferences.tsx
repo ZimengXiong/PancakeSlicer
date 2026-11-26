@@ -19,14 +19,12 @@ export function AgentPreferences() {
   const [feedback, setFeedback] = useState('');
   const [pendingClient, setPendingClient] = useState<string | null>(null);
   const [selectedClient, setSelectedClient] = useState('');
-  const [timeoutDraft, setTimeoutDraft] = useState<string | null>(null);
-  const [savingTimeout, setSavingTimeout] = useState(false);
   const [pendingAccess, setPendingAccess] = useState<Pick<DesktopAgents, 'enabled' | 'printers'> | null>(null);
   useEffect(() => { bridge?.get().then(setAgents, (error) => setError(errorMessage(error))); }, [bridge]);
   if (!bridge) return null;
   const access = pendingAccess ?? state;
   const configuredClients = state?.clients.filter((client) => client.configured) ?? [];
-  const addableClients = state?.clients.filter((client) => client.available && !client.configured && !client.id.startsWith('file:')) ?? [];
+  const addableClients = state?.clients.filter((client) => client.available && !client.configured) ?? [];
   const updateAccess = async (enabled: boolean, printers: boolean) => {
     if (pendingAccess) return;
     setPendingAccess({ enabled, printers });
@@ -38,22 +36,6 @@ export function AgentPreferences() {
       setError(errorMessage(e));
     } finally {
       setPendingAccess(null);
-    }
-  };
-  const timeout = Number(timeoutDraft);
-  const validTimeout = !!state && Number.isInteger(timeout) && timeout >= state.minSliceTimeoutS && timeout <= state.maxSliceTimeoutS;
-  const saveTimeout = async () => {
-    if (!validTimeout || savingTimeout) return;
-    setSavingTimeout(true);
-    try {
-      const saved = await bridge.setSliceTimeout(timeout);
-      setAgents((current) => current && { ...current, ...saved });
-      setTimeoutDraft(null);
-      setError('');
-    } catch (e) {
-      setError(errorMessage(e));
-    } finally {
-      setSavingTimeout(false);
     }
   };
   const updateClient = async (id: string, name: string, add: boolean) => {
@@ -92,17 +74,11 @@ export function AgentPreferences() {
     {state && access?.enabled && <>
       <label className="modal-check"><Check checked={access.printers} disabled={!!pendingAccess} onCheckedChange={(next) => void updateAccess(true, next)} />
         <span>Let agents send prints and control printers<InfoTip label="Printer access">{'Lets agents use the camera and light, send or upload jobs, and pause, resume or stop prints on your connected printers.\nAgents are told to ask you before every print.'}</InfoTip></span></label>
-      <div className="form-row">
-        <label htmlFor="agent-slice-timeout">MCP slice timeout (seconds)<InfoTip label="MCP slice timeout">How long PancakeSlicer waits for an MCP slice by default. Your MCP client may have its own request timeout.</InfoTip></label>
-        <span><input id="agent-slice-timeout" className="text num" type="number" min={state.minSliceTimeoutS} max={state.maxSliceTimeoutS}
-          value={timeoutDraft ?? state.sliceTimeoutS} disabled={savingTimeout} onChange={(e) => setTimeoutDraft(e.target.value)} />{' '}
-          <button type="button" className="btn" disabled={!validTimeout || timeout === state.sliceTimeoutS || savingTimeout} onClick={() => void saveTimeout()}>Save</button></span>
-      </div>
       <table className="agent-client-table" aria-label="MCP clients">
         <thead><tr><th scope="col">Client</th><th scope="col">Status</th><th scope="col">Action</th></tr></thead>
         <tbody>
           {configuredClients.map((client) => <tr key={client.id}>
-            <th scope="row" title={client.id.startsWith('file:') ? client.id.slice(5) : undefined}>{client.name}</th>
+            <th scope="row">{client.name}</th>
             <td>{client.current ? 'Configured' : 'Update available'}</td>
             <td>
               {!client.current && <button type="button" className="btn" aria-label={`Update ${client.name}`}
