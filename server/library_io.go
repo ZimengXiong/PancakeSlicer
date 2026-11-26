@@ -738,7 +738,14 @@ func (s *Server) planImport(presets []parsedPreset, lib *resolve.Library) []impo
 				if model == "" {
 					model = regexp.MustCompile(`\s+[\d.]+\s+nozzle$`).ReplaceAllString(root, "")
 				}
-				m := c.Printers[model]
+				m, remapped := c.Printers[model], false
+				for _, p := range c.Printers {
+					for _, vendor := range []string{p.Vendor, p.VendorName} {
+						if m == nil && vendor != "" && model == vendor+" "+p.ID {
+							m, model, remapped = p, p.ID, true
+						}
+					}
+				}
 				if m == nil {
 					return skipped("no catalog printer " + cmpOr(model, "(no printer_model and no parent)"))
 				}
@@ -805,6 +812,9 @@ func (s *Server) planImport(presets []parsedPreset, lib *resolve.Library) []impo
 				drop := map[string]bool{}
 				for _, k := range resolve.HardwareKeys {
 					drop[k] = true
+				}
+				if remapped {
+					drop["printer_model"] = true
 				}
 				record := head
 				record["vendor"], record["model"], record["nozzles"] = m.Vendor, m.ID, nozzles
