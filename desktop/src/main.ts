@@ -569,6 +569,7 @@ async function start() {
     minHeight: 600,
     show: false,
     title: 'PancakeSlicer',
+    autoHideMenuBar: true,
     backgroundColor: '#363636',
     webPreferences: { session: rendererSession, preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false },
   });
