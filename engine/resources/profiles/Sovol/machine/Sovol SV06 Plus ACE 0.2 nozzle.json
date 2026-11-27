@@ -12,7 +12,6 @@
 		"0.2"
 	],
 	"machine_max_speed_e": [
-		"25",
 		"25"
 	],
 	"min_layer_height": [

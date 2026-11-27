@@ -81,7 +81,7 @@
 		"0"
 	],
 	"max_layer_height": [
-		"0.25"
+		"0.32"
 	],
 	"min_layer_height": [
 		"0.07"
@@ -115,5 +115,9 @@
 	"machine_end_gcode": "M117 READY\n\nG1 E0 F1000 ; reset extruder\n\nG91 ; relative positioning\nG1 Z2 F1000 ; lift nozzle\n\nG90 ; absolute positioning\nG27 P2 ; park extruder\n\nM140 S0 ; turn off heatbed\nM104 S0 ; turn off temperature\nM107 ; turn off fan\nM84 X Y E ; disable motors",
 	"before_layer_change_gcode": ";BEFORE_LAYER_CHANGE\nG92 E0.0\n;[layer_z]\n\n",
 	"layer_change_gcode": ";AFTER_LAYER_CHANGE\n;[layer_z]",
-	"scan_first_layer": "0"
+	"scan_first_layer": "0",
+	"silent_mode": "0",
+	"z_hop_types": [
+		"Normal Lift"
+	]
 }

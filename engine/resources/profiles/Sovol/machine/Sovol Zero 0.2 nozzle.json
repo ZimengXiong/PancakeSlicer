@@ -44,8 +44,8 @@
 		"1200"
 	],
 	"machine_max_speed_z": [
-		"30",
-		"30"
+		"20",
+		"20"
 	],
 	"machine_max_acceleration_e": [
 		"20000",
@@ -56,8 +56,8 @@
 		"40000"
 	],
 	"machine_max_acceleration_retracting": [
-		"20000",
-		"20000"
+		"40000",
+		"40000"
 	],
 	"machine_max_acceleration_travel": [
 		"40000",
@@ -72,8 +72,8 @@
 		"40000"
 	],
 	"machine_max_acceleration_z": [
-		"1000",
-		"1000"
+		"500",
+		"500"
 	],
 	"machine_max_jerk_e": [
 		"2.5",

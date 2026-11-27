@@ -18,5 +18,98 @@
 	"thumbnails": [
 		"300x300"
 	],
-	"thumbnails_format": "PNG"
+	"thumbnails_format": "PNG",
+	"deretraction_speed": [
+		"40"
+	],
+	"silent_mode": "0",
+	"machine_max_acceleration_extruding": [
+		"3000",
+		"3000"
+	],
+	"machine_max_acceleration_retracting": [
+		"3000",
+		"3000"
+	],
+	"machine_max_acceleration_x": [
+		"3000",
+		"3000"
+	],
+	"machine_max_acceleration_y": [
+		"3000",
+		"3000"
+	],
+	"machine_max_acceleration_z": [
+		"45",
+		"45"
+	],
+	"machine_max_speed_e": [
+		"60",
+		"60"
+	],
+	"machine_max_speed_x": [
+		"200",
+		"200"
+	],
+	"machine_max_speed_y": [
+		"200",
+		"200"
+	],
+	"machine_max_speed_z": [
+		"15",
+		"15"
+	],
+	"machine_max_jerk_e": [
+		"2.5"
+	],
+	"machine_max_jerk_x": [
+		"8",
+		"8"
+	],
+	"machine_max_jerk_y": [
+		"8",
+		"8"
+	],
+	"machine_max_jerk_z": [
+		"0.4"
+	],
+	"max_layer_height": [
+		"0.32"
+	],
+	"min_layer_height": [
+		"0.08"
+	],
+	"retraction_minimum_travel": [
+		"2"
+	],
+	"retract_before_wipe": [
+		"70%"
+	],
+	"retract_length_toolchange": [
+		"1"
+	],
+	"z_hop": [
+		"0.4"
+	],
+	"retraction_speed": [
+		"40"
+	],
+	"retract_lift_below": [
+		"248"
+	],
+	"z_hop_types": [
+		"Normal Lift"
+	],
+	"machine_max_acceleration_travel": [
+		"3000",
+		"3000"
+	],
+	"wipe_distance": [
+		"2",
+		"2"
+	],
+	"before_layer_change_gcode": ";BEFORE_LAYER_CHANGE\nG92 E0.0\n;[layer_z]\n\n",
+	"retraction_length": [
+		"1.2"
+	]
 }
