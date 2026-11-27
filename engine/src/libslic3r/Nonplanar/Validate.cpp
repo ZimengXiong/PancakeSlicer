@@ -1,5 +1,6 @@
 #include "Validate.hpp"
 #include "Multiplanar.hpp"
+#include "NativePrint.hpp"
 #include "libslic3r/PrintBase.hpp"
 
 #include "AutoMode.hpp"
@@ -117,8 +118,11 @@ StringObjectException validate(const Print &print, std::vector<StringObjectExcep
             if (config.nonplanar_kinematics.value != RotaryLayout::None || config.spiral_mode || config.belt_printer)
                 return { L("Conformal layers need a fixed 3-axis printer (no spiral vase or belt printing, please!)."),
                          object, "nonplanar_mode" };
-            if (object->num_printing_regions() != 1 || object->model_object()->is_mm_painted())
-                return { L("Conformal layers need just one material and one set of part settings."), object, "nonplanar_mode" };
+            if (object->num_printing_regions() != 1 && part_regions(*object).empty())
+                return { L("Conformal layers can print several materials only when each one is its own part. Remove the "
+                           "paint, modifiers or height ranges, or split them into parts."), object, "nonplanar_mode" };
+            if (object->num_printing_regions() == 1 && object->model_object()->is_mm_painted())
+                return { L("Conformal layers can't follow painted colours. Split each colour into its own part."), object, "nonplanar_mode" };
             if (object->config().raft_layers.value > 0)
                 return { L("Conformal layers can't be printed on a raft."), object, "raft_layers" };
         }

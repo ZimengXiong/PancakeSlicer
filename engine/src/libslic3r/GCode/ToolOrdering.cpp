@@ -407,6 +407,7 @@ void ToolOrdering::sort_and_build_data(const Print& print, unsigned int first_ex
     reorder_extruders_for_minimum_flush_volume(reorder_first_layer);
     this->enforce_mixed_component_order();
     this->enforce_conformal_support_order();
+    this->enforce_conformal_material_order();
     m_sorted = true;
 
     double max_layer_height = 0.;
@@ -428,6 +429,7 @@ void ToolOrdering::sort_and_build_data(const Print& print, unsigned int first_ex
         reorder_extruders_for_minimum_flush_volume(reorder_first_layer);
         this->enforce_mixed_component_order();
         this->enforce_conformal_support_order();
+        this->enforce_conformal_material_order();
         this->fill_wipe_tower_partitions(print.config(), object_bottom_z, max_layer_height);
     }
 
@@ -441,6 +443,7 @@ void ToolOrdering::sort_and_build_data(const PrintObject& object , unsigned int 
     reorder_extruders_for_minimum_flush_volume(reorder_first_layer);
     this->enforce_mixed_component_order();
     this->enforce_conformal_support_order();
+    this->enforce_conformal_material_order();
     m_sorted = true;
 
     double max_layer_height = calc_max_layer_height(object.print()->config(), object.config().layer_height);
@@ -450,6 +453,7 @@ void ToolOrdering::sort_and_build_data(const PrintObject& object , unsigned int 
         reorder_extruders_for_minimum_flush_volume(reorder_first_layer);
         this->enforce_mixed_component_order();
         this->enforce_conformal_support_order();
+        this->enforce_conformal_material_order();
         this->fill_wipe_tower_partitions(object.print()->config(), object.layers().front()->print_z - object.layers().front()->height, max_layer_height);
     }
 
@@ -2467,6 +2471,34 @@ void ToolOrdering::enforce_conformal_support_order()
                 break;
             }
     }
+}
+
+void ToolOrdering::enforce_conformal_material_order()
+{
+    if (m_print == nullptr)
+        return;
+    for (const PrintObject *object : m_print->objects())
+        for (const Layer *layer : object->layers()) {
+            std::vector<std::pair<int, unsigned int>> ranked;
+            for (int patch_id : layer->conformal_patches_after) {
+                const Nonplanar::ConformalPatch &patch = object->conformal().patches[size_t(patch_id)];
+                if (patch.material_rank >= 0 && Nonplanar::patch_has_extrusions(patch))
+                    ranked.emplace_back(patch.material_rank, unsigned(Nonplanar::patch_filament_id(*object, patch) - 1));
+            }
+            if (ranked.size() < 2)
+                continue;
+            std::stable_sort(ranked.begin(), ranked.end(), [](const auto &a, const auto &b) { return a.first < b.first; });
+            std::vector<unsigned int> &extruders = this->tools_for_layer(layer->print_z).extruders;
+            std::vector<size_t>        at;
+            std::vector<unsigned int>  order;
+            for (const auto &[rank, extruder] : ranked)
+                if (std::find(order.begin(), order.end(), extruder) == order.end())
+                    if (const auto it = std::find(extruders.begin(), extruders.end(), extruder); it != extruders.end())
+                        order.push_back(extruder), at.push_back(size_t(it - extruders.begin()));
+            std::sort(at.begin(), at.end());
+            for (size_t i = 0; i < at.size(); ++i)
+                extruders[at[i]] = order[i];
+        }
 }
 
 void ToolOrdering::enforce_mixed_component_order()

@@ -2388,6 +2388,13 @@ private:
 template<class T>
 static std::vector<T> get_flush_volumes_matrix(const std::vector<T> &fv_matrix, size_t extruder_id = -1, size_t nozzle_nums = 1)
 {
+    const auto square = [](size_t size) {
+        const size_t side = size_t(std::llround(std::sqrt(double(size))));
+        return side * side == size;
+    };
+    if (extruder_id != -1 && nozzle_nums > 1 && square(fv_matrix.size()) &&
+        (fv_matrix.size() % nozzle_nums != 0 || !square(fv_matrix.size() / nozzle_nums)))
+        return fv_matrix;
     if (extruder_id != -1 && nozzle_nums != 1) {
         return std::vector<T>(fv_matrix.begin() + size_t(fv_matrix.size() / nozzle_nums * extruder_id + EPSILON),
                                    fv_matrix.begin() + size_t(fv_matrix.size() / nozzle_nums * (extruder_id + 1) + EPSILON));

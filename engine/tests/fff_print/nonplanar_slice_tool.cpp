@@ -1032,21 +1032,26 @@ void apply_filaments(const Args &a, DynamicPrintConfig &config)
         for (int c = 0; c < 3; ++c)
             out[c] = (unsigned char) std::strtol(hex.substr(1 + 2 * c, 2).c_str(), nullptr, 16);
     };
-    const auto *volume  = config.option<ConfigOptionFloats>("nozzle_volume");
-    const auto *dataset = config.option<ConfigOptionInts>("nozzle_flush_dataset");
-    const int   min_vol = volume != nullptr && !volume->values.empty() ? int(volume->values.front()) : 0;
-    FlushVolCalculator calculator(min_vol, g_max_flush_volume, dataset != nullptr && !dataset->values.empty() ? dataset->values.front() : 0);
+    const auto  *volume   = config.option<ConfigOptionFloats>("nozzle_volume");
+    const auto  *dataset  = config.option<ConfigOptionInts>("nozzle_flush_dataset");
+    const auto  *nozzles  = config.option<ConfigOptionFloats>("nozzle_diameter");
+    const size_t n_nozzle = nozzles != nullptr && !nozzles->values.empty() ? nozzles->values.size() : 1;
     std::vector<double> &matrix = config.option<ConfigOptionFloats>("flush_volumes_matrix", true)->values;
-    matrix.assign(n * n, 0.);
-    for (size_t from = 0; from < n; ++from)
-        for (size_t to = 0; to < n; ++to)
-            if (from != to) {
-                unsigned char f[3], t[3];
-                rgb(colours[from], f);
-                rgb(colours[to], t);
-                matrix[from * n + to] = calculator.calc_flush_vol(255, f[0], f[1], f[2], 255, t[0], t[1], t[2]);
-            }
-    config.option<ConfigOptionFloats>("flush_multiplier", true)->values.resize(1, 1.);
+    matrix.assign(n_nozzle * n * n, 0.);
+    for (size_t nozzle = 0; nozzle < n_nozzle; ++nozzle) {
+        const int min_vol = volume != nullptr && !volume->values.empty() ? int(volume->values[std::min(nozzle, volume->values.size() - 1)]) : 0;
+        const int data    = dataset != nullptr && !dataset->values.empty() ? dataset->values[std::min(nozzle, dataset->values.size() - 1)] : 0;
+        FlushVolCalculator calculator(min_vol, g_max_flush_volume, data);
+        for (size_t from = 0; from < n; ++from)
+            for (size_t to = 0; to < n; ++to)
+                if (from != to) {
+                    unsigned char f[3], t[3];
+                    rgb(colours[from], f);
+                    rgb(colours[to], t);
+                    matrix[nozzle * n * n + from * n + to] = calculator.calc_flush_vol(255, f[0], f[1], f[2], 255, t[0], t[1], t[2]);
+                }
+    }
+    config.option<ConfigOptionFloats>("flush_multiplier", true)->values.resize(n_nozzle, 1.);
     config.option<ConfigOptionFloats>("flush_volumes_vector", true)->values.assign(2 * n, 140.);
 }
 

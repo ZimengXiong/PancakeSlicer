@@ -38,6 +38,8 @@
 
 #include <boost/log/trivial.hpp>
 #include <boost/nowide/fstream.hpp>
+#include <tbb/blocked_range.h>
+#include <tbb/parallel_for.h>
 
 #include <algorithm>
 #include <atomic>
@@ -65,9 +67,9 @@ namespace {
 
 struct NativeSliceData
 {
-    std::vector<ExPolygons> slices;
-    indexed_triangle_set    enforcers;
-    indexed_triangle_set    blockers;
+    std::vector<std::vector<ExPolygons>> by_volume;
+    indexed_triangle_set                 enforcers;
+    indexed_triangle_set                 blockers;
 };
 
 std::mutex                             g_override_mutex;
@@ -173,11 +175,50 @@ std::shared_ptr<const LayerField> native_field(PrintObject &object)
     }
 }
 
+std::vector<int> part_regions(const PrintObject &object)
+{
+    const PrintObjectRegions *shared = object.shared_regions();
+    if (shared == nullptr || shared->layer_ranges.size() != 1 || object.model_object()->is_mm_painted())
+        return {};
+    const PrintObjectRegions::LayerRangeRegions &range = shared->layer_ranges.front();
+    if (!range.painted_regions.empty() || !range.fuzzy_skin_painted_regions.empty())
+        return {};
+    const ModelVolumePtrs &volumes = object.model_object()->volumes;
+    std::vector<int>       out(volumes.size(), -1);
+    for (const PrintObjectRegions::VolumeRegion &vr : range.volume_regions) {
+        if (vr.region == nullptr)
+            continue;
+        if (vr.parent != -1) {
+            if (vr.parent < 0 || size_t(vr.parent) >= range.volume_regions.size() || range.volume_regions[size_t(vr.parent)].region != vr.region)
+                return {};
+            continue;
+        }
+        const size_t v = size_t(std::find(volumes.begin(), volumes.end(), vr.model_volume) - volumes.begin());
+        if (v >= volumes.size() || !volumes[v]->is_model_part())
+            return {};
+        if (out[v] != -1 && out[v] != vr.region->print_object_region_id())
+            return {};
+        out[v] = vr.region->print_object_region_id();
+    }
+    std::vector<char> used(object.num_printing_regions(), 0);
+    for (int r : out)
+        if (r >= 0 && size_t(r) < used.size())
+            used[size_t(r)] = 1;
+    if (std::find(used.begin(), used.end(), 0) != used.end())
+        return {};
+    return out;
+}
+
 NativeSliceOverride::NativeSliceOverride(std::string name, std::vector<ExPolygons> slices, indexed_triangle_set enforcers,
+                                         indexed_triangle_set blockers)
+    : NativeSliceOverride(std::move(name), std::vector<std::vector<ExPolygons>>{ std::move(slices) }, std::move(enforcers), std::move(blockers))
+{}
+
+NativeSliceOverride::NativeSliceOverride(std::string name, std::vector<std::vector<ExPolygons>> by_volume, indexed_triangle_set enforcers,
                                          indexed_triangle_set blockers) : m_name(std::move(name))
 {
     std::lock_guard<std::mutex> lock(g_override_mutex);
-    g_overrides.emplace(m_name, NativeSliceData{ std::move(slices), std::move(enforcers), std::move(blockers) });
+    g_overrides.emplace(m_name, NativeSliceData{ std::move(by_volume), std::move(enforcers), std::move(blockers) });
 }
 
 NativeSliceOverride::~NativeSliceOverride()
@@ -186,11 +227,11 @@ NativeSliceOverride::~NativeSliceOverride()
     g_overrides.erase(m_name);
 }
 
-const std::vector<ExPolygons> *NativeSliceOverride::find(const std::string &name)
+const std::vector<std::vector<ExPolygons>> *NativeSliceOverride::find(const std::string &name)
 {
     std::lock_guard<std::mutex> lock(g_override_mutex);
     const auto                  it = g_overrides.find(name);
-    return it == g_overrides.end() ? nullptr : &it->second.slices;
+    return it == g_overrides.end() ? nullptr : &it->second.by_volume;
 }
 
 const indexed_triangle_set *NativeSliceOverride::support_facets(const std::string &name, EnforcerBlockerType type)
@@ -823,6 +864,107 @@ bool generate_planar_native_support(PrintObject &object)
     return true;
 }
 
+static std::vector<std::vector<ExPolygons>> part_region_domains(const PrintObject &object, const LayerField &field, const std::vector<double> &mids,
+                                                                const Native::Params &np, const std::vector<ExPolygons> &domains,
+                                                                const std::vector<int> &part_region, const std::vector<int> &regions,
+                                                                const HeadEnvelope &head, double band)
+{
+    double             ground = 0.;
+    const TriangleMesh whole  = object.object_frame_mesh(ground);
+    float              min_z  = std::numeric_limits<float>::max();
+    for (const stl_vertex &v : whole.its.vertices)
+        min_z = std::min(min_z, v.z());
+    const float              shift = -(min_z + float(ground));
+    Geometry::Transformation trans = object.instances().front().model_instance->get_transformation();
+    trans.set_offset(Vec3d(-unscale<double>(object.center_offset().x()), -unscale<double>(object.center_offset().y()), 0));
+    const ModelVolumePtrs &volumes = object.model_object()->volumes;
+    const size_t           K       = mids.size();
+    std::vector<std::vector<ExPolygons>> part(volumes.size());
+    for (size_t v = 0; v < volumes.size(); ++v) {
+        if (v >= part_region.size() || part_region[v] < 0)
+            continue;
+        TriangleMesh mesh = volumes[v]->mesh();
+        mesh.transform(volumes[v]->get_matrix());
+        mesh.transform(trans.get_matrix());
+        for (stl_vertex &p : mesh.its.vertices)
+            p.z() += shift;
+        const std::vector<Native::Layer> layers = Native::extract_layers(mesh.its, field, mids, np);
+        part[v].resize(K);
+        for (size_t k = 0; k < K && k < layers.size(); ++k)
+            if (!layers[k].pieces.empty())
+                part[v][k] = layers[k].pieces.front().domain;
+        throw_if_canceled(object);
+    }
+    std::vector<size_t> slot(object.num_printing_regions(), 0);
+    for (size_t i = 0; i < regions.size(); ++i)
+        slot[size_t(regions[i])] = i;
+    std::vector<std::vector<ExPolygons>> out(regions.size(), std::vector<ExPolygons>(K));
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, K), [&](const tbb::blocked_range<size_t> &range) {
+        for (size_t k = range.begin(); k < range.end(); ++k) {
+            if (domains[k].empty())
+                continue;
+            ExPolygons later;
+            for (size_t v = volumes.size(); v-- > 0;) {
+                if (part[v].empty() || part[v][k].empty())
+                    continue;
+                append(out[slot[size_t(part_region[v])]][k], later.empty() ? part[v][k] : diff_ex(part[v][k], later));
+                append(later, part[v][k]);
+                later = union_ex(later);
+            }
+            ExPolygons covered;
+            for (std::vector<ExPolygons> &by_level : out) {
+                by_level[k] = intersection_ex(union_ex(by_level[k]), domains[k]);
+                append(covered, by_level[k]);
+            }
+            ExPolygons left = opening_ex(diff_ex(domains[k], covered), float(scale_(0.01)));
+            if (left.empty())
+                continue;
+            std::vector<char> grew(out.size(), 0);
+            for (ExPolygon &piece : left) {
+                const ExPolygons near = offset_ex(piece, float(scale_(0.05)));
+                size_t           best = 0;
+                double           most = -1.;
+                for (size_t i = 0; i < out.size(); ++i)
+                    if (const double a = area(intersection_ex(near, out[i][k])); a > most)
+                        most = a, best = i;
+                out[best][k].push_back(std::move(piece));
+                grew[best] = 1;
+            }
+            for (size_t i = 0; i < out.size(); ++i)
+                if (grew[i])
+                    out[i][k] = union_ex(out[i][k]);
+        }
+    });
+    const double half = 0.5 * object.print()->config().nozzle_diameter.get_at(0);
+    const auto   reach = [&head](double above) {
+        double r = 0.;
+        for (const HeadBox &b : head.boxes)
+            if (b.nozzle && !b.infinite_x && !b.infinite_y && b.min.z() < above - 1e-6)
+                r = std::max(r, std::hypot(std::max(std::abs(b.min.x()), std::abs(b.max.x())), std::max(std::abs(b.min.y()), std::abs(b.max.y()))));
+        return r;
+    };
+    std::vector<std::vector<ExPolygons>> spread = out;
+    for (size_t k = K - 1; k-- > 0;) {
+        const double rise = mids[k + 1] - mids[k];
+        double       run  = 0.;
+        for (int n = 1; rise > EPSILON && double(n - 1) * rise < band; ++n)
+            run = std::max(run, (reach(double(n) * rise) - half) / double(n));
+        run = std::max(0., run) + 0.02;
+        tbb::parallel_for(size_t(0), spread.size(), [&](size_t i) {
+            if (!spread[i][k + 1].empty())
+                spread[i][k] = intersection_ex(union_ex(spread[i][k], offset_ex(spread[i][k + 1], float(scale_(run)))), domains[k]);
+        });
+        ExPolygons taken;
+        for (size_t i = 0; i < out.size(); ++i) {
+            out[i][k] = taken.empty() ? spread[i][k] : diff_ex(spread[i][k], taken);
+            append(taken, out[i][k]);
+            taken = union_ex(taken);
+        }
+        throw_if_canceled(object);
+    }
+    return out;
+}
+
 void build_native_patch(PrintObject &object, const std::shared_ptr<const LayerField> &field, ConformalResult &result)
 {
     if (!field || object.layers().empty())
@@ -888,12 +1030,38 @@ void build_native_patch(PrintObject &object, const std::shared_ptr<const LayerFi
         return;
     throw_if_canceled(object);
 
+    const bool             conformal_layers = object.config().nonplanar_mode.value == NonplanarMode::ConformalLayers;
+    const std::vector<int> part_region      = conformal_layers && object.num_printing_regions() > 1 ? part_regions(object) : std::vector<int>();
+    std::vector<int>       regions;
+    for (int r : part_region)
+        if (r >= 0 && std::find(regions.begin(), regions.end(), r) == regions.end())
+            regions.push_back(r);
+    std::sort(regions.begin(), regions.end());
+    const bool multi = regions.size() > 1;
+    if (conformal_layers && object.num_printing_regions() > 1 && !multi)
+        throw Slic3r::SlicingError(_u8L("Conformal layers can print several materials only when each one is its own part."));
+    const HeadEnvelope material_head = multi ? resolve_head_envelope(object.print()->config()) : HeadEnvelope();
+    const double       material_band = multi ? conformal_band_height(material_head, h) : 0.;
+    if (multi && tops.back() > material_band)
+        throw Slic3r::SlicingError(Slic3r::format(_u8L("Conformal layers can print several materials only on parts up to %1$.1f mm tall with this "
+                                                       "print head: each material is printed to its full height before the next one starts."),
+                                                  material_band));
+    std::vector<std::vector<ExPolygons>> region_domains =
+        multi ? part_region_domains(object, *field, mids, np, domains, part_region, regions, material_head, material_band) :
+                std::vector<std::vector<ExPolygons>>();
+    throw_if_canceled(object);
+
     const Point            c_scaled = bbox.center();
     const Vec2d            c        = unscale(c_scaled);
     std::vector<ExPolygons> shifted = domains;
     for (ExPolygons &d : shifted)
         for (ExPolygon &e : d)
             e.translate(-c_scaled.x(), -c_scaled.y());
+    std::vector<std::vector<ExPolygons>> shifted_regions = region_domains;
+    for (std::vector<ExPolygons> &stack : shifted_regions)
+        for (ExPolygons &d : stack)
+            for (ExPolygon &e : d)
+                e.translate(-c_scaled.x(), -c_scaled.y());
     static std::atomic<int> serial { 0 };
     const std::string       name = object.model_object()->name + " native#" + std::to_string(serial++);
     DynamicPrintConfig      config = chunk_print_config(object);
@@ -941,7 +1109,21 @@ void build_native_patch(PrintObject &object, const std::shared_ptr<const LayerFi
     Model        model;
     ModelObject *model_object = model.add_object();
     model_object->name        = name;
-    model_object->add_volume(std::move(box));
+    if (multi) {
+        const PrintRegionConfig &base = object.printing_region(size_t(regions.front())).config();
+        for (size_t i = 0; i < regions.size(); ++i) {
+            ModelVolume             *volume = model_object->add_volume(box);
+            const PrintRegionConfig &own    = object.printing_region(size_t(regions[i])).config();
+            volume->name                    = name + " region " + std::to_string(regions[i]);
+            for (const std::string &key : base.diff(own)) {
+                const ConfigOption *fixed = config.option(key);
+                if (fixed != nullptr && !(*fixed == *base.option(key)))
+                    continue;
+                volume->config.set_key_value(key, own.option(key)->clone());
+            }
+        }
+    } else
+        model_object->add_volume(std::move(box));
     // The slice override supplies the part geometry. Only support modifiers become nested volumes.
     indexed_triangle_set painted_enforcers, painted_blockers;
     if (tree_support && object.config().enable_support.value) {
@@ -972,7 +1154,8 @@ void build_native_patch(PrintObject &object, const std::shared_ptr<const LayerFi
         model_object->layer_height_profile.set(profile);
     }
     model_object->add_instance();
-    const NativeSliceOverride registered(name, std::move(shifted), std::move(painted_enforcers), std::move(painted_blockers));
+    const NativeSliceOverride registered(name, multi ? std::move(shifted_regions) : std::vector<std::vector<ExPolygons>>{ std::move(shifted) },
+                                         std::move(painted_enforcers), std::move(painted_blockers));
     Print                     print;
     const NestedFieldSlice    nested;
     try {
@@ -994,6 +1177,23 @@ void build_native_patch(PrintObject &object, const std::shared_ptr<const LayerFi
     if (print.objects().empty())
         return;
     const PrintObject &sliced = *print.objects().front();
+    std::vector<size_t> nested_slot(sliced.num_printing_regions(), 0);
+    if (multi) {
+        std::vector<char> mapped(nested_slot.size(), 0);
+        const ModelVolumePtrs &volumes = sliced.model_object()->volumes;
+        if (const PrintObjectRegions *nested = sliced.shared_regions(); nested != nullptr && !nested->layer_ranges.empty())
+            for (const PrintObjectRegions::VolumeRegion &vr : nested->layer_ranges.front().volume_regions) {
+                if (vr.parent != -1 || vr.region == nullptr)
+                    continue;
+                const size_t v  = size_t(std::find(volumes.begin(), volumes.end(), vr.model_volume) - volumes.begin());
+                const int    id = vr.region->print_object_region_id();
+                if (v < regions.size() && id >= 0 && size_t(id) < nested_slot.size() && !mapped[size_t(id)])
+                    nested_slot[size_t(id)] = v, mapped[size_t(id)] = 1;
+            }
+        if (std::find(mapped.begin(), mapped.end(), 0) != mapped.end() || nested_slot.size() != regions.size())
+            BOOST_LOG_TRIVIAL(warning) << "Conformal layers " << object.model_object()->name << ": " << nested_slot.size()
+                                       << " nested regions for " << regions.size() << " materials";
+    }
     const Vec2d        center = unscale(sliced.center_offset());
     if ((center - c).norm() > 1e-3)
         BOOST_LOG_TRIVIAL(warning) << "Native layers " << object.model_object()->name << ": nested centre " << center.transpose()
@@ -1006,6 +1206,7 @@ void build_native_patch(PrintObject &object, const std::shared_ptr<const LayerFi
                                    << " nested layers for " << K << " field layers";
 
     std::vector<FieldRoad>  roads;
+    std::vector<size_t>     road_slot;
     std::vector<ExPolygons> internal;
     Native::Piece           over_xy;
     size_t                  points = 0;
@@ -1063,12 +1264,21 @@ void build_native_patch(PrintObject &object, const std::shared_ptr<const LayerFi
         const Layer &layer = *sliced.layers()[k];
         internal.push_back(domains[k]);
         std::vector<const ExtrusionPath *> paths = support[k];
-        for (const LayerRegion *region : layer.regions())
+        std::vector<size_t>                path_slot(paths.size(), 0);
+        const auto                         mark = [&](size_t region_id) {
+            path_slot.resize(paths.size(), region_id < nested_slot.size() ? nested_slot[region_id] : 0);
+        };
+        for (size_t ri = 0; ri < layer.regions().size(); ++ri) {
+            const LayerRegion *region = layer.regions()[ri];
             flatten(&region->perimeters, paths, seam_at, &seamed);
-        // Layer::make_fills already copies thin fills into fills.
-        for (const LayerRegion *region : layer.regions())
-            flatten(&region->fills, paths);
-        for (const ExtrusionPath *path : paths) {
+            mark(ri);
+        }
+        for (size_t ri = 0; ri < layer.regions().size(); ++ri) {
+            flatten(&layer.regions()[ri]->fills, paths);
+            mark(ri);
+        }
+        for (size_t pi = 0; pi < paths.size(); ++pi) {
+            const ExtrusionPath *path = paths[pi];
             if (path->polyline.points.size() < 2)
                 continue;
             Polyline road;
@@ -1139,6 +1349,7 @@ void build_native_patch(PrintObject &object, const std::shared_ptr<const LayerFi
             r.layer = k - layer_offset;
             points += m;
             roads.push_back(std::move(r));
+            road_slot.push_back(path_slot[pi]);
         }
     }
     if (use_native_planar_support && object.config().enable_support.value) {
@@ -1147,6 +1358,7 @@ void build_native_patch(PrintObject &object, const std::shared_ptr<const LayerFi
             if (r.path)
                 roads.push_back(std::move(r));
     }
+    road_slot.resize(roads.size(), 0);
     FieldOrderParams op;
     op.head       = resolve_head_envelope(object.print()->config());
     op.kinematics = kinematics.get();
@@ -1220,6 +1432,126 @@ void build_native_patch(PrintObject &object, const std::shared_ptr<const LayerFi
                 write(*roads[ri].path, roads[ri].layer, ri, roads[ri].layer);
     });
     const size_t n_roads = roads.size();
+    const auto   clear_planar = [&object]() {
+        for (size_t layer_id = 1; layer_id < object.layers().size(); ++layer_id) {
+            Layer *layer = object.layers()[layer_id];
+            layer->lslices.clear();
+            layer->lslices_extrudable.clear();
+            layer->lslices_bboxes.clear();
+        }
+        for (size_t layer_id = 1; layer_id < object.layers().size(); ++layer_id)
+            for (LayerRegion *region : object.layers()[layer_id]->regions()) {
+                region->slices.set(ExPolygons(), stInternal);
+                region->perimeters.clear();
+                region->thin_fills.clear();
+                region->fills.clear();
+                region->fill_surfaces.clear();
+                region->fill_expolygons.clear();
+            }
+    };
+    if (multi) {
+        std::vector<std::vector<FieldRoad>> by_slot(regions.size());
+        for (size_t i = 0; i < roads.size(); ++i)
+            by_slot[std::min(road_slot[i], regions.size() - 1)].push_back(std::move(roads[i]));
+        roads.clear();
+        const double band = conformal_band_height(op.head, h);
+        std::vector<const std::vector<FieldRoad> *> sets;
+        for (const std::vector<FieldRoad> &set : by_slot)
+            sets.push_back(&set);
+        const double offset = 0.;
+        const std::vector<std::pair<Vec3d, Vec3d>> precede = conformal_precedence(*object.model_object());
+        const std::shared_ptr<const FieldChart>    chart   = std::make_shared<const NativeChart>(field, tilt_cap);
+        std::map<long, std::vector<ConformalPatch>> by_band;
+        size_t groups = 0, cut_roads = 0;
+        for (size_t slot = 0; slot < by_slot.size(); ++slot) {
+            if (by_slot[slot].empty())
+                continue;
+            BandOrderStats stats;
+            FieldOrder     order = band_order_roads(by_slot[slot], n - 1, band, &stats, &precede, &region_domains[slot], offset);
+            groups += stats.groups;
+            cut_roads += stats.cut_roads;
+            for (size_t g = 0; g < order.groups.size(); ++g) {
+                const long                   b    = g < stats.group_bands.size() ? stats.group_bands[g] : 0L;
+                std::vector<ConformalPatch> &list = by_band[b];
+                if (list.empty() || list.back().region_id != regions[slot]) {
+                    ConformalPatch &patch = list.emplace_back();
+                    patch.kind            = PatchKind::Field;
+                    patch.native          = true;
+                    patch.shell_height    = h;
+                    patch.region_id       = regions[slot];
+                    patch.material_rank   = int(slot);
+                    patch.field           = chart;
+                }
+                ConformalPatch &patch = list.back();
+                const size_t    level = g < order.group_layers.size() ? order.group_layers[g] + 1 : region_domains[slot].size();
+                patch.shell_internal.push_back(level < region_domains[slot].size() ? region_domains[slot][level] : ExPolygons());
+                patch.shell_paths.push_back(std::move(order.groups[g]));
+            }
+        }
+        const auto   base_of = [](const Layer &layer) { return layer.slice_z + 0.5 * layer.height; };
+        const double base    = base_of(*host);
+        std::vector<ConformalPatch> patches;
+        size_t                      prev = 0, shared = 0;
+        int                         band_index = 0;
+        for (auto &[b, list] : by_band) {
+            double band_top = -std::numeric_limits<double>::infinity();
+            for (const ConformalPatch &patch : list)
+                for (const ExtrusionEntityCollection &shell : patch.shell_paths)
+                    for (const ExtrusionEntity *ee : shell.entities)
+                        for (const Point3 &p : static_cast<const ExtrusionPath *>(ee)->polyline.points)
+                            band_top = std::max(band_top, unscale<double>(p.z()) + base);
+            size_t H = 1;
+            while (H < host_id && base_of(*object.layers()[H]) < band_top - EPSILON)
+                ++H;
+            if (!patches.empty() && H <= prev) {
+                shared += H == host_id && prev == host_id;
+                H = std::min(prev + 1, host_id);
+            }
+            prev = H;
+            Layer        &to = *object.layers()[H];
+            const coord_t dz = coord_t(scale_(base - base_of(to)));
+            for (ConformalPatch &patch : list) {
+                patch.id          = int(result.patches.size() + patches.size());
+                patch.host_layer  = H;
+                patch.band        = band_index;
+                patch.banded      = by_band.size() > 1;
+                patch.shells      = int(patch.shell_paths.size());
+                patch.z_min       = std::numeric_limits<double>::infinity();
+                patch.z_max       = -std::numeric_limits<double>::infinity();
+                for (ExtrusionEntityCollection &shell : patch.shell_paths)
+                    for (ExtrusionEntity *ee : shell.entities)
+                        for (Point3 &p : static_cast<ExtrusionPath *>(ee)->polyline.points) {
+                            p.z() += dz;
+                            const double z = unscale<double>(p.z()) + to.print_z;
+                            patch.z_min    = std::min(patch.z_min, z);
+                            patch.z_max    = std::max(patch.z_max, z);
+                        }
+                patches.push_back(std::move(patch));
+            }
+            ++band_index;
+        }
+        BOOST_LOG_TRIVIAL(info) << "Conformal layers " << object.model_object()->name << ": " << regions.size() << " materials, band " << band
+                                << " mm from z " << offset << ", " << by_band.size() << " bands, " << groups << " groups, " << cut_roads
+                                << " roads cut, " << patches.size() << " patches";
+        if (shared > 0)
+            BOOST_LOG_TRIVIAL(warning) << "Conformal layers " << object.model_object()->name << ": " << shared
+                                       << " bands share the top layer, so their materials may not alternate band by band";
+        object.set_native_summary(Slic3r::format("%1% layers, %2% roads, %3% materials in %4% bands, %5% support paths, tilt cap %6$.0f deg", K,
+                                                 n_roads, regions.size(), by_band.size(), support_paths, Geometry::rad2deg(tilt_cap)));
+        BOOST_LOG_TRIVIAL(info) << "Native layers " << object.model_object()->name << ": " << K << " layers to level " << top << ", " << n_roads
+                                << " roads (" << support_paths << " support paths), " << points << " points, " << patches.size() << " patches, "
+                                << std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() << " s";
+        clear_planar();
+        if (patches.empty())
+            return;
+        for (size_t layer_id = 1; layer_id < object.layers().size(); ++layer_id)
+            object.layers()[layer_id]->conformal_covered = true;
+        for (ConformalPatch &patch : patches) {
+            object.layers()[patch.host_layer]->conformal_patches_after.push_back(patch.id);
+            result.patches.push_back(std::move(patch));
+        }
+        return;
+    }
     BandOrderStats band_stats;
     const size_t   conflicts = conformal ? layer_order_head_conflicts(roads, road_layers, op.head) : 0;
     if (conformal)
@@ -1271,21 +1603,7 @@ void build_native_patch(PrintObject &object, const std::shared_ptr<const LayerFi
                             << n_roads << " roads (" << support_paths << " support paths), " << points << " points, " << patch.shell_paths.size() << " groups, tilt cap "
                             << Geometry::rad2deg(tilt_cap) << " deg, "
                             << std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() << " s";
-    for (size_t layer_id = 1; layer_id < object.layers().size(); ++layer_id) {
-        Layer *layer = object.layers()[layer_id];
-        layer->lslices.clear();
-        layer->lslices_extrudable.clear();
-        layer->lslices_bboxes.clear();
-    }
-    for (size_t layer_id = 1; layer_id < object.layers().size(); ++layer_id)
-        for (LayerRegion *region : object.layers()[layer_id]->regions()) {
-            region->slices.set(ExPolygons(), stInternal);
-            region->perimeters.clear();
-            region->thin_fills.clear();
-            region->fills.clear();
-            region->fill_surfaces.clear();
-            region->fill_expolygons.clear();
-        }
+    clear_planar();
     if (patch.shell_paths.empty())
         return;
     for (size_t layer_id = 1; layer_id < object.layers().size(); ++layer_id)

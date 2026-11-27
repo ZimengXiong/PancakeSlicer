@@ -1017,8 +1017,29 @@ void link_roads(ExtrusionEntitiesPtr &roads, const ExPolygons *area, double fill
     }
 }
 
+double band_offset(const std::vector<const std::vector<FieldRoad> *> &sets, double band)
+{
+    if (!std::isfinite(band) || band <= 0.)
+        return 0.;
+    double offset = 0.;
+    size_t best   = std::numeric_limits<size_t>::max();
+    for (int s = 0; s < 24; ++s) {
+        const double o    = band * double(s) / 24.;
+        size_t       cuts = 0;
+        for (const std::vector<FieldRoad> *roads : sets)
+            for (const FieldRoad &r : *roads)
+                if (r.path)
+                    for (size_t i = 1; i < r.tip.size(); ++i)
+                        cuts += std::floor((r.tip[i].z() - o) / band) != std::floor((r.tip[i - 1].z() - o) / band);
+        if (cuts < best)
+            best = cuts, offset = o;
+    }
+    return offset;
+}
+
 FieldOrder band_order_roads(std::vector<FieldRoad> &roads, size_t layers, double band, BandOrderStats *stats,
-                            const std::vector<std::pair<Vec3d, Vec3d>> *precede, const std::vector<ExPolygons> *domains)
+                            const std::vector<std::pair<Vec3d, Vec3d>> *precede, const std::vector<ExPolygons> *domains,
+                            double shared_offset)
 {
     FieldOrder out;
     if (layers == 0)
@@ -1048,21 +1069,9 @@ FieldOrder band_order_roads(std::vector<FieldRoad> &roads, size_t layers, double
                 before.emplace_back(h, s);
     }
     std::unordered_map<const ExtrusionEntity *, size_t> road_of;
-    const bool banded = std::isfinite(band) && band > 0.;
-    double offset = 0.;
-    if (banded) {
-        size_t best = std::numeric_limits<size_t>::max();
-        for (int s = 0; s < 24; ++s) {
-            const double o = band * double(s) / 24.;
-            size_t       cuts = 0;
-            for (const FieldRoad &r : roads)
-                if (r.path)
-                    for (size_t i = 1; i < r.tip.size(); ++i)
-                        cuts += std::floor((r.tip[i].z() - o) / band) != std::floor((r.tip[i - 1].z() - o) / band);
-            if (cuts < best)
-                best = cuts, offset = o;
-        }
-    }
+    const bool   banded = std::isfinite(band) && band > 0.;
+    const double offset = !banded ? 0. : std::isfinite(shared_offset) ? shared_offset : band_offset({ &roads }, band);
+    std::vector<long> group_bands;
     const auto band_of = [&](double z) { return banded ? long(std::floor((z - offset) / band)) : 0L; };
     std::map<std::pair<long, size_t>, ExtrusionEntitiesPtr> groups;
     size_t cut_roads = 0;
@@ -1262,13 +1271,15 @@ FieldOrder band_order_roads(std::vector<FieldRoad> &roads, size_t layers, double
         link_roads(group.entities, domains != nullptr && key.second < domains->size() ? &(*domains)[key.second] : nullptr);
         out.groups.push_back(std::move(group));
         out.group_layers.push_back(key.second);
+        group_bands.push_back(key.first);
     }
     if (stats) {
-        stats->band      = band;
-        stats->offset    = offset;
-        stats->bands     = bands;
-        stats->groups    = out.groups.size();
-        stats->cut_roads = cut_roads;
+        stats->band        = band;
+        stats->offset      = offset;
+        stats->bands       = bands;
+        stats->groups      = out.groups.size();
+        stats->cut_roads   = cut_roads;
+        stats->group_bands = std::move(group_bands);
     }
     return out;
 }
