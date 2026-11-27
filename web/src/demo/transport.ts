@@ -1,4 +1,4 @@
-import type { LibraryRecords } from '../profiles/records';
+import { LIBRARY_SCHEMA, type LibraryRecords } from '../profiles/records';
 import type { DemoCatalog } from './resolver';
 import { NO_ENGINE, SAMPLE_JOB } from './config';
 import { GITHUB_URL } from '../build-info';
@@ -51,11 +51,17 @@ async function sampleJob(action: string | undefined, url: URL, signal: AbortSign
 }
 let catalogRead: Promise<DemoCatalog> | undefined;
 const catalog = () => catalogRead ??= compressed('catalog.json.gz').then(r => r.json() as Promise<DemoCatalog>);
-function initial(s: Seed): DemoState { return structuredClone({ library: s.library, preferences: s.preferences, session: s.session,
+function initial(s: Seed): DemoState { return structuredClone({ library: { ...s.library, schema: LIBRARY_SCHEMA }, preferences: s.preferences, session: s.session,
   projects: Object.fromEntries(s.projects.map(p => [p.meta.id, p])), drafts: {}, assets: {}, versions: {}, folders: [], folderRevision: 0 }); }
 async function state(): Promise<DemoState> {
   return stateRead ??= seed().then(s => {
-    if (mainThread) { try { const saved = sessionStorage.getItem(STORAGE); if (saved) return JSON.parse(saved) as DemoState; } catch {  } }
+    if (mainThread) { try {
+      const saved = sessionStorage.getItem(STORAGE);
+      if (saved) {
+        const data = JSON.parse(saved) as DemoState;
+        return Number(data.library.schema) === 13 ? { ...data, library: { ...data.library, schema: LIBRARY_SCHEMA } } : data;
+      }
+    } catch {  } }
     return initial(s);
   });
 }

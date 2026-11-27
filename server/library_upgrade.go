@@ -38,6 +38,7 @@ var upgradeSteps = []upgradeStep{
 	}},
 	{11, 12, "starter-generations", upgradeStarterGenerations},
 	{12, 13, "slot-identity", upgradeSlotIdentity},
+	{13, 14, "nozzle-presets", func(*upgradeContext, map[string]json.RawMessage) ([]string, error) { return nil, nil }},
 }
 
 func init() {
