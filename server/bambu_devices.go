@@ -122,8 +122,11 @@ func (b *bambuReport) nozzles() []NozzleStatus {
 	}
 	if diameter := bambuNumber(b.NozzleDiameter); diameter != nil && *diameter > 0 {
 		material, flow := bambuNozzleType(b.NozzleType)
-		if b.Flag3 != nil && (*b.Flag3>>10)&7 == 1 {
-			material, flow = "E3D", "E3D High Flow"
+		if b.Flag3 != nil {
+			flow = "Standard"
+			if (*b.Flag3>>10)&7 == 1 {
+				flow = "High Flow"
+			}
 		}
 		return []NozzleStatus{{Diameter: *diameter, Type: material, Flow: flow, Legacy: true}}
 	}
