@@ -334,7 +334,16 @@ func runCamera(ctx context.Context, p *PrinterConfig, camera cameraSource, emit 
 		}
 		return jpegCamera(ctx, p, secret, emit)
 	}
-	return httpCamera(ctx, p, camera.upstream, emit)
+	err := httpCamera(ctx, p, camera.upstream, emit)
+	var uerr *url.Error
+	if errors.As(err, &uerr) {
+		u, perr := url.Parse(uerr.URL)
+		if perr != nil {
+			u = &url.URL{}
+		}
+		uerr.URL = (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}).String()
+	}
+	return err
 }
 
 const cameraRTSPPort = 322
@@ -624,36 +633,53 @@ func rtspCamera(ctx context.Context, p *PrinterConfig, secret string, emit func(
 	if err != nil {
 		return err
 	}
-	var stderr tailBuffer
-	cmd.Stderr = &stderr
+	stderr := &tailBuffer{}
+	cmd.Stderr = stderr
 	if err = cmd.Start(); err != nil {
 		return err
 	}
 	err = readCameraMP4(pipe, emit)
 	cmd.Process.Kill()
 	waitErr := cmd.Wait()
-	if msg := strings.TrimSpace(string(stderr)); msg != "" && ctx.Err() == nil {
-		return cameraFFmpegError(msg, target, secret)
-	}
-	if errors.Is(err, io.EOF) && waitErr != nil {
-		return fmt.Errorf("ffmpeg: %v", waitErr)
+	if ctx.Err() == nil && (errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)) {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return cameraFFmpegError(msg, target, secret)
+		}
+		if waitErr != nil {
+			return fmt.Errorf("ffmpeg: %v", waitErr)
+		}
 	}
 	return err
 }
 
 func cameraFFmpegError(stderr string, target url.URL, secret string) error {
 	stderr = strings.ReplaceAll(stderr, target.String(), target.Redacted())
-	return fmt.Errorf("ffmpeg: %s", redact(stderr, secret))
+	_, escaped, _ := strings.Cut(target.User.String(), ":")
+	for _, s := range []string{secret, escaped, url.QueryEscape(secret)} {
+		stderr = redact(stderr, s)
+	}
+	return fmt.Errorf("ffmpeg: %s", stderr)
 }
 
-type tailBuffer []byte
+type tailBuffer struct {
+	mu  sync.Mutex
+	buf []byte
+}
 
 func (t *tailBuffer) Write(p []byte) (int, error) {
-	*t = append(*t, p...)
-	if len(*t) > 4<<10 {
-		*t = (*t)[len(*t)-4<<10:]
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.buf = append(t.buf, p...)
+	if len(t.buf) > 4<<10 {
+		t.buf = t.buf[len(t.buf)-4<<10:]
 	}
 	return len(p), nil
+}
+
+func (t *tailBuffer) String() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return string(t.buf)
 }
 
 func readCameraMP4(pipe io.Reader, emit func([]byte, bool)) (err error) {

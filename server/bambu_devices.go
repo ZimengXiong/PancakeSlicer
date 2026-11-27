@@ -163,7 +163,7 @@ func (b *bambuReport) fans() map[string]float64 {
 }
 
 func (b *bambuReport) activeTray(ams, slot int, external bool) bool {
-	if b.Device != nil && b.Device.Extruder != nil {
+	if b.Device != nil && b.Device.Extruder != nil && len(b.Device.Extruder.Info) > 0 {
 		for _, extruder := range b.Device.Extruder.Info {
 			if extruder.Snow != nil {
 				value := *extruder.Snow

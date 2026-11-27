@@ -254,12 +254,17 @@ func TestCameraFFmpegSkipsBundledLibraries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("APPDIR", "/tmp/.mount_pancake")
+	root := t.TempDir()
+	appdir := filepath.Join(root, ".mount_pancake")
+	system := filepath.Join(root, "ffmpeg", "lib")
+	sibling := filepath.Join(root, ".mount_pancake2", "lib")
+	t.Setenv("APPDIR", appdir)
 	bundled := filepath.Join(filepath.Dir(exe), "lib")
+	list := func(paths ...string) string { return strings.Join(paths, string(filepath.ListSeparator)) }
 	for _, tc := range []struct{ in, want string }{
-		{"/tmp/.mount_pancake/usr/lib:" + bundled + "::/opt/ffmpeg/lib", "LD_LIBRARY_PATH=/opt/ffmpeg/lib"},
-		{"/tmp/.mount_pancake/usr/lib:" + bundled, ""},
-		{"/tmp/.mount_pancake2/lib", "LD_LIBRARY_PATH=/tmp/.mount_pancake2/lib"},
+		{list(filepath.Join(appdir, "usr", "lib"), bundled, "", system), "LD_LIBRARY_PATH=" + system},
+		{list(filepath.Join(appdir, "usr", "lib"), bundled), ""},
+		{sibling, "LD_LIBRARY_PATH=" + sibling},
 	} {
 		env := systemLibraryPath([]string{"PATH=/usr/bin", "LD_LIBRARY_PATH=" + tc.in})
 		want := []string{"PATH=/usr/bin"}
