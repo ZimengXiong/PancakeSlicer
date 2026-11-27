@@ -1,9 +1,24 @@
 import { useState, useSyncExternalStore } from 'react';
 import { Modal, ModalBody, ModalFooter, ModalTitle } from './Modal';
 
-type Ask = { title: string; message?: string; value?: string; range?: [number, number]; choices?: string[]; buttons?: [string, string | null]; danger?: boolean; alternative?: string;  validate?(v: string): string | null; resolve(v: string | null): void };
+type Ask = { title: string; message?: string; value?: string; range?: [number, number]; choices?: string[]; buttons?: [string, string | null]; danger?: boolean; alternative?: string; validate?(v: string): string | null; resolve(v: string | null): void };
 let current: Ask | null = null;
 const listeners = new Set<() => void>();
+const primaryLabel = (a: Ask) => a.buttons?.[0] ?? (a.range ? 'Apply' : a.value !== undefined && !a.choices ? 'Save' : 'Continue');
+
+export function subscribeAsk(listener: () => void) {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
+
+export function pendingAsk() {
+  if (!current) return undefined;
+  const { title, message, buttons, alternative, choices } = current;
+  const options = [{ id: 'confirm', label: primaryLabel(current) }];
+  if (alternative) options.push({ id: 'alternative', label: alternative });
+  if (buttons?.[1] !== null) options.push({ id: 'cancel', label: buttons?.[1] ?? 'Cancel' });
+  return { title, message, choices, options };
+}
 const show = (a: Ask | null) => {
   current = a;
   listeners.forEach((l) => l());
@@ -32,10 +47,22 @@ const SKIPPED: Record<string, string> = {
   painting: 'painted colours, seams and supports',
   'objects without meshes': 'objects that have no mesh',
 };
-export const importObjectsDialog = (file: string, count: number, skipped: string[], allowNew: boolean, settings = false) =>
-  ask({ title: 'Import 3MF', message: `${file}\n${count} ${count === 1 ? 'object' : 'objects'}${skipped.length ? `\nNot imported: ${skipped.map((s) => SKIPPED[s] ?? s).join('; ')}.` : ''}`,
-    buttons: [settings ? 'Import objects and settings' : 'Import objects', 'Cancel'], ...(settings ? { alternative: 'Import objects only' } : allowNew ? { alternative: 'New project from objects' } : {}) })
-    .then((v) => v === null ? null : settings ? (v === 'alternative' ? 'import' : 'settings') : v === 'alternative' ? 'new' : 'import');
+export type ImportObjectsChoice = 'import' | 'settings' | 'new';
+
+export function importObjectsPrompt(file: string, count: number, skipped: string[], allowNew: boolean, hasSettings: boolean) {
+  type Option = { id: ImportObjectsChoice; label: string };
+  const primary: Option = hasSettings ? { id: 'settings', label: 'Import objects and settings' } : { id: 'import', label: 'Import objects' };
+  const alternative: Option | undefined = hasSettings ? { id: 'import', label: 'Import objects only' }
+    : allowNew ? { id: 'new', label: 'New project from objects' } : undefined;
+  const message = `${file}\n${count} ${count === 1 ? 'object' : 'objects'}${skipped.length ? `\nNot imported: ${skipped.map((s) => SKIPPED[s] ?? s).join('; ')}.` : ''}`;
+  return { title: 'Import 3MF', message, primary, alternative };
+}
+
+export type ImportObjectsPrompt = ReturnType<typeof importObjectsPrompt>;
+
+export const importObjectsDialog = ({ title, message, primary, alternative }: ImportObjectsPrompt) =>
+  ask({ title, message, buttons: [primary.label, 'Cancel'], alternative: alternative?.label })
+    .then((v) => v === null ? null : v === 'alternative' ? alternative?.id ?? null : primary.id);
 
 function AskDialog({ a }: { a: Ask }) {
   const [text, setText] = useState(a.value ?? '');
@@ -44,7 +71,7 @@ function AskDialog({ a }: { a: Ask }) {
     a.resolve(v);
   };
   const problem = a.value !== undefined && !a.range && !a.choices && a.validate ? a.validate(text.trim()) : null;
-  const primary = a.buttons?.[0] ?? (a.range ? 'Apply' : a.value !== undefined && !a.choices ? 'Save' : 'Continue');
+  const primary = primaryLabel(a);
   return (
     <Modal size="s" alert label={a.title} onClose={() => done(null)}>
       <form method="dialog" onSubmit={(e) => { e.preventDefault(); if (!problem) done(a.value === undefined ? '' : text); }}>
@@ -70,6 +97,6 @@ function AskDialog({ a }: { a: Ask }) {
 }
 
 export function AskHost() {
-  const a = useSyncExternalStore((l) => { listeners.add(l); return () => void listeners.delete(l); }, () => current);
+  const a = useSyncExternalStore(subscribeAsk, () => current);
   return a ? <AskDialog key={a.title + a.value} a={a} /> : null;
 }

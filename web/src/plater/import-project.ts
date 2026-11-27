@@ -10,7 +10,7 @@ import { getState, markStale, newId, selectPrinter, setState, toast } from '../s
 import { documentGeneration, undoable } from '../state/history';
 import { beginBusy } from '../state/busy';
 import { importing } from '../flow/import';
-import { importObjectsDialog } from '../components/Ask';
+import { importObjectsDialog, importObjectsPrompt, type ImportObjectsChoice, type ImportObjectsPrompt } from '../components/Ask';
 import { newProject, printerBed } from '../actions';
 import { bakeStl, bedBounds, centred, instanceBox, loadProject, nextFreeSpot, outsideBed } from './geometry';
 import { listedPlates } from './plates';
@@ -59,10 +59,19 @@ function objectsPatch(state: State, imported: ImportedPlate[], area: THREE.Vecto
     tab: 'prepare', job: markStale(state.job) };
 }
 
-export async function importObjects(file: File, allowNew = false, sourceUrl?: string, canImport = () => true): Promise<number> {
+type ImportObjectsOptions = {
+  allowNew?: boolean;
+  newProject?: boolean;
+  sourceUrl?: string;
+  canImport?: () => boolean;
+  choose?: (prompt: ImportObjectsPrompt) => ImportObjectsChoice | null | Promise<ImportObjectsChoice | null>;
+};
+
+export async function importObjects(file: File, options: ImportObjectsOptions = {}): Promise<number> {
+  const { allowNew = false, newProject: replaceProject = false, sourceUrl, canImport = () => true, choose = importObjectsDialog } = options;
   if (!canImport()) return 0;
   const generation = documentGeneration();
-  const task = importing.begin('loading');
+  let task = importing.begin('loading');
   const busy = beginBusy(`Reading ${file.name}`, task.signal);
   const plates = new Map<number, ImportedPlate>();
   let items: ProjectItem[] = [], skipped: string[] = [];
@@ -107,7 +116,8 @@ export async function importObjects(file: File, allowNew = false, sourceUrl?: st
       instance.z = (instance.z ?? 0) - Math.min(0, bottom);
     }
     const hasSettings = skipped.includes('settings');
-    const choice = await importObjectsDialog(file.name, objects.length, [...new Set(skipped.filter((s) => s !== 'settings' || !hasSettings))], allowNew, hasSettings);
+    const prompt = importObjectsPrompt(file.name, objects.length, [...new Set(skipped.filter((s) => s !== 'settings'))], allowNew, hasSettings);
+    const choice = await choose(prompt);
     if (!choice || !task.current() || generation !== documentGeneration() || !canImport()) return 0;
     let project: import('../profiles/library-io').ProjectSettings | null = null, settingsNote: string | null = null;
     if (choice === 'settings') try { project = await (await import('../profiles/library-io')).decodeProjectSettings(file); }
@@ -119,11 +129,12 @@ export async function importObjects(file: File, allowNew = false, sourceUrl?: st
       assignBlobKey(o.source, `sha256-${await blobDigest(o.source)}`);
     }));
     if (!task.current() || !canImport()) return 0;
-    if (choice === 'new') {
+    if (replaceProject || choice === 'new') {
       task.done();
       if (!await newProject(true)) return 0;
+      if (!canImport()) return 0;
+      task = importing.begin('loading');
     }
-    if (choice !== 'new' && !task.current()) return 0;
     const placing = documentGeneration();
     const report = project ? applyProjectProfiles(project, byItem) : [];
     const area = await printerBed();

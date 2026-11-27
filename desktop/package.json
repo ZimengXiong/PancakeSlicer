@@ -8,19 +8,23 @@
   "license": "AGPL-3.0-only",
   "main": "out/main.js",
   "scripts": {
-    "compile": "tsc -p .",
-    "start": "tsc -p . && electron .",
-    "dist:mac": "tsc -p . && electron-builder --mac --arm64 --publish never",
-    "dist:win": "tsc -p . && electron-builder --win --x64 --publish never",
-    "dist:mac-x64": "tsc -p . && electron-builder --mac --x64 --publish never",
-    "dist:linux-x64": "tsc -p . && electron-builder --linux --x64 --publish never",
-    "dist:linux-arm64": "tsc -p . && electron-builder --linux --arm64 --publish never"
+    "compile": "tsc -p . && tsc -p tsconfig.mcp.json && node scripts/bundle-mcp.mjs",
+    "start": "npm run compile && electron .",
+    "dist:mac": "npm run compile && electron-builder --mac --arm64 --publish never",
+    "dist:win": "npm run compile && electron-builder --win --x64 --publish never",
+    "dist:mac-x64": "npm run compile && electron-builder --mac --x64 --publish never",
+    "dist:linux-x64": "npm run compile && electron-builder --linux --x64 --publish never",
+    "dist:linux-arm64": "npm run compile && electron-builder --linux --arm64 --publish never"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@types/node": "^22.20.5",
     "electron": "^45.2.1",
     "electron-builder": "^26.18.0",
-    "typescript": "^5.9.3"
+    "esbuild": "^0.27.7",
+    "fflate": "^0.8.3",
+    "typescript": "^5.9.3",
+    "zod": "^3.25.76"
   },
   "allowScripts": {
     "electron@45.2.1": true
@@ -54,7 +58,9 @@
         "to": "LICENSE"
       }
     ],
-    "asarUnpack": [],
+    "asarUnpack": [
+      "out/mcp.cjs"
+    ],
     "electronLanguages": [
       "en-US"
     ],

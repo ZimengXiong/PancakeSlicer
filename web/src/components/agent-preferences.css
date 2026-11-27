@@ -1,0 +1,28 @@
+:where(.orca-parity) .agent-client-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+:where(.orca-parity) .agent-client-table th,
+:where(.orca-parity) .agent-client-table td {
+  padding: var(--s-2);
+  border-bottom: 1px solid var(--border);
+}
+
+:where(.orca-parity) .agent-client-table tbody th {
+  font-weight: normal;
+}
+
+:where(.orca-parity) .agent-client-table :is(th, td):last-child {
+  text-align: right;
+}
+
+:where(.orca-parity) .agent-client-table select {
+  width: 100%;
+}
+
+:where(.orca-parity) .agent-config-copy {
+  display: flex;
+  gap: var(--s-2);
+}

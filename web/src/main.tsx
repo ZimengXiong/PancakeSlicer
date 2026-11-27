@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import App, { preloadProjects } from './App';
 import { urlRoute } from './flow/routes';
 import { importFiles, init } from './actions';
+import { startAgentBridge } from './agent-bridge';
 import { project, startProjects } from './flow/project';
 import { lease, leaseWritable } from './flow/project-lease';
 import { versionView } from './flow/version-view';
@@ -77,7 +78,7 @@ export function start() {
 
   void loadTab('process').catch(() => {});
   const booted = init();
-  void startProjects(booted).then(startLaunchImports).catch(() => {});
+  void startProjects(booted).then(() => { startLaunchImports(); startAgentBridge(); }).catch(() => {});
   void booted.finally(() => {
     preloadViews();
     whenIdle(() => preloadImages(listProfiles('machine').flatMap((e) => printerCover(e.vendor, {}, e.model) ?? [])));
