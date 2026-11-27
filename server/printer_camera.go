@@ -13,13 +13,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math/big"
 	"mime"
 	"mime/multipart"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -91,6 +94,9 @@ func (h *cameraHub) subscribe(p *PrinterConfig, camera cameraSource) (<-chan cam
 				}
 			}
 			err := runCamera(ctx, p, camera, emit)
+			if ctx.Err() == nil {
+				log.Printf("printer %s: camera %s stopped: %v", p.Printer, camera.ID, err)
+			}
 			h.mu.Lock()
 			defer h.mu.Unlock()
 			if h.feeds[key] != f {
@@ -547,17 +553,49 @@ func relayCameraRTSP(ctx context.Context, listener net.Listener, upstream net.Co
 }
 
 func cameraRTSPCommand(ctx context.Context, executable string, target url.URL, proxyAddr string) *exec.Cmd {
+	env := systemLibraryPath(os.Environ())
 	args := []string{"-hide_banner", "-loglevel", "error", "-rtsp_transport", "tcp", "-analyzeduration", "500000", "-probesize", "32768", "-timeout", "15000000"}
 	// Older demuxers rely on the TLS protocol's default and don't expose this option.
-	if help, err := exec.CommandContext(ctx, executable, "-hide_banner", "-h", "demuxer=rtsp").Output(); err == nil && bytes.Contains(help, []byte("-tls_verify ")) {
+	probe := exec.CommandContext(ctx, executable, "-hide_banner", "-h", "demuxer=rtsp")
+	probe.Env = env
+	if help, err := probe.Output(); err == nil && bytes.Contains(help, []byte("-tls_verify ")) {
 		args = append(args, "-tls_verify", "0")
 	}
 	args = append(args, "-i", target.String(), "-map", "0:v:0", "-an", "-c:v", "copy", "-movflags", "frag_keyframe+empty_moov+default_base_moof", "-flush_packets", "1", "-f", "mp4", "pipe:1")
 	cmd := exec.CommandContext(ctx, executable, args...)
+	cmd.WaitDelay = 5 * time.Second
 	// FFmpeg's RTSPS transport uses CONNECT. Keeping the printer URI in FFmpeg
 	// lets it sign the same target that reaches the printer. Go verifies upstream TLS.
-	cmd.Env = append(cmd.Environ(), "http_proxy=http://"+proxyAddr, "no_proxy=")
+	cmd.Env = append(env, "http_proxy=http://"+proxyAddr, "no_proxy=")
 	return cmd
+}
+
+func systemLibraryPath(env []string) []string {
+	var bundled []string
+	if exe, err := os.Executable(); err == nil {
+		bundled = append(bundled, filepath.Dir(exe))
+	}
+	if dir := os.Getenv("APPDIR"); dir != "" {
+		bundled = append(bundled, dir)
+	}
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		value, ok := strings.CutPrefix(kv, "LD_LIBRARY_PATH=")
+		if !ok {
+			out = append(out, kv)
+			continue
+		}
+		kept := slices.DeleteFunc(filepath.SplitList(value), func(path string) bool {
+			return path == "" || slices.ContainsFunc(bundled, func(dir string) bool {
+				rel, err := filepath.Rel(dir, path)
+				return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+			})
+		})
+		if len(kept) > 0 {
+			out = append(out, "LD_LIBRARY_PATH="+strings.Join(kept, string(filepath.ListSeparator)))
+		}
+	}
+	return out
 }
 
 func rtspCamera(ctx context.Context, p *PrinterConfig, secret string, emit func([]byte, bool)) error {
@@ -586,10 +624,39 @@ func rtspCamera(ctx context.Context, p *PrinterConfig, secret string, emit func(
 	if err != nil {
 		return err
 	}
+	var stderr tailBuffer
+	cmd.Stderr = &stderr
 	if err = cmd.Start(); err != nil {
 		return err
 	}
-	defer func() { cmd.Process.Kill(); cmd.Wait() }()
+	err = readCameraMP4(pipe, emit)
+	cmd.Process.Kill()
+	waitErr := cmd.Wait()
+	if msg := strings.TrimSpace(string(stderr)); msg != "" && ctx.Err() == nil {
+		return cameraFFmpegError(msg, target, secret)
+	}
+	if errors.Is(err, io.EOF) && waitErr != nil {
+		return fmt.Errorf("ffmpeg: %v", waitErr)
+	}
+	return err
+}
+
+func cameraFFmpegError(stderr string, target url.URL, secret string) error {
+	stderr = strings.ReplaceAll(stderr, target.String(), target.Redacted())
+	return fmt.Errorf("ffmpeg: %s", redact(stderr, secret))
+}
+
+type tailBuffer []byte
+
+func (t *tailBuffer) Write(p []byte) (int, error) {
+	*t = append(*t, p...)
+	if len(*t) > 4<<10 {
+		*t = (*t)[len(*t)-4<<10:]
+	}
+	return len(p), nil
+}
+
+func readCameraMP4(pipe io.Reader, emit func([]byte, bool)) (err error) {
 	var init, fragment []byte
 	for {
 		header := make([]byte, 8)

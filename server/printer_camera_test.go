@@ -18,7 +18,10 @@ import (
 	"net/http/httptest"
 	"net/textproto"
 	"net/url"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -233,5 +236,38 @@ func TestCameraFFmpegDigest(t *testing.T) {
 	var exit *exec.ExitError
 	if err := cmd.Wait(); !errors.As(err, &exit) || !strings.Contains(stderr.String(), "404 Not Found") {
 		t.Fatalf("expected ffmpeg to report the fake camera's 404, got %v: %s", err, stderr.String())
+	}
+}
+
+func TestCameraFFmpegErrorHidesAccessCode(t *testing.T) {
+	const secret = "test:/+code"
+	target := url.URL{Scheme: "rtsps", Host: "192.0.2.7:322", User: url.UserPassword(bambuUser, secret), Path: "/streaming/live/1"}
+	stderr := "[in#0 @ 0x1] method DESCRIBE failed: 404 (Not Found)\nError opening input file " + target.String() + ".\n" + secret
+	got := cameraFFmpegError(stderr, target, secret).Error()
+	if strings.Contains(got, "code") || !strings.Contains(got, "404 (Not Found)") || !strings.Contains(got, "rtsps://bblp:xxxxx@192.0.2.7:322/streaming/live/1") {
+		t.Fatalf("ffmpeg error = %q", got)
+	}
+}
+
+func TestCameraFFmpegSkipsBundledLibraries(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("APPDIR", "/tmp/.mount_pancake")
+	bundled := filepath.Join(filepath.Dir(exe), "lib")
+	for _, tc := range []struct{ in, want string }{
+		{"/tmp/.mount_pancake/usr/lib:" + bundled + "::/opt/ffmpeg/lib", "LD_LIBRARY_PATH=/opt/ffmpeg/lib"},
+		{"/tmp/.mount_pancake/usr/lib:" + bundled, ""},
+		{"/tmp/.mount_pancake2/lib", "LD_LIBRARY_PATH=/tmp/.mount_pancake2/lib"},
+	} {
+		env := systemLibraryPath([]string{"PATH=/usr/bin", "LD_LIBRARY_PATH=" + tc.in})
+		want := []string{"PATH=/usr/bin"}
+		if tc.want != "" {
+			want = append(want, tc.want)
+		}
+		if !slices.Equal(env, want) {
+			t.Errorf("systemLibraryPath(%q) = %q, want %q", tc.in, env, want)
+		}
 	}
 }
