@@ -8604,7 +8604,7 @@ std::string GCode::extrude_conformal_patches(const Print &print, const std::vect
                 m_config.apply(object.config(), true);
                 m_config.apply(region.config());
                 if (patch.kind == Nonplanar::PatchKind::Field) {
-                    gcode += this->extrude_field_patch(patch);
+                    gcode += this->extrude_field_patch(patch, &object);
                     m_max_layer_z = std::max(m_max_layer_z, float(patch.z_max));
                     continue;
                 }
@@ -9297,7 +9297,7 @@ std::string GCode::curved_level_marker(const Print &print, double z)
     return gcode;
 }
 
-std::string GCode::extrude_field_patch(const Nonplanar::ConformalPatch &patch)
+std::string GCode::extrude_field_patch(const Nonplanar::ConformalPatch &patch, const PrintObject *owner)
 {
     using namespace Nonplanar;
     std::string             gcode;
@@ -9357,12 +9357,55 @@ std::string GCode::extrude_field_patch(const Nonplanar::ConformalPatch &patch)
         }
         return false;
     };
+    std::vector<const FieldPatchTop *> beside;
+    if (owner != nullptr && patch.native && patch.kind == Nonplanar::PatchKind::Field && patch.band >= 0)
+        for (const Nonplanar::ConformalPatch &other : owner->conformal().patches)
+            if (&other != &patch && other.native && other.kind == Nonplanar::PatchKind::Field && other.band == patch.band &&
+                other.region_id != patch.region_id && other.field && other.host_layer < owner->layers().size()) {
+                auto it = m_field_patch_tops.find(&other);
+                if (it == m_field_patch_tops.end()) {
+                    const Layer       &host = *owner->layers()[other.host_layer];
+                    const double       base = host.slice_z + 0.5 * host.height;
+                    std::vector<Vec3d> qs;
+                    BoundingBoxf       box;
+                    for (const ExtrusionEntityCollection &shell : other.shell_paths)
+                        for (const ExtrusionEntity *ee : shell.entities)
+                            if (const auto *path = dynamic_cast<const ExtrusionPath *>(ee))
+                                for (const Point3 &p : path->polyline.points) {
+                                    qs.push_back(other.field->forward(Vec3d(unscale<double>(p.x()), unscale<double>(p.y()), unscale<double>(p.z()) + base)));
+                                    box.merge(Vec2d(qs.back().head<2>()));
+                                }
+                    FieldPatchTop t;
+                    if (box.defined) {
+                        t.lo = box.min;
+                        t.nx = int(std::ceil(box.size().x())) + 1;
+                        t.ny = int(std::ceil(box.size().y())) + 1;
+                        t.top.assign(size_t(t.nx) * size_t(t.ny), -std::numeric_limits<float>::infinity());
+                        for (const Vec3d &q : qs) {
+                            const int x = std::clamp(int(q.x() - t.lo.x()), 0, t.nx - 1), y = std::clamp(int(q.y() - t.lo.y()), 0, t.ny - 1);
+                            float    &c = t.top[size_t(y) * size_t(t.nx) + size_t(x)];
+                            c           = std::max(c, float(q.z()));
+                        }
+                    }
+                    it = m_field_patch_tops.emplace(&other, std::move(t)).first;
+                }
+                if (!it->second.top.empty())
+                    beside.push_back(&it->second);
+            }
+    auto for_beside = [&beside](auto &&visit) {
+        for (const FieldPatchTop *t : beside)
+            for (int y = 0; y < t->ny; ++y)
+                for (int x = 0; x < t->nx; ++x)
+                    if (const float z = t->top[size_t(y) * size_t(t->nx) + size_t(x)]; std::isfinite(z))
+                        visit(Vec3d(t->lo.x() + x + 0.5, t->lo.y() + y + 0.5, z));
+    };
     BoundingBoxf top_box;
     for (const ExtrusionEntityCollection &shell : patch.shell_paths)
         for (const ExtrusionEntity *ee : shell.entities)
             if (const auto *path = dynamic_cast<const ExtrusionPath *>(ee))
                 for (const Point3 &p : path->polyline.points)
                     top_box.merge(Vec2d(field.forward(to_field(p)).head<2>()));
+    for_beside([&](const Vec3d &q) { top_box.merge(Vec2d(q.head<2>())); });
     const Vec2d        top_lo = top_box.defined ? Vec2d(top_box.min - Vec2d::Constant(2.)) : Vec2d::Zero();
     const int          top_nx = top_box.defined ? int(std::ceil(top_box.size().x() + 4.)) + 1 : 1;
     const int          top_ny = top_box.defined ? int(std::ceil(top_box.size().y() + 4.)) + 1 : 1;
@@ -9378,6 +9421,7 @@ std::string GCode::extrude_field_patch(const Nonplanar::ConformalPatch &patch)
             for (int a = std::max(0, x - 1); a <= std::min(top_nx - 1, x + 1); ++a)
                 top[size_t(b) * top_nx + a] = std::max(top[size_t(b) * top_nx + a], float(q.z()));
     };
+    for_beside([&](const Vec3d &q) { printed(q); });
     auto top_along = [&](const Vec3d &qa, const Vec3d &qb) {
         double     hi = -std::numeric_limits<double>::infinity();
         const int  n  = std::max(1, int(std::ceil((qb - qa).head<2>().norm() / 0.5)));

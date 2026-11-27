@@ -98,6 +98,7 @@ struct ConformalPatch
     size_t     host_layer = 0;
     int        region_id = -1;
     int        band = -1;
+    int        material_rank = -1;
     bool       from_support = false;
     bool       free_travel = false;
     Vec3d      layer_normal { Vec3d::Zero() };

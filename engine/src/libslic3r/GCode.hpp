@@ -547,7 +547,7 @@ protected:
     bool            conformal_keep_primed(ExtrusionRole from, const ExtrusionPathConformal *next,
                                          const ExtrusionPathConformal *prev = nullptr);
     std::string     extrude_multiplanar_chunk(const Nonplanar::ConformalPatch &patch);
-    std::string     extrude_field_patch(const Nonplanar::ConformalPatch &patch);
+    std::string     extrude_field_patch(const Nonplanar::ConformalPatch &patch, const PrintObject *owner = nullptr);
     std::string     travel_above_nonplanar(const Polyline &travel, const std::string &comment, double z);
     void            emit_conformal_moves(std::string &gcode, const ExtrusionPathConformal &path, double e_per_mm,
                                          double speed, const std::string &speed_marker, const std::string &description);
@@ -707,6 +707,13 @@ protected:
     double                                 m_conformal_tolerance{ 0. };
     std::function<Vec2d(const Vec2d &)>    m_conformal_gradient;
     int                                    m_conformal_band_patch{ -1 };
+    struct FieldPatchTop
+    {
+        Vec2d              lo { Vec2d::Zero() };
+        int                nx = 0, ny = 0;
+        std::vector<float> top;
+    };
+    std::unordered_map<const Nonplanar::ConformalPatch *, FieldPatchTop> m_field_patch_tops;
     bool                                   m_conformal_may_hang{ false };
     const ExtrusionPathConformal          *m_conformal_prev{ nullptr };
     bool                                   m_conformal_ramp{ false };

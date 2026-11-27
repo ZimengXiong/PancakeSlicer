@@ -1558,10 +1558,34 @@ void PrintObject::slice_volumes()
                 });
         }
     }
-    if (const std::vector<ExPolygons> *native = Nonplanar::NativeSliceOverride::find(this->model_object()->name);
-        native != nullptr && region_slices.size() == 1)
+    if (const std::vector<std::vector<ExPolygons>> *native = Nonplanar::NativeSliceOverride::find(this->model_object()->name);
+        native != nullptr && native->size() == 1 && region_slices.size() == 1) {
+        const std::vector<ExPolygons> &stack = native->front();
         for (size_t layer_id = 0; layer_id < region_slices.front().size(); ++layer_id)
-            region_slices.front()[layer_id] = layer_id < native->size() ? (*native)[layer_id] : ExPolygons();
+            region_slices.front()[layer_id] = layer_id < stack.size() ? stack[layer_id] : ExPolygons();
+    } else if (native != nullptr && native->size() > 1 && native->size() <= this->model_object()->volumes.size() &&
+               m_shared_regions->layer_ranges.size() == 1) {
+        for (std::vector<ExPolygons> &by_layer : region_slices)
+            for (ExPolygons &slices : by_layer)
+                slices.clear();
+        const ModelVolumePtrs &volumes = this->model_object()->volumes;
+        for (const PrintObjectRegions::VolumeRegion &vr : m_shared_regions->layer_ranges.front().volume_regions) {
+            if (vr.parent != -1 || vr.region == nullptr || vr.model_volume == nullptr)
+                continue;
+            const size_t volume_id = size_t(std::find(volumes.begin(), volumes.end(), vr.model_volume) - volumes.begin());
+            const int    region_id = vr.region->print_object_region_id();
+            if (volume_id >= native->size() || region_id < 0 || size_t(region_id) >= region_slices.size())
+                continue;
+            const std::vector<ExPolygons> &stack = (*native)[volume_id];
+            std::vector<ExPolygons>       &dst   = region_slices[size_t(region_id)];
+            for (size_t layer_id = 0; layer_id < dst.size() && layer_id < stack.size(); ++layer_id)
+                append(dst[layer_id], stack[layer_id]);
+        }
+        for (std::vector<ExPolygons> &by_layer : region_slices)
+            for (ExPolygons &slices : by_layer)
+                if (slices.size() > 1)
+                    slices = union_ex(slices);
+    }
     for (size_t region_id = 0; region_id < region_slices.size(); ++ region_id) {
         std::vector<ExPolygons> &by_layer = region_slices[region_id];
         for (size_t layer_id = 0; layer_id < by_layer.size(); ++ layer_id)

@@ -8,6 +8,7 @@
 #include "HeadEnvelope.hpp"
 #include "LayerField.hpp"
 
+#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
@@ -99,12 +100,16 @@ struct BandOrderStats
 {
     double band = 0., offset = 0.;
     size_t bands = 0, groups = 0, cut_roads = 0;
+    std::vector<long> group_bands;
 };
 
 void link_roads(ExtrusionEntitiesPtr &roads, const ExPolygons *area, double fill_reach = 0.);
 
+double band_offset(const std::vector<const std::vector<FieldRoad> *> &sets, double band);
+
 FieldOrder band_order_roads(std::vector<FieldRoad> &roads, size_t layers, double band, BandOrderStats *stats = nullptr,
                             const std::vector<std::pair<Vec3d, Vec3d>> *precede = nullptr,
-                            const std::vector<ExPolygons> *domains = nullptr);
+                            const std::vector<ExPolygons> *domains = nullptr,
+                            double shared_offset = std::numeric_limits<double>::quiet_NaN());
 
 }
