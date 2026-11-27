@@ -256,7 +256,7 @@
   :root.orca-parity .canvas-area .objects-panel { max-height: calc(100% - 96px); }
 }
 @media (max-width: 599px) {
-  :root.orca-parity .pf-page .page-bar:not([data-rows="1"], [data-rows="2"], [data-rows="3"]) { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
+  :root.orca-parity .pf-page .page-bar:not([data-rows="1"], [data-rows="2"], [data-rows="3"]) { flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; }
   :root.orca-parity .pf-page .page-bar:not([data-rows="1"], [data-rows="2"], [data-rows="3"]) .tab-break { display: none; }
   :root.orca-parity .pf-page .page-bar:not([data-rows="1"], [data-rows="2"], [data-rows="3"]) .page-tab { flex: none; min-width: max-content; }
 }
