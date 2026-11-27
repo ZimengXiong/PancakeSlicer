@@ -546,6 +546,8 @@ double emit_conformal_extrusion(GCodeWriter &writer, const std::vector<Conformal
         const double dE = v * params.e_per_mm3 + prime[i];
         if (prime[i] > 0. && params.prime_speed > 0.)
             speed = std::min(speed, params.prime_speed * printed_length(a.pose.tip, b.pose.tip) / dE);
+        if (prime[i] > 0. && params.max_volume_per_second > 0. && params.e_per_mm3 > 0.)
+            speed = std::min(speed, params.max_volume_per_second * params.e_per_mm3 * printed_length(a.pose.tip, b.pose.tip) / dE);
         if (params.limits.segment_rate > 0.) {
             double length = move_length(m);
             if (params.preserve_points && !rotary)
