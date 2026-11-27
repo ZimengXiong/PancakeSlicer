@@ -1,5 +1,5 @@
 
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, session, shell, type MenuItemConstructorOptions } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, screen, session, shell, type MenuItemConstructorOptions } from 'electron';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -583,6 +583,17 @@ async function start() {
   win.on('closed', () => { win = null; });
   const contents = win.webContents;
   restrictNetwork(rendererSession, contents);
+  let altAt: Electron.Point | null = null;
+  contents.on('before-input-event', (event, input) => {
+    if (MAC || input.key !== 'Alt') return;
+    if (input.type === 'keyDown') {
+      if (!input.isAutoRepeat) altAt = screen.getCursorScreenPoint();
+      return;
+    }
+    const at = screen.getCursorScreenPoint();
+    if (input.type === 'keyUp' && altAt && (at.x !== altAt.x || at.y !== altAt.y)) event.preventDefault();
+    altAt = null;
+  });
   contents.on('console-message', (details) => {
     if (details.level === 'warning' || details.level === 'error')
       console.error(`Renderer ${details.level}: ${details.message} (${details.sourceId}:${details.lineNumber})`);
