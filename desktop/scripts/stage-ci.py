@@ -137,7 +137,11 @@ def main():
     parser.add_argument('--image')
     parser.add_argument('--dependency-prefix',type=Path)
     parser.add_argument('--reference-only', action='store_true', help='Generate the Linux x64 reference and stop before qualifying the payload')
+    parser.add_argument('--native', action='store_true', help='Linux: run the engine directly instead of in a Docker image, as inside the root Dockerfile')
+    parser.add_argument('--source-sha256', help='SHA-256 of the source archive served beside this build, compiled into the service')
     args = parser.parse_args()
+    if args.native and args.os != 'linux':
+        parser.error('--native requires Linux')
     if args.reference_only and (args.os, args.arch) != ('linux', 'x64'):
         parser.error('--reference-only requires Linux x64')
     tool = args.tool.resolve()
@@ -186,7 +190,8 @@ def main():
     server = engine / ('orca-webapp-server' + suffix)
     env = {**os.environ, 'CGO_ENABLED': '0', 'GOARCH': {'x64': 'amd64', 'arm64': 'arm64'}[args.arch]}
     run('go', 'build', '-trimpath', '-mod=vendor', '-ldflags',
-        f'-s -w -X main.buildRevision={revision} -X main.buildImage=pancakeslicer-desktop-{args.os}-{args.arch}',
+        f'-s -w -X main.buildRevision={revision} -X main.buildImage=pancakeslicer-desktop-{args.os}-{args.arch}'
+        + (f' -X main.buildSourceSHA256={args.source_sha256}' if args.source_sha256 else ''),
         '-o', server, '.', cwd=ROOT / 'server', env=env)
     server.chmod(0o755)
     executables = {native, server}
@@ -211,7 +216,7 @@ def main():
     reference.mkdir(parents=True, exist_ok=True)
     command_prefix = []
     image = args.image or f'pancakeslicer:{revision[:10]}'
-    if args.os == 'linux':
+    if args.os == 'linux' and not args.native:
         (build / '.dockerignore').write_text(f'**\n!{engine.name}/\n!{engine.name}/**\n!web/\n!web/**\n')
         run('docker', 'build', '--file', ROOT / 'server/Dockerfile', '--build-arg', f'ENGINE={engine.name}', '--tag', image, build)
         command_prefix = ['docker', 'run', '--rm', '--network', 'none', '--memory', '2g', '--memory-swap', '2g', '--cpus', '1', '--user', f'{os.getuid()}:{os.getgid()}',
@@ -247,6 +252,9 @@ def main():
     payload_modes(engine, {native, server})
     payload_modes(web, set())
     if args.os == 'linux':
+        if args.native:
+            print(f'Staged {revision}: {count} resources for linux/{args.arch}')
+            return
         run('docker', 'build', '--file', ROOT / 'server/Dockerfile', '--build-arg', f'ENGINE={engine.name}', '--tag', image, build)
         print(f'Self-hosted image: {image}')
         return

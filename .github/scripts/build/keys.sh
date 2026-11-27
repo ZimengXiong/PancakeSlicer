@@ -18,10 +18,11 @@ esac
 b=.github/scripts/build
 h() { if command -v sha256sum >/dev/null; then sha256sum; else shasum -a 256; fi | cut -c1-16; }   # macOS has only shasum
 tree() { git ls-files -s -- "$@" | h; }
-code_tree() { git ls-files -s -- "$@" ":(exclude,glob)**/*.md" | h; }
+code_files() { git ls-files -s -- "$@" | awk -F '\t' '$2 !~ /\.md$/'; }
+code_tree() { code_files "$@" | h; }
 deps_hash=$(printf '%s\n%s\n%s\n' "$target" "$compiler" "$(tree engine/deps "$b/deps.sh" "$b/deps-targets.txt" "$b/deps-$os.sh")" | h)
 code=(engine/src engine/deps_src engine/tests/fff_print engine/cmake engine/CMakeLists.txt)
-source_sha=$(git ls-files -s -- "${code[@]}" ":(exclude,glob)**/*.md" | if command -v sha1sum >/dev/null; then sha1sum; else shasum -a 1; fi | cut -c1-40)
+source_sha=$(code_files "${code[@]}" | if command -v sha1sum >/dev/null; then sha1sum; else shasum -a 1; fi | cut -c1-40)
 engine_hash=$(printf '%s\n%s\n' "$deps_hash" "$(code_tree "${code[@]}" "$b/engine.sh" "$b/engine-$os.sh")" | h)
 reference_hash=$(printf '%s\n%s\n' "$source_sha" "$(code_tree engine/resources engine/scripts/qualification)" | h)
 echo "Compiler: $compiler" >&2

@@ -1,6 +1,3 @@
-# Release images build from desktop/build (see deploy/Dockerfile), not from the repo root.
-# Keep any root-context build small and free of local build trees.
-.git
 **/node_modules
 /build*/
 /.ccache/
