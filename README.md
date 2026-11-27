@@ -51,7 +51,7 @@ volumes:
 Run `docker compose up -d` and open `http://<host>:6868`. Full Docker setup and env vars live at [pancake.cooking/self-hosted](https://pancake.cooking/self-hosted/).
 
 ## Supported Printers
-Printers listed below have their non-planar paths checked against a 3D model of their print head for collisions (54 bundled head models across 32 printer families, nozzle variants, and test heads). Printers not listed here can still slice flat or non-planar, falling back to a generic (oversized) head that caps curve angles, or you can dial in a custom head with the 8-cone head-clearance calibration print (`Calibration > Non-planar > Head clearance`).
+Printers listed below have their non-planar paths checked against a 3D model of their print head for collisions (54 bundled head models across 32 printer families, nozzle variants, and test heads). Printers not listed here can still slice flat or non-planar, falling back to a generic (oversized) head that caps curve angles, or you can dial in a custom head with the 8-cone head-clearance calibration print (`Calibration > Non-planar > Head clearance`). See the full searchable compatibility list at [pancake.cooking/printers](https://pancake.cooking/printers/).
 
 > [!CAUTION]
 > Non-Planar in PancakeSlicer is experimental. **Use common sense and review the G-Code preview.** We recommend you only use non-planar under supervision (cartesian printers are better for visibility sake).
@@ -78,7 +78,7 @@ Accessible non-planar slicing is the main goal of this project (everything else 
 
 https://github.com/user-attachments/assets/be7bebe1-bed5-4b60-bb04-9381344389ad
 
-Right now PancakeSlicer supports Flat layers, Curved tops, Smooth morph, Slant (experimental), Conformal layers (experimental), and Auto, plus Z contour and non-planar waves. You can read how the non-planar modes and print-head collision checking work at [pancake.cooking/blog/how-non-planar-slicing-works](https://pancake.cooking/blog/how-non-planar-slicing-works/), watch the [yt video](https://youtu.be/cRSoVq_reGQ), or poke around the pre-sliced sample in the [demo](https://demo.pancake.cooking/):
+Right now PancakeSlicer supports Flat layers, Curved tops, Smooth morph, Slant (experimental), Conformal layers (experimental), and Auto, plus Z contour and non-planar waves. You can read the [non-planar slicing overview](https://pancake.cooking/non-planar/) and technical write-up at [pancake.cooking/blog/how-non-planar-slicing-works](https://pancake.cooking/blog/how-non-planar-slicing-works/), watch the [yt video](https://youtu.be/cRSoVq_reGQ), or poke around the pre-sliced sample in the [demo](https://demo.pancake.cooking/):
 
 <img width="3840" height="2160" alt="image" src="https://github.com/user-attachments/assets/341f383d-551d-4d7f-a7bc-3c459c9d09ef" />
 
@@ -96,7 +96,7 @@ This means:
     - I have my instance behind SSO on my domain, e.g. `slice.your-homelab.com` (built-in auth is a single shared `ORCA_WEB_BEARER_TOKEN`)
   - this is the first thing that has made me switch off of Bambu Connect, I run all my printers `LAN Only` now.
 
-It imports STL, OBJ, 3MF, and STEP, and exports G-code, Bambu `.gcode.3mf`, project `.3mf`, and STL.
+It imports STL, OBJ, 3MF, and STEP, and exports G-code, Bambu `.gcode.3mf`, project `.3mf`, and STL. For a comparison against OrcaSlicer KasmVNC, Unlayered Slicer, and browser WASM slicers, see [pancake.cooking/compare](https://pancake.cooking/compare/) and the [FAQ](https://pancake.cooking/faq/).
 
 ## Dynamic Profiles
 <p width="100%" align="center">
