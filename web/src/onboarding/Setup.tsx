@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { requestPreset } from '../components/PresetCombo';
 import { Glyph } from '../components/Glyph';
 import { getState, setState, toast, useStore, type State } from '../state/store';
@@ -7,6 +7,7 @@ import type { PrinterRecord } from '../profiles/records';
 import { savePreferences } from '../saved-preferences';
 import { addCatalogPrinters, addCatalogProducts, useCatalog } from '../profiles/catalog-add';
 import type { CatalogEntry } from '../catalog/types';
+import { catalogLine, firmwareName, firmwareOf } from '../catalog/read';
 import { FIRST_SCREEN, loadedPrinterVendors, printerCatalog, type CatalogModel, type CatalogVendor } from '../profiles/catalog-reads';
 import { addPrintMaster, printMasters, usePrintMasters } from '../profiles/print-catalog';
 import { discoverPrinters, saveConnection, testConnection, type ConnectionEdit, type ConnectionKind, type ConnectionTest, type Discovered } from '../printers/connections';
@@ -23,12 +24,16 @@ const send = setup.send;
 const VENDOR_NAMES: Record<string, string> = { BBL: 'Bambu Lab' };
 const vendorName = (id: string, name = id) => VENDOR_NAMES[id] ?? name;
 
-interface PrinterModel { id: string; vendor: string; vendorName: string; model: string; cover?: string; nozzles: number[]; catalog: CatalogModel }
-interface Choices { model: PrinterModel | null; nozzles: number[]; profiles: Set<string> | null; connection: ConnectionEdit | null; filaments: Set<string> | null; products: CatalogEntry[]; savedFilaments: string[] }
+interface PrinterModel { id: string; vendor: string; vendorName: string; model: string; cover?: string; nozzles: number[]; firmwares: { id: string; nozzles: number[] }[]; catalog: CatalogModel }
+interface Choices { model: PrinterModel | null; firmware?: string; nozzles: number[]; profiles: Set<string> | null; connection: ConnectionEdit | null; filaments: Set<string> | null; products: CatalogEntry[]; savedFilaments: string[] }
 let choices: Choices = { model: null, nozzles: [], profiles: null, connection: null, filaments: null, products: [], savedFilaments: [] };
 
 const toModels = (vendors: CatalogVendor[]): PrinterModel[] => vendors.flatMap((v) => v.models.map((m) => ({ id: `${v.id}|${m.id}`, vendor: v.id,
-  vendorName: vendorName(v.id, v.name), model: m.id, cover: m.cover, nozzles: m.nozzles.map(Number).filter((n) => n > 0), catalog: m })));
+  vendorName: vendorName(v.id, v.name), model: m.id, cover: m.cover, nozzles: diameters(m.nozzles),
+  firmwares: (m.firmwares ?? []).map((f) => ({ id: f.id, nozzles: diameters(f.nozzles) })), catalog: m })));
+const diameters = (list: string[]) => list.map(Number).filter((n) => n > 0);
+const nozzlesOf = (m: PrinterModel, firmware?: string) => m.firmwares.find((f) => f.id === firmware)?.nozzles ?? m.nozzles;
+const startNozzles = (list: number[], prefer?: number) => prefer !== undefined && list.includes(prefer) ? [prefer] : list.includes(0.4) ? [0.4] : list.slice(0, 1);
 const selectedPrinter = (s: State) => { const r = recordOf(s, 'machine', s.printer) as PrinterRecord | undefined; return r && !r.archived ? r : undefined; };
 
 const STEPS = ['printer', 'profiles', 'connect', 'filaments'] as const;
@@ -101,22 +106,30 @@ function Printer() {
   const [search, setSearch] = useState('');
   const [model, setModel] = useState<PrinterModel | null>(choices.model);
   const [nozzles, setNozzles] = useState<number[]>(choices.nozzles);
+  const [firmware, setFirmware] = useState<string | undefined>(choices.firmware);
+  const touched = useRef(false);
   const q = search.trim().toLowerCase();
   const shown = (models ?? []).filter((m) => q ? `${m.vendorName} ${m.model}`.toLowerCase().includes(q) : m.vendor === vendor);
-  const pick = (m: PrinterModel) => { setModel(m); setNozzles(m.nozzles.includes(0.4) ? [0.4] : m.nozzles.slice(0, 1)); };
+  const pick = (m: PrinterModel) => { touched.current = true; const f = m.firmwares[0]?.id; setModel(m); setFirmware(f); setNozzles(startNozzles(nozzlesOf(m, f))); };
+  const pickFirmware = (f: string) => { if (!model) return; touched.current = true; setFirmware(f); const list = nozzlesOf(model, f); setNozzles((n) => { const kept = n.filter((x) => list.includes(x)); return kept.length ? kept : startNozzles(list); }); };
   useEffect(() => {
     if (model || !models) return;
     const current = selectedPrinter(getState());
     const found = current && models.find((m) => m.vendor === current.vendor && m.catalog.id === current.model);
     if (!found) return;
-    const nozzle = current.nozzles[0]?.diameter ?? 0;
-    setVendor(found.vendor); setModel(found); setNozzles(found.nozzles.includes(nozzle) ? [nozzle] : found.nozzles.includes(0.4) ? [0.4] : found.nozzles.slice(0, 1));
+    const nozzle = current.nozzles[0]?.diameter ?? 0, variant = current.nozzles[0]?.variant;
+    setVendor(found.vendor); setModel(found); setFirmware(found.firmwares[0]?.id); setNozzles(startNozzles(nozzlesOf(found, found.firmwares[0]?.id), nozzle));
+    if (found.firmwares.length) void catalogLine('printers', found.catalog.id).then((line) => {
+      const v = line.variants.find((x) => x.id === variant), f = v && firmwareOf(line, v);
+      if (f && !touched.current) { setFirmware(f); setNozzles(startNozzles(nozzlesOf(found, f), nozzle)); }
+    }, () => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [models]);
   const toggle = (n: number) => setNozzles((list) => list.includes(n) ? list.filter((x) => x !== n) : [...list, n].sort((a, b) => a - b));
-  const next = () => { if (model) { choices = { ...choices, model, nozzles }; send({ type: 'NEXT' }); } };
+  const next = () => { if (model) { choices = { ...choices, model, firmware: model.firmwares.length ? firmware : undefined, nozzles }; send({ type: 'NEXT' }); } };
+  const offered = model ? nozzlesOf(model, firmware) : [];
   return <Frame step="printer" foot={<><Back /><span className="setup-grow" />{failed && <span className="setup-test bad">{failed}</span>}
-    {model && <span className="setup-count">{model.model}<Sep/>{nozzles.join(', ')} mm</span>}<Next disabled={!model || !nozzles.length} onClick={next} /></>}>
+    {model && <span className="setup-count">{model.model}{model.firmwares.length > 0 && firmware && <><Sep/>{firmwareName(firmware)}</>}<Sep/>{nozzles.join(', ')} mm</span>}<Next disabled={!model || !nozzles.length} onClick={next} /></>}>
     <h2>Your printer</h2>
     <input className="text setup-search" type="search" placeholder="Search printers" aria-label="Search printers" value={search} onChange={(e) => setSearch(e.target.value)} />
     <div className="setup-printer">
@@ -129,7 +142,9 @@ function Printer() {
         </button>
       ))}</div>
     </div>
-    {model && model.nozzles.length > 0 && <div className="setup-row"><span className="setup-k">Nozzle</span><div className="setup-chips" role="group" aria-label="Nozzle">{model.nozzles.map((n) =>
+    {model && model.firmwares.length > 1 && <div className="setup-row"><span className="setup-k">Firmware</span><div className="setup-chips" role="radiogroup" aria-label="Firmware">{model.firmwares.map((f) =>
+      <button key={f.id} type="button" role="radio" className="setup-chip" aria-checked={f.id === firmware} onClick={() => pickFirmware(f.id)}>{firmwareName(f.id)}</button>)}</div></div>}
+    {model && offered.length > 0 && <div className="setup-row"><span className="setup-k">Nozzle</span><div className="setup-chips" role="group" aria-label="Nozzle">{offered.map((n) =>
       <label key={n} className="modal-check"><Check checked={nozzles.includes(n)} onCheckedChange={() => toggle(n)} />{n} mm</label>)}</div></div>}
   </Frame>;
 }
@@ -150,7 +165,7 @@ function Profiles() {
 
 const KINDS: [ConnectionKind, string][] = [['bambu-lan', 'Bambu LAN'], ['moonraker', 'Moonraker'], ['octoprint', 'OctoPrint'], ['flashforge', 'Flashforge']];
 function Connect() {
-  const [edit, setEdit] = useState<ConnectionEdit>(choices.connection ?? { kind: 'bambu-lan', name: 'Printer' });
+  const [edit, setEdit] = useState<ConnectionEdit>(choices.connection ?? { kind: choices.firmware === 'klipper' ? 'moonraker' : 'bambu-lan', name: 'Printer' });
   const [test, setTest] = useState<ConnectionTest | 'testing' | null>(null);
   const [found, setFound] = useState<Discovered[] | 'looking' | string | null>(null);
   const discover = async () => {
@@ -272,9 +287,10 @@ function Filaments({ error }: { error: string | null }) {
 
 async function applyChoices() {
   try {
-    const { model, nozzles, profiles, connection, products, savedFilaments } = choices;
-    const sizes = model ? nozzles.map((n) => model.catalog.nozzles.find((k) => Number(k) === n)).filter((k): k is string => !!k) : [];
-    const printers = model && sizes.length ? await addCatalogPrinters(sizes.map((nozzle) => ({ vendor: model.vendor, model: model.catalog, nozzle }))) : undefined;
+    const { model, firmware, nozzles, profiles, connection, products, savedFilaments } = choices;
+    const named = model ? model.catalog.firmwares?.find((f) => f.id === firmware)?.nozzles ?? model.catalog.nozzles : [];
+    const sizes = nozzles.map((n) => named.find((k) => Number(k) === n)).filter((k): k is string => !!k);
+    const printers = model && sizes.length ? await addCatalogPrinters(sizes.map((nozzle) => ({ vendor: model.vendor, model: model.catalog, nozzle, firmware }))) : undefined;
     const printerKey = printers?.chosen[0] ?? null;
     if (printerKey) requestPreset('machine', 0, printerKey);
     if (profiles?.size) {

@@ -4,7 +4,7 @@ import { availableName } from './catalog';
 import { commitRecords } from './transactions';
 import type { FilamentRecord, LibraryRecords, PrinterRecord } from './records';
 import { printerVendors, type CatalogModel, type CatalogVendor } from './catalog-reads';
-import { catalogLine, defaultVariant, listRead, useCatalogRead } from '../catalog/read';
+import { catalogLine, defaultVariant, firmwareName, firmwareOf, listRead, useCatalogRead } from '../catalog/read';
 import type { CatalogEntry } from '../catalog/types';
 import { feedOf, layoutSetup } from '../printers/feeds';
 import { randomId } from '../random-id';
@@ -20,7 +20,7 @@ export function useCatalog(type: 'machine' | 'filament' | 'process', adding: boo
 const plain = (name: string) => name.replace(/\s+@.*$/, '').trim();
 
 export type PrinterIntent = 'add' | 'another';
-export interface PrinterChoice { vendor: string; model: CatalogModel; nozzle: string; intent?: PrinterIntent }
+export interface PrinterChoice { vendor: string; model: CatalogModel; nozzle: string; firmware?: string; intent?: PrinterIntent }
 export interface ProductChoice { product: CatalogEntry; label?: string }
 export interface AddResult { keys: string[]; existing: string[]; skipped: string[]; chosen: string[]; restored?: string[] }
 
@@ -44,13 +44,15 @@ export function catalogPrinterSetup(record: PrinterRecord): PrinterRecord {
 }
 
 export async function addCatalogPrinters(choices: PrinterChoice[]): Promise<AddResult> {
-  const variants = await Promise.all(choices.map(async ({ model, nozzle }) => defaultVariant(await catalogLine('printers', model.id), Number(nozzle))));
+  const variants = await Promise.all(choices.map(async ({ model, nozzle, firmware }) => defaultVariant(await catalogLine('printers', model.id), Number(nozzle), firmware)));
   return add('printer', (doc) => {
     const name = namer(doc.printers), live = doc.printers.filter((p) => !p.archived);
     const records: PrinterRecord[] = [], restored: PrinterRecord[] = [], existing: string[] = [], skipped: string[] = [], chosen: string[] = [], wanted: string[] = [];
-    for (const [i, { vendor, model, nozzle, intent = 'add' }] of choices.entries()) {
-      const variant = variants[i], diameter = Number(nozzle), label = plain(nozzle === '0.4' || model.nozzles.length === 1 ? model.id : `${model.id} ${nozzle} nozzle`);
-      if (!variant) throw new Error(`Hmm, ${model.id} doesn't have a ${nozzle} mm nozzle in the catalog.`);
+    for (const [i, { vendor, model, nozzle, firmware, intent = 'add' }] of choices.entries()) {
+      const variant = variants[i], diameter = Number(nozzle);
+      const base = firmware && model.firmwares && firmware !== model.firmwares[0].id ? `${model.id} ${firmwareName(firmware)}` : model.id;
+      const label = plain(nozzle === '0.4' || model.nozzles.length === 1 ? base : `${base} ${nozzle} nozzle`);
+      if (!variant) throw new Error(`Hmm, ${model.id}${firmware ? ` (${firmwareName(firmware)})` : ''} doesn't have a ${nozzle} mm nozzle in the catalog.`);
       const on = (p: PrinterRecord) => p.model === model.id && p.nozzles[0]?.variant === variant.id;
       const have = intent === 'add' ? [...live, ...records, ...restored].find(on) : undefined;
       if (have) { skipped.push(label); existing.push(have.id); chosen.push(have.id); continue; }
@@ -90,9 +92,9 @@ export async function addCatalogProduct(product: CatalogEntry, label?: string): 
 }
 
 export async function addPrinterOnVariant(model: CatalogModel, variantId: string, name?: string): Promise<string> {
-  const variant = (await catalogLine('printers', model.id)).variants.find((v) => v.id === variantId);
+  const line = await catalogLine('printers', model.id), variant = line.variants.find((v) => v.id === variantId);
   if (!variant) throw new Error(`Oops! We couldn't find ${variantId} in the catalog.`);
-  const { keys, existing } = await addCatalogPrinters([{ vendor: model.vendor, model, nozzle: variant.nozzle }]);
+  const { keys, existing } = await addCatalogPrinters([{ vendor: model.vendor, model, nozzle: variant.nozzle, firmware: model.firmwares && firmwareOf(line, variant) }]);
   const key = keys[0] ?? existing[0];
   const printers = getState().records.printers, record = printers.find((p) => p.id === key);
   if (record && name && record.name !== name) await commitRecords([{ kind: 'printer', record: { ...record, name: namer(printers.filter((p) => p.id !== key))(name) } }], { label: 'Rename printer' });

@@ -1,7 +1,7 @@
 import { normalizeConfig } from '../config-values';
 import { createMachine, useMachine, type Machine } from '../flow/fsm';
 import { responseError } from '../api/access';
-import type { CatalogEntry, CatalogKind, CatalogLine, CatalogList, CatalogPrinter, CatalogProduct, CatalogTuning } from './types';
+import type { CatalogEntry, CatalogKind, CatalogLine, CatalogList, CatalogPrinter, CatalogProduct, CatalogTuning, CatalogVariant } from './types';
 
 type ReadState = 'idle' | 'loading' | 'ready' | 'failed';
 interface ReadContext<T> { path: string; value: T | null; error: string | null; request: number }
@@ -74,5 +74,13 @@ export function useCatalogRead<T>(m: CatalogRead<T>): { state: ReadState; value:
 }
 
 export const tuningFor = (product: CatalogProduct, variant: string) => product.tunings.find((t) => t.fits.includes(variant));
-export const defaultVariant = (printer: CatalogPrinter, nozzle: number) =>
-  printer.variants.find((v) => v.default && Math.abs(Number(v.nozzle) - nozzle) < 1e-6);
+export function firmwareOf(printer: CatalogPrinter, variant: CatalogVariant): string {
+  const flavor = String(variant.values.gcode_flavor ?? printer.base.gcode_flavor ?? '');
+  return flavor.startsWith('marlin') ? 'marlin' : flavor;
+}
+const FIRMWARE_NAMES: Record<string, string> = { marlin: 'Marlin', klipper: 'Klipper', reprapfirmware: 'RepRapFirmware' };
+export const firmwareName = (id: string) => FIRMWARE_NAMES[id] ?? id.charAt(0).toUpperCase() + id.slice(1);
+export function defaultVariant(printer: CatalogPrinter, nozzle: number, firmware?: string): CatalogVariant | undefined {
+  const sized = printer.variants.filter((v) => Math.abs(Number(v.nozzle) - nozzle) < 1e-6 && (!firmware || firmwareOf(printer, v) === firmware));
+  return sized.find((v) => v.default) ?? (firmware ? sized[0] : undefined);
+}

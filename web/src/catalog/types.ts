@@ -12,5 +12,6 @@ export interface CatalogProduct { id: string; brand?: string; type?: string; bas
 
 export type CatalogLine<K extends CatalogKind> = K extends 'printers' ? CatalogPrinter : CatalogProduct;
 export interface CatalogEntry { id: string; brand?: string; type?: string; vendor?: string }
-export interface CatalogPrinterEntry extends CatalogEntry { vendor: string; vendorName: string; family?: string; cover?: string; bed?: string; extruders: number; nozzles: string[] }
+export interface CatalogFirmware { id: string; nozzles: string[] }
+export interface CatalogPrinterEntry extends CatalogEntry { vendor: string; vendorName: string; family?: string; cover?: string; bed?: string; extruders: number; nozzles: string[]; firmwares?: CatalogFirmware[] }
 export interface CatalogList { version: string; entries: CatalogEntry[] }

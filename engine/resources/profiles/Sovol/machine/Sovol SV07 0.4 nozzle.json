@@ -6,6 +6,7 @@
 	"setting_id": "nqHcOb6QQy4kM8nO",
 	"instantiation": "true",
 	"printer_model": "Sovol SV07",
+	"gcode_flavor": "klipper",
 	"default_print_profile": "0.20mm Standard @Sovol SV07",
 	"nozzle_diameter": [
 		"0.4"

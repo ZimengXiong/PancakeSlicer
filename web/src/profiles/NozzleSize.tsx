@@ -2,7 +2,7 @@ import { Dropdown, type DropdownOption } from '../components/Dropdown';
 import { toast, useStore } from '../state/store';
 import { useMachine } from '../flow/fsm';
 import { nozzleSize } from '../flow/nozzle-size';
-import { lineRead, useCatalogRead } from '../catalog/read';
+import { firmwareOf, lineRead, useCatalogRead } from '../catalog/read';
 import { nozzlePresets, switchNozzle } from './nozzle-switch';
 import type { CatalogPrinter } from '../catalog/types';
 
@@ -17,9 +17,9 @@ function NozzleSizes({ printerId, model, disabled, grid, label }: { printerId: s
   const printer = useStore((s) => s.records.printers.find((p) => p.id === printerId));
   const line = useCatalogRead(lineRead('printers', model)).value as CatalogPrinter | null;
   if (!printer || !line) return null;
-  const n = printer.nozzles[0];
+  const n = printer.nozzles[0], current = line.variants.find((v) => v.id === n.variant), firmware = current && firmwareOf(line, current);
   const sizes = new Map<number, string>();
-  for (const v of line.variants) if (v.default) sizes.set(Number(v.nozzle), '');
+  for (const v of line.variants) if (firmware ? firmwareOf(line, v) === firmware : v.default) sizes.set(Number(v.nozzle), '');
   for (const p of [...nozzlePresets(printer, line), { diameter: n.diameter, variants: printer.nozzles.map((x) => x.variant) }]) {
     const bases = [...new Set(p.variants.flatMap((id) => line.variants.filter((v) => v.id === id).map((v) => Number(v.nozzle))))];
     if (p.diameter === n.diameter || !sizes.has(p.diameter))

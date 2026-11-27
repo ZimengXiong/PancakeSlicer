@@ -3,7 +3,7 @@ import { sameValue } from '../state/value-equality';
 import { getState, toast, type State } from '../state/store';
 import { commitRecords } from './transactions';
 import type { ResolveResponse } from '../flow/resolved';
-import { catalogLine } from '../catalog/read';
+import { catalogLine, defaultVariant, firmwareOf } from '../catalog/read';
 import type { CatalogPrinter } from '../catalog/types';
 import type { PrinterRecord } from './records';
 
@@ -25,7 +25,8 @@ export async function switchNozzle(printerId: string, size: number): Promise<str
   if (!before?.nozzles[0]) throw new Error('Oops! That printer isn\'t available right now.');
   if (!validSize(size)) throw new Error('Nozzles have to be between 0.1 and 2 mm!');
   const line = await catalogLine('printers', before.model);
-  const catalog = line.variants.find((v) => v.default && Number(v.nozzle) === size);
+  const current = line.variants.find((v) => v.id === before.nozzles[0].variant), firmware = current && firmwareOf(line, current);
+  const catalog = defaultVariant(line, size, firmware);
   const saved = nozzlePresets(before, line).find((p) => p.diameter === size);
   const nozzles = before.nozzles.map((n, i) => ({ ...n, variant: catalog?.id ?? saved?.variants[i] ?? n.variant, diameter: size }));
   if (!nozzles.every((n) => knownVariant(line, n.variant))) throw new Error('Pick a catalog nozzle size before setting a custom size.');
@@ -35,7 +36,7 @@ export async function switchNozzle(printerId: string, size: number): Promise<str
   for (const active of [before.nozzles, nozzles]) {
     const diameter = active[0].diameter;
     if (validSize(diameter) && active.every((n) => n.diameter === diameter && knownVariant(line, n.variant)) &&
-      !line.variants.some((v) => v.default && Number(v.nozzle) === diameter))
+      !defaultVariant(line, diameter, firmware))
       presets.set(diameter, { diameter, variants: active.map((n) => n.variant) });
   }
   const bases = nozzles.flatMap((n, i) => {

@@ -14,7 +14,8 @@
 	"nonplanar_mode": "auto",
 	"ironing_type": "top",
 	"compatible_printers": [
-		"Sovol SV06 Plus 0.4 nozzle"
+		"Sovol SV06 Plus 0.4 nozzle",
+		"Sovol SV06 Plus Klipper 0.4 nozzle"
 	],
 	"description": "0.20mm Standard with curved top surfaces, overhangs and bridges. Auto chooses the shells and pattern for each curved area and checks every move against the printer's head."
 }

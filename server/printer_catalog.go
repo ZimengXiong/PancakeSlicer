@@ -14,14 +14,58 @@ import (
 )
 
 type catalogPrinterEntry struct {
-	ID         string   `json:"id"`
-	Vendor     string   `json:"vendor"`
-	VendorName string   `json:"vendorName"`
-	Family     string   `json:"family,omitempty"`
-	Cover      string   `json:"cover,omitempty"`
-	Bed        string   `json:"bed,omitempty"`
-	Extruders  int      `json:"extruders"`
-	Nozzles    []string `json:"nozzles"`
+	ID         string            `json:"id"`
+	Vendor     string            `json:"vendor"`
+	VendorName string            `json:"vendorName"`
+	Family     string            `json:"family,omitempty"`
+	Cover      string            `json:"cover,omitempty"`
+	Bed        string            `json:"bed,omitempty"`
+	Extruders  int               `json:"extruders"`
+	Nozzles    []string          `json:"nozzles"`
+	Firmwares  []catalogFirmware `json:"firmwares,omitempty"`
+}
+
+type catalogFirmware struct {
+	ID      string   `json:"id"`
+	Nozzles []string `json:"nozzles"`
+}
+
+func variantFirmware(p *resolve.CatalogPrinter, v resolve.CatalogVariant) string {
+	flavor := cmpOr(v.Values["gcode_flavor"], p.Base["gcode_flavor"])
+	if strings.HasPrefix(flavor, "marlin") {
+		return "marlin"
+	}
+	return flavor
+}
+
+func catalogFirmwares(p *resolve.CatalogPrinter, preferred string) []catalogFirmware {
+	out := []catalogFirmware{}
+	for _, v := range p.Variants {
+		id := variantFirmware(p, v)
+		i := slices.IndexFunc(out, func(f catalogFirmware) bool { return f.ID == id })
+		if i < 0 {
+			out, i = append(out, catalogFirmware{ID: id}), len(out)
+		}
+		if !slices.Contains(out[i].Nozzles, v.Nozzle) {
+			out[i].Nozzles = append(out[i].Nozzles, v.Nozzle)
+		}
+	}
+	if len(out) < 2 {
+		return nil
+	}
+	for _, f := range out {
+		slices.SortFunc(f.Nozzles, compareNozzles)
+	}
+	if i := slices.IndexFunc(out, func(f catalogFirmware) bool { return f.ID == preferred }); i > 0 {
+		out = append([]catalogFirmware{out[i]}, slices.Delete(out, i, i+1)...)
+	}
+	return out
+}
+
+func compareNozzles(a, b string) int {
+	x, _ := strconv.ParseFloat(a, 64)
+	y, _ := strconv.ParseFloat(b, 64)
+	return int(math.Copysign(1, x-y))
 }
 
 func (s *Server) catalogPrinters() []catalogPrinterEntry {
@@ -40,11 +84,7 @@ func (s *Server) catalogPrinters() []catalogPrinterEntry {
 				e.Nozzles = append(e.Nozzles, v.Nozzle)
 			}
 		}
-		slices.SortFunc(e.Nozzles, func(a, b string) int {
-			x, _ := strconv.ParseFloat(a, 64)
-			y, _ := strconv.ParseFloat(b, 64)
-			return int(math.Copysign(1, x-y))
-		})
+		slices.SortFunc(e.Nozzles, compareNozzles)
 		if _, err := os.Stat(filepath.Join(root, p.Vendor, p.ID+"_cover.png")); err == nil {
 			e.Cover = "/api/catalog/covers/" + url.PathEscape(p.Vendor) + "/" + url.PathEscape(p.ID)
 		}
@@ -53,7 +93,9 @@ func (s *Server) catalogPrinters() []catalogPrinterEntry {
 			variant = defaults[e.Nozzles[0]]
 		}
 		if machine := s.catalog.Machine(variant); machine != nil {
-			e.Bed, e.Extruders = bedSize(machine), s.catalog.VariantByID(variant).Extruders
+			v := s.catalog.VariantByID(variant)
+			e.Bed, e.Extruders = bedSize(machine), v.Extruders
+			e.Firmwares = catalogFirmwares(p, variantFirmware(p, *v))
 		}
 		out = append(out, e)
 	}
