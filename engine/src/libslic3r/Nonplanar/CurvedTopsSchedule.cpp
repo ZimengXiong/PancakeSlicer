@@ -896,7 +896,7 @@ NonplanarDeferral plan_nonplanar_deferral(const PrintObject &object, const Nonpl
                 }
                 for (size_t i = first; i < last; ++i) {
                     const Sampled &src = sampled[size_t(all[i].path)];
-                    if (edge_level[i] > 0 && ! (i > 0 && all[i - 1].path == all[i].path && edge_level[i - 1] > 0))
+                    if (edge_level[i] > 0 && ! (i > 0 && all[i - 1].path == all[i].path && edge_level[i - 1] > 0 && earliest[i - 1] == earliest[i]))
                         ++ edge_run;
                     if (i > 0 && edge_level[i] == 0 && edge_level[i - 1] == 0 &&
                         all[i].path == all[i - 1].path && earliest[i] == earliest[i - 1]) {

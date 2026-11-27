@@ -1926,9 +1926,12 @@ std::vector<std::vector<float>> WipeTower2::extract_wipe_volumes(const ConfigBas
 {
     const std::vector<double> &raw_matrix      = config.option<ConfigOptionFloats>("flush_volumes_matrix")->values;
     const auto                *nozzle_diameter = config.option<ConfigOptionFloats>("nozzle_diameter");
+    const auto                *colours         = config.option<ConfigOptionStrings>("filament_colour");
+    const size_t               filament_nums   = colours == nullptr ? 0 : colours->values.size();
     size_t       nozzle_nums         = (nozzle_diameter == nullptr || nozzle_diameter->values.empty()) ? 1 : nozzle_diameter->values.size();
     unsigned int number_of_extruders = (unsigned int)(sqrt(raw_matrix.size() / nozzle_nums) + EPSILON);
-    if (size_t(number_of_extruders) * number_of_extruders * nozzle_nums != raw_matrix.size()) {
+    if (size_t(number_of_extruders) * number_of_extruders * nozzle_nums != raw_matrix.size() ||
+        (filament_nums > 0 && filament_nums * filament_nums == raw_matrix.size())) {
         nozzle_nums         = 1;
         number_of_extruders = (unsigned int)(sqrt(raw_matrix.size()) + EPSILON);
     }

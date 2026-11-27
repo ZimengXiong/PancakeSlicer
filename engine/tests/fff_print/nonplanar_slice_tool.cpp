@@ -1051,7 +1051,10 @@ void apply_filaments(const Args &a, DynamicPrintConfig &config)
                     matrix[nozzle * n * n + from * n + to] = calculator.calc_flush_vol(255, f[0], f[1], f[2], 255, t[0], t[1], t[2]);
                 }
     }
-    config.option<ConfigOptionFloats>("flush_multiplier", true)->values.resize(n_nozzle, 1.);
+    for (const auto &[key, fallback] : {std::make_pair("flush_multiplier", 1.), std::make_pair("flush_multiplier_fast", 1.2)}) {
+        std::vector<double> &values = config.option<ConfigOptionFloats>(key, true)->values;
+        values.resize(n_nozzle, values.empty() ? fallback : values.front());
+    }
     config.option<ConfigOptionFloats>("flush_volumes_vector", true)->values.assign(2 * n, 140.);
 }
 

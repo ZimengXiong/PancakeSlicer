@@ -2386,20 +2386,22 @@ private:
 };
 
 template<class T>
-static std::vector<T> get_flush_volumes_matrix(const std::vector<T> &fv_matrix, size_t extruder_id = -1, size_t nozzle_nums = 1)
+static std::vector<T> get_flush_volumes_matrix(const std::vector<T> &fv_matrix, size_t extruder_id = -1, size_t nozzle_nums = 1, size_t filament_nums = 0)
 {
+    if (extruder_id == size_t(-1) || nozzle_nums <= 1)
+        return fv_matrix;
     const auto square = [](size_t size) {
         const size_t side = size_t(std::llround(std::sqrt(double(size))));
         return side * side == size;
     };
-    if (extruder_id != -1 && nozzle_nums > 1 && square(fv_matrix.size()) &&
-        (fv_matrix.size() % nozzle_nums != 0 || !square(fv_matrix.size() / nozzle_nums)))
+    const size_t size = fv_matrix.size();
+    if (filament_nums > 0 && size == filament_nums * filament_nums)
         return fv_matrix;
-    if (extruder_id != -1 && nozzle_nums != 1) {
-        return std::vector<T>(fv_matrix.begin() + size_t(fv_matrix.size() / nozzle_nums * extruder_id + EPSILON),
-                                   fv_matrix.begin() + size_t(fv_matrix.size() / nozzle_nums * (extruder_id + 1) + EPSILON));
-    }
-    return fv_matrix;
+    if (square(size) && (size % nozzle_nums != 0 || !square(size / nozzle_nums)))
+        return fv_matrix;
+    const size_t step = size / nozzle_nums;
+    const size_t id   = std::min(extruder_id, nozzle_nums - 1);
+    return std::vector<T>(fv_matrix.begin() + step * id, fv_matrix.begin() + step * (id + 1));
 }
 
 template<class T>

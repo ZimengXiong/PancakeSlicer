@@ -119,7 +119,7 @@ void Print::_plan_belt_purge()
     this->throw_if_canceled();
 
     std::vector<float> flush_matrix(cast<float>(
-        get_flush_volumes_matrix(m_config.flush_volumes_matrix.values, 0, m_config.nozzle_diameter.values.size())));
+        get_flush_volumes_matrix(m_config.flush_volumes_matrix.values, 0, m_config.nozzle_diameter.values.size(), number_of_extruders)));
     std::vector<std::vector<float>> wipe_volumes;
     for (unsigned int i = 0; i < number_of_extruders; ++i)
         wipe_volumes.push_back(std::vector<float>(flush_matrix.begin() + i * number_of_extruders,
