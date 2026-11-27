@@ -656,6 +656,19 @@ NonplanarDeferral plan_nonplanar_deferral(const PrintObject &object, const Nonpl
             if (it != tops.begin())
                 earliest[i] = std::min(base[i], 2 * std::prev(it)->second + 1);
         }
+        for (size_t i = 0; i < all.size(); ++ i) {
+            const ExtrusionPath &path = *sampled[size_t(all[i].path)].path;
+            if (! path.nonplanar_source || path.distance_to_top < 0.001f)
+                continue;
+            double top = all[i].z;
+            if (i > 0 && all[i - 1].path == all[i].path)
+                top = std::max(top, 0.5 * (all[i - 1].z + all[i].z));
+            if (i + 1 < all.size() && all[i + 1].path == all[i].path)
+                top = std::max(top, 0.5 * (all[i].z + all[i + 1].z));
+            auto it = std::lower_bound(tops.begin(), tops.end(), std::make_pair(top - 5e-4, std::numeric_limits<int>::min()));
+            if (it != tops.begin())
+                earliest[i] = std::max(earliest[i], 2 * std::prev(it)->second);
+        }
     };
     compute_earliest();
     std::vector<std::pair<size_t, size_t>> spans;
