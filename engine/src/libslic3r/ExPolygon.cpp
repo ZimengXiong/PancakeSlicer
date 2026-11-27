@@ -269,6 +269,21 @@ void ExPolygon::medial_axis(double min_width, double max_width, ThickPolylines* 
     for (ThickPolylines::const_iterator it = pp.begin(); it != pp.end(); ++it)
         max_w = fmaxf(max_w, *std::max_element(it->width.begin(), it->width.end()));
     
+    auto extend = [this, max_width](const Point &end, Vec2d inner, Point &out) {
+        const Vec2d tip = end.cast<double>() + (end.cast<double>() - inner).normalized() * max_width;
+        const Line ray(inner.cast<coord_t>(), tip.cast<coord_t>());
+        double dmin = std::numeric_limits<double>::max();
+        Point ip;
+        if (this->contour.first_intersection(ray, &ip)) {
+            dmin = (ip - ray.a).cast<double>().squaredNorm();
+            out = ip;
+        }
+        for (const Polygon &hole : this->holes)
+            if (hole.first_intersection(ray, &ip) && (ip - ray.a).cast<double>().squaredNorm() < dmin) {
+                dmin = (ip - ray.a).cast<double>().squaredNorm();
+                out = ip;
+            }
+    };
     bool removed = false;
     for (size_t i = 0; i < pp.size(); ++i) {
         ThickPolyline& polyline = pp[i];
@@ -276,20 +291,16 @@ void ExPolygon::medial_axis(double min_width, double max_width, ThickPolylines* 
         Point new_front = polyline.points.front();
         Point new_back  = polyline.points.back();
         if (polyline.endpoints.first && !this->on_boundary(new_front, SCALED_EPSILON)) {
-            Vec2d p1 = polyline.points.front().cast<double>();
-            Vec2d p2 = polyline.points[1].cast<double>();
+            Vec2d inner = polyline.points[1].cast<double>();
             if (polyline.points.size() == 2)
-                p2 = (p1 + p2) * 0.5;
-            p1 -= (p2 - p1).normalized() * max_width;
-            this->contour.intersection(Line(p1.cast<coord_t>(), p2.cast<coord_t>()), &new_front);
+                inner = (polyline.points.front().cast<double>() + inner) * 0.5;
+            extend(polyline.points.front(), inner, new_front);
         }
         if (polyline.endpoints.second && !this->on_boundary(new_back, SCALED_EPSILON)) {
-            Vec2d p1 = (polyline.points.end() - 2)->cast<double>();
-            Vec2d p2 = polyline.points.back().cast<double>();
+            Vec2d inner = (polyline.points.end() - 2)->cast<double>();
             if (polyline.points.size() == 2)
-                p1 = (p1 + p2) * 0.5;
-            p2 += (p2 - p1).normalized() * max_width;
-            this->contour.intersection(Line(p1.cast<coord_t>(), p2.cast<coord_t>()), &new_back);
+                inner = (polyline.points.back().cast<double>() + inner) * 0.5;
+            extend(polyline.points.back(), inner, new_back);
         }
         polyline.points.front() = new_front;
         polyline.points.back()  = new_back;
