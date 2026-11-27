@@ -71,10 +71,10 @@ bool obstructs(const Piece &material, const Piece &tool, const NonplanarClearanc
 }
 
 using Graph = std::vector<std::vector<size_t>>;
-Graph dependencies(const std::vector<Piece> &pieces, const NonplanarClearanceModel &head, bool flow_height = false)
+template<typename Visit>
+void visit_reachable_pairs(const std::vector<Piece> &pieces, const NonplanarClearanceModel &head, bool flow_height, Visit &&visit)
 {
-    Graph graph(pieces.size());
-    if (pieces.empty()) return graph;
+    if (pieces.empty()) return;
     double low = pieces.front().low, high = pieces.front().high, reach = 0.;
     for (const auto &p : pieces) low = std::min(low, p.low), high = std::max(high, p.high);
     double contact = head.contact_allowance_mm;
@@ -87,7 +87,7 @@ Graph dependencies(const std::vector<Piece> &pieces, const NonplanarClearanceMod
     for (const auto &b : head.boxes)
         if (high - low > b.bottom - head.safety_mm)
             reach = std::max({reach, std::abs(b.x_min), std::abs(b.x_max), std::abs(b.y_min), std::abs(b.y_max)});
-    if (reach == 0.) return graph;
+    if (reach == 0.) return;
     double half_width = 0.;
     for (const auto &p : pieces) half_width = std::max(half_width, 0.5 * double(p.path.width));
     reach += 1. + half_width + head.bead_margin + head.safety_mm;
@@ -102,9 +102,18 @@ Graph dependencies(const std::vector<Piece> &pieces, const NonplanarClearanceMod
                 const auto found = grid.find({x,y});
                 if (found == grid.end()) continue;
                 for (size_t j : found->second)
-                    if (i != j && obstructs(pieces[j], pieces[i], head, flow_height)) graph[i].push_back(j);
+                    if (i != j && visit(i, j)) return;
             }
     }
+}
+
+Graph dependencies(const std::vector<Piece> &pieces, const NonplanarClearanceModel &head, bool flow_height = false)
+{
+    Graph graph(pieces.size());
+    visit_reachable_pairs(pieces, head, flow_height, [&](size_t i, size_t j) {
+        if (obstructs(pieces[j], pieces[i], head, flow_height)) graph[i].push_back(j);
+        return false;
+    });
     return graph;
 }
 
@@ -149,7 +158,6 @@ bool continuous_curved_top_clear(const std::vector<ExtrusionPath> &paths, const 
             return false;
     const bool flow_height = std::all_of(paths.begin(), paths.end(), [](const ExtrusionPath &path) { return path.continuous_top; });
     const auto pieces = split_paths(paths, .1, .01);
-    const auto graph = dependencies(pieces, head, flow_height);
     std::vector<double> arc;
     double walked = 0.;
     for (const auto &piece : pieces) {
@@ -165,22 +173,25 @@ bool continuous_curved_top_clear(const std::vector<ExtrusionPath> &paths, const 
         if (refined[i].empty()) refined[i] = split_paths({pieces[i].path}, .01, .001);
         return refined[i];
     };
-    for (size_t i = 0; i < graph.size(); ++i)
-        for (size_t j : graph[i])
-            if (j < i && arc[i] - arc[j] > contact_run && (!closed || walked - (arc[i] - arc[j]) > contact_run)) {
-                bool blocked = false;
-                for (const auto &tool : fine(i)) {
-                    for (const auto &material : fine(j))
-                        if (obstructs(material, tool, head, flow_height)) { blocked = true; break; }
-                    if (blocked) break;
-                }
-                if (!blocked) continue;
-                BOOST_LOG_TRIVIAL(info) << "Curved top boundary access: surface " << paths.front().source_surface_id
-                    << " path " << paths.front().source_path_id << " tool arc " << arc[i] << " material arc " << arc[j]
-                    << " length " << walked << " rise " << pieces[j].high - pieces[i].low;
-                return false;
-            }
-    return true;
+    bool clear = true;
+    visit_reachable_pairs(pieces, head, flow_height, [&](size_t i, size_t j) {
+        if (!(j < i && arc[i] - arc[j] > contact_run && (!closed || walked - (arc[i] - arc[j]) > contact_run)) ||
+            !obstructs(pieces[j], pieces[i], head, flow_height))
+            return false;
+        bool blocked = false;
+        for (const auto &tool : fine(i)) {
+            for (const auto &material : fine(j))
+                if (obstructs(material, tool, head, flow_height)) { blocked = true; break; }
+            if (blocked) break;
+        }
+        if (!blocked) return false;
+        BOOST_LOG_TRIVIAL(info) << "Curved top boundary access: surface " << paths.front().source_surface_id
+            << " path " << paths.front().source_path_id << " tool arc " << arc[i] << " material arc " << arc[j]
+            << " length " << walked << " rise " << pieces[j].high - pieces[i].low;
+        clear = false;
+        return true;
+    });
+    return clear;
 }
 
 std::vector<ExtrusionPath> order_curved_tops_paths(const std::vector<ExtrusionPath> &paths,
