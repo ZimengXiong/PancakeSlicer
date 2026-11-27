@@ -84,10 +84,10 @@ func TestBambuProjectFileRequestPaths(t *testing.T) {
 		wantFile, wantURL   string
 	}{
 		{"H2D", "H2D", "", "ftp:///" + filename, "ftp:///" + filename},
-		{"P2S", "P2S", "", "ftp:///cache/" + filename, "ftp:///cache/" + filename},
+		{"P2S", "P2S", "", "ftp:///" + filename, "ftp:///" + filename},
 		{"H2D by serial", "", "094001", "ftp:///" + filename, "ftp:///" + filename},
-		{"P2S by serial", "", "22E001", "ftp:///cache/" + filename, "ftp:///cache/" + filename},
-		{"P2S catalog name", "Bambu Lab P2S", "", "ftp:///cache/" + filename, "ftp:///cache/" + filename},
+		{"P2S by serial", "", "22E001", "ftp:///" + filename, "ftp:///" + filename},
+		{"P2S catalog name", "Bambu Lab P2S", "", "ftp:///" + filename, "ftp:///" + filename},
 		{"P1S", "P1S", "", filename, "file:///sdcard/" + filename},
 		{"A1", "A1", "", filename, "file:///sdcard/" + filename},
 		{"X1 Carbon", "X1 Carbon", "", filename, "file:///sdcard/" + filename},

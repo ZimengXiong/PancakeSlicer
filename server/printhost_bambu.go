@@ -403,11 +403,8 @@ func bambuProjectFileRequest(u *upload, sequence, name, plate, md5sum string) ma
 	}
 	file, startURI := u.filename, "file:///sdcard/"+u.filename
 	switch model {
-	case "H2D":
+	case "H2D", "P2S":
 		startURI = "ftp:///" + u.filename
-		file = startURI
-	case "P2S":
-		startURI = "ftp:///cache/" + u.filename
 		file = startURI
 	}
 	legacyMapping, addresses := u.options.amsMapping, u.options.amsMapping2
