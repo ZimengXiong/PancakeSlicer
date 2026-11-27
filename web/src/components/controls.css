@@ -96,8 +96,7 @@
 :root.orca-parity[data-input=pointer] :focus-visible { outline: none !important; }
 
 
-:where(.orca-parity) * { scrollbar-width: none; }
-:where(.orca-parity) *::-webkit-scrollbar { display: none; }
+:where(.orca-parity) * { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
 @property --fade-top { syntax: '<length>'; inherits: false; initial-value: 0px; }
 @property --fade-bottom { syntax: '<length>'; inherits: false; initial-value: 0px; }
 @keyframes scroll-fade { from { --fade-top: 0px; --fade-bottom: 20px; } 1% { --fade-top: 20px; } 99% { --fade-bottom: 20px; } to { --fade-top: 20px; --fade-bottom: 0px; } }

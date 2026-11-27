@@ -65,8 +65,7 @@
 :where(.orca-parity) .op-head:hover { background: var(--hover); }
 :where(.orca-parity) .objects-panel[data-open] .op-head > :last-child { margin-left: auto; }
 :where(.orca-parity) .op-count { color: var(--ink-3); font: var(--t-small); font-variant-numeric: tabular-nums; }
-:where(.orca-parity) .op-body { min-height: 0; overflow: auto; padding: 0 var(--s-2) var(--s-2); scrollbar-width: none; overscroll-behavior: contain; }
-:where(.orca-parity) .op-body::-webkit-scrollbar { display: none; }
+:where(.orca-parity) .op-body { min-height: 0; overflow: auto; padding: 0 var(--s-2) var(--s-2); overscroll-behavior: contain; }
 :where(.orca-parity) .op-body .object-list { max-height: none; min-height: 0; border: 0; }
 :where(.orca-parity) .op-body .ol-row { border-radius: var(--r-1); column-gap: var(--s-1); padding-left: var(--s-3); }
 :where(.orca-parity) .op-body .ol-settings-head { padding-right: 0; }
