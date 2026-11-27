@@ -1,0 +1,17 @@
+{
+	"type": "machine",
+	"name": "Sovol SV06 Plus Klipper 0.6 nozzle",
+	"inherits": "Sovol SV06 Plus Klipper 0.4 nozzle",
+	"from": "system",
+	"setting_id": "faf82b8fb1819cb5",
+	"instantiation": "true",
+	"printer_model": "Sovol SV06 Plus",
+	"printer_variant": "0.6",
+	"default_print_profile": "0.30mm Standard @Sovol SV06 Plus 0.6 nozzle",
+	"nozzle_diameter": [
+		"0.6"
+	],
+	"max_layer_height": [
+		"0.48"
+	]
+}

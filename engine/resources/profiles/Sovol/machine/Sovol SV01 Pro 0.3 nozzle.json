@@ -1,0 +1,20 @@
+{
+	"type": "machine",
+	"name": "Sovol SV01 Pro 0.3 nozzle",
+	"inherits": "Sovol SV01 Pro 0.4 nozzle",
+	"from": "system",
+	"setting_id": "f7bcebd0591ea17b",
+	"instantiation": "true",
+	"printer_model": "Sovol SV01 Pro",
+	"printer_variant": "0.3",
+	"default_print_profile": "0.15mm Standard @Sovol SV01 Pro 0.3 nozzle",
+	"nozzle_diameter": [
+		"0.3"
+	],
+	"max_layer_height": [
+		"0.24"
+	],
+	"min_layer_height": [
+		"0.08"
+	]
+}

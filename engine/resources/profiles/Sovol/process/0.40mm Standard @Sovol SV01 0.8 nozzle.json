@@ -1,0 +1,24 @@
+{
+	"type": "process",
+	"name": "0.40mm Standard @Sovol SV01 0.8 nozzle",
+	"inherits": "0.20mm Standard @Sovol SV01",
+	"from": "system",
+	"setting_id": "aa7b03d1d1862afb",
+	"instantiation": "true",
+	"layer_height": "0.40",
+	"elefant_foot_compensation": "0.1",
+	"outer_wall_line_width": "0.88",
+	"line_width": "0.88",
+	"initial_layer_line_width": "1.2",
+	"initial_layer_print_height": "0.48",
+	"sparse_infill_line_width": "0.88",
+	"inner_wall_line_width": "0.88",
+	"internal_solid_infill_line_width": "0.88",
+	"support_top_z_distance": "0.40",
+	"support_line_width": "0.88",
+	"top_surface_line_width": "0.88",
+	"compatible_printers": [
+		"Sovol SV01 0.8 nozzle",
+		"Sovol SV01 Klipper 0.8 nozzle"
+	]
+}

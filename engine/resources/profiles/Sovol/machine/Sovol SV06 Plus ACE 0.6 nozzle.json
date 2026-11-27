@@ -1,0 +1,40 @@
+{
+	"type": "machine",
+	"name": "Sovol SV06 Plus ACE 0.6 nozzle",
+	"inherits": "Sovol SV06 Plus ACE 0.4 nozzle",
+	"from": "system",
+	"setting_id": "9eaa3407e0966396",
+	"instantiation": "true",
+	"printer_model": "Sovol SV06 Plus ACE",
+	"printer_variant": "0.6",
+	"default_print_profile": "0.30mm Standard @Sovol SV06 Plus ACE 0.6 nozzle",
+	"nozzle_diameter": [
+		"0.6"
+	],
+	"machine_max_speed_e": [
+		"60",
+		"60"
+	],
+	"min_layer_height": [
+		"0.12"
+	],
+	"max_layer_height": [
+		"0.48",
+		"0.48"
+	],
+	"retraction_length": [
+		"1.0"
+	],
+	"retraction_minimum_travel": [
+		"1.5"
+	],
+	"retraction_speed": [
+		"45"
+	],
+	"deretraction_speed": [
+		"45"
+	],
+	"wipe_distance": [
+		"3"
+	]
+}

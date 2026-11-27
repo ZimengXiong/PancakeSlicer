@@ -1,0 +1,17 @@
+{
+	"type": "machine",
+	"name": "Sovol SV07 0.6 nozzle",
+	"inherits": "Sovol SV07 0.4 nozzle",
+	"from": "system",
+	"setting_id": "78a6b624cb3ce6ca",
+	"instantiation": "true",
+	"printer_model": "Sovol SV07",
+	"printer_variant": "0.6",
+	"default_print_profile": "0.30mm Standard @Sovol SV07 0.6 nozzle",
+	"nozzle_diameter": [
+		"0.6"
+	],
+	"max_layer_height": [
+		"0.48"
+	]
+}
