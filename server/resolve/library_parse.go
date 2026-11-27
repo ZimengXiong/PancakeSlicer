@@ -398,6 +398,16 @@ func (c *Catalog) printerProblem(l *Library, p *Printer) *Problem {
 			return problem("nozzle_fields", "%s: a volume, type or offset is set on every nozzle or on none", p.Name)
 		}
 	}
+	presetSizes := map[float64]bool{}
+	for _, preset := range p.NozzlePresets {
+		if !(preset.Diameter >= 0.1 && preset.Diameter <= 2) || presetSizes[preset.Diameter] {
+			return problem("nozzle_presets", "%s: saved nozzle sizes need unique diameters from 0.1 to 2 mm. Set its nozzle size again.", p.Name)
+		}
+		if len(preset.Variants) != len(p.Nozzles) || slices.Contains(preset.Variants, "") {
+			return problem("nozzle_presets", "%s: each saved nozzle size needs a base variant for every nozzle. Set its nozzle size again.", p.Name)
+		}
+		presetSizes[preset.Diameter] = true
+	}
 	if p.PrintOverrides != nil {
 		if err := c.validatePrintOverrides(p.PrintOverrides); err != nil {
 			return problem("print_overrides", "%s: %s", p.Name, err.Error())

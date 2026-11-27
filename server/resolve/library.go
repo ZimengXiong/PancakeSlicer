@@ -50,6 +50,7 @@ type Printer struct {
 	Vendor         string                     `json:"vendor"`
 	Model          string                     `json:"model"`
 	Nozzles        []Nozzle                   `json:"nozzles"`
+	NozzlePresets  []NozzlePreset             `json:"nozzlePresets,omitempty"`
 	Machine        map[string]json.RawMessage `json:"machine,omitempty"`
 	PrintOverrides map[string]json.RawMessage `json:"printOverrides,omitempty"`
 	Process        string                     `json:"process,omitempty"`
@@ -68,6 +69,11 @@ type Nozzle struct {
 	Volume   string      `json:"volume,omitempty"`
 	Type     string      `json:"type,omitempty"`
 	Offset   *[2]float64 `json:"offset,omitempty"`
+}
+
+type NozzlePreset struct {
+	Diameter float64   `json:"diameter"`
+	Variants []string `json:"variants"`
 }
 
 type Unit struct {

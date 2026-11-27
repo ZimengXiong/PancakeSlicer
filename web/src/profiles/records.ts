@@ -3,12 +3,13 @@ import type { FeedUnit } from '../printers/feeds';
 import type { ScaleRow } from './auto-rules';
 import type { SpeedModel } from './speed-rules';
 
-export const LIBRARY_SCHEMA = 13;
+export const LIBRARY_SCHEMA = 14;
 
 export interface ArchivedMark { at: number; operationId: string }
 interface RecordBase { id: string; name: string; revision: number; archived?: ArchivedMark; edited?: string }
 
 export interface NozzleRecord { variant: string; diameter: number; volume?: string; type?: string; offset?: [number, number] }
+export interface NozzlePreset { diameter: number; variants: string[] }
 export interface SlotRecord { id: string; filament: string; colour?: string; tray?: string }
 export type SwapMode = 'ams' | 'toolheads' | 'manual';
 export interface MixRecord { id: string; components: string[]; ratios: number[]; gradient: 0 | 1 | null; perPart: boolean }
@@ -17,6 +18,7 @@ export const nameLength = (name: string) => [...name].length;
 export const INSTALLED: Required<Pick<NozzleRecord, 'type' | 'volume'>> = { type: 'Direct Drive', volume: 'Standard' };
 export interface PrinterRecord extends RecordBase {
   vendor: string; model: string; nozzles: NozzleRecord[];
+  nozzlePresets?: NozzlePreset[];
   machine?: Config;
   printOverrides?: Config;
   process?: string; swap?: SwapMode; slots: SlotRecord[]; units?: FeedUnit[]; mixes?: MixRecord[];
