@@ -65,7 +65,7 @@ then
     fi
 
     # install them all at once
-    sudo apt install -y "${REQUIRED_DEV_PACKAGES[@]}"
+    sudo apt-get install -y "${REQUIRED_DEV_PACKAGES[@]}"
 
     echo -e "done\n"
     exit 0
