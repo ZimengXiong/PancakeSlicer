@@ -7,6 +7,7 @@ import { ActionMenu, type MenuEntry as Item } from './Menu';
 import { canAddPlate, deletePlate, editPlateName } from '../plater/plates';
 import { supportFinsEligibility } from '../plater/supportFins';
 import { SlotChip, slotsOf } from './SlotChip';
+import { count, setKeepOriginal } from '../simplify/ui';
 
 const HANDY = [['Orca Cube'], ['OrcaSliced Combo'], ['Orca Badge'], ['Orca Tolerance Test'], ['3DBenchy'], ['Cali Cat'], ['Autodesk FDM Test'], ['Voron Cube'],
   ['Stanford Bunny'], ['Orca String Hell']] as const;
@@ -72,6 +73,11 @@ export default function ContextMenu() {
     { label: 'Clone', shortcut: 'Ctrl+K', action: () => setState({ appDialog: 'clone' }), disabled: !editable || !!o.project, tip: 'Make copies of the selected objects' },
     ...(!all ? [{ label: 'Fix Model', action: () => void import('../plater/meshOps').then((m) => m.fixModel(o.id)), disabled: !editable || !!o.project || !!o.volumes?.length }] : []),
     ...(!all ? [{ label: 'Simplify Model', action: () => setState({ appDialog: 'simplify' }), disabled: !editable || !!o.project || !!o.volumes?.length }] : []),
+    ...(!all && o.simplification && o.simplification.trianglesAfter < o.simplification.trianglesBefore ? [o.simplification.kept === 'original'
+      ? { label: 'Use Simplified Mesh', action: () => void setKeepOriginal(o.id, false), disabled: !editable || !!o.project || !!o.native,
+        tip: `Go back to the ${count(o.simplification.trianglesAfter)}-triangle mesh made on import` }
+      : { label: 'Use Original Mesh', action: () => void setKeepOriginal(o.id, true), disabled: !editable || !!o.project || !!o.native,
+        tip: `This model was simplified from ${count(o.simplification.trianglesBefore)} to ${count(o.simplification.trianglesAfter)} triangles on import; reload all of them` }] : []),
     ...(!all ? [{ label: hasFins ? 'Regenerate Support Fins' : 'Generate Support Fins',
       action: () => void import('../plater/supportFins').then((m) => m.generateSupportFins(o.id)),
       disabled: !editable || !!finsReason || !s.api || !!s.api.mock,
