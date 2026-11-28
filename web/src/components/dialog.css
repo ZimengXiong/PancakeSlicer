@@ -101,6 +101,17 @@
 :where(.orca-parity) .modal-pick-list { max-height: 320px; overflow: auto; }
 :where(.orca-parity) .modal-pick-list > .modal-check > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+:where(.orca-parity) .share-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--s-4); }
+:where(.orca-parity) .share-crumbs { display: flex; flex-wrap: wrap; gap: var(--s-2); color: var(--ink-3); }
+:where(.orca-parity) .share-crumbs [aria-current] { color: var(--ink); }
+:where(.orca-parity) .share-list { display: flex; flex-direction: column; height: 320px; overflow: auto; border: 1px solid var(--line); border-radius: var(--r-2); }
+:where(.orca-parity) .share-row { display: flex; align-items: center; gap: var(--s-4); min-height: var(--h-control); padding: 0 var(--s-4); border: 0; background: none; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+:where(.orca-parity) .share-row:hover { background: var(--hover); }
+:where(.orca-parity) .share-row[aria-selected=true] { background: var(--selection-fill); }
+:where(.orca-parity) .share-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:where(.orca-parity) .share-meta { flex: none; color: var(--ink-3); font: var(--t-small); }
+:where(.orca-parity) .share-empty { margin: 0; padding: var(--s-4); color: var(--ink-3); }
+
 :where(.orca-parity) .orient-table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
 :where(.orca-parity) .orient-table :is(th, td) { padding: var(--s-2) var(--s-6) var(--s-2) 0; text-align: left; }
 :where(.orca-parity) .orient-table th { font: var(--t-label); }

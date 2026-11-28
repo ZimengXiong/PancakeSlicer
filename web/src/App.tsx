@@ -11,6 +11,7 @@ import { LoadingState } from './components/Notices';
 import { SidebarSkeleton } from './components/SidebarSkeleton';
 import WorkspaceRail from './components/WorkspaceRail';
 import { AskHost } from './components/Ask';
+import { SharedFolderHost } from './components/SharedFolder';
 import { TopBar } from './components/TopBar';
 import { graphicsCapability } from './browser-support';
 const overlays = () => import('./components/CanvasOverlays'), heights = () => import('./components/LayerHeight');
@@ -364,6 +365,7 @@ export default function App() {
       </Suspense>
       <Suspense fallback={null}><ControlHints /></Suspense>
       <AskHost />
+      <SharedFolderHost />
       <Suspense fallback={null}><Toast /></Suspense>
     </div>
   );

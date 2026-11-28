@@ -139,6 +139,7 @@ func NewServer(c Config, jobs *JobManager, catalog *resolve.Catalog) http.Handle
 	s.updateRoutes(mux)
 	s.libraryRoutes(mux)
 	s.libraryIORoutes(mux)
+	s.shareRoutes(mux)
 	mux.HandleFunc("POST /api/resolve", s.postResolve)
 	registerOptions(mux, c.Options, s.catalog, devResetEnabled())
 	if devResetEnabled() {

@@ -37,11 +37,13 @@ import { sliceAllMethods, useMethods } from '../methods';
 import { settingsChangedSinceSlice } from '../compare-settings';
 import { useMachine } from '../flow/fsm';
 import { choicePending, OFFER_UNDECIDED, projectSlots } from '../flow/project-slots';
+import { bootShare } from '../boot-shape';
 
 type MenuItem = MenuEntry;
 function Menu({title, items}: {title: string; items: MenuItem[]}) { return <MenuButton label={title} items={items} className="menu-title" />; }
 
 const exportStl = (multi: boolean) => import('../exportStl').then((m) => m.exportStl(false, multi));
+const sharedFolder = () => import('../shared-folder');
 
 const ArchiveDialog = preloadable(() => import('./ArchiveDialog'));
 
@@ -88,6 +90,13 @@ export function TopBar() {
           { label: 'Import ZIP archive…', action: () => void import('./ArchiveDialog').then((m) => m.importZipArchive(setArchive)), tip: 'Load models contained within a ZIP archive' },
           { label: 'Open G-code…', action: () => openGcode(), tip: 'Open a G-code file' },
           { label: 'Import profiles…', action: () => setState({ presetUx: { kind: 'import' } }), tip: 'Load printer, filament and process profiles' },
+          ...(bootShare() ? [{ label: 'Shared folder', sub: [
+            { label: 'Open project…', action: () => void sharedFolder().then((m) => m.openFromShare('project')), tip: 'Open a project file from the shared folder' },
+            { label: 'Import models…', action: () => void sharedFolder().then((m) => m.openFromShare('models')), tip: 'Load models from the shared folder' },
+            'sep' as const,
+            { label: 'Save project…', action: () => void sharedFolder().then((m) => m.saveProjectToShare()), disabled: !hasProjectObjects, tip: 'Save current project to the shared folder' },
+            { label: `${exportLabel}…`, output: true, action: () => void sharedFolder().then((m) => m.exportToShare()), disabled: !exportEnabled, tip: stale ? STALE_RESULT_TIP : 'Save the sliced file to the shared folder' },
+          ] } satisfies MenuItem] : []),
           'sep',
           { label: exportLabel, shortcut: `${MOD}+G`, action: download, disabled: !exportEnabled, tip: stale ? STALE_RESULT_TIP : exportTip },
           ...(plates ? [{ label: 'Export sliced files for all plates', output: true, action: () => void exportAll(), disabled: !exportAllEnabled, tip: 'Export sliced files for all plates' }] : []),

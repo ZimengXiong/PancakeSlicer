@@ -22,6 +22,7 @@ type bootShape struct {
 	Picker *bootPicker `json:"picker,omitempty"`
 	Projects int `json:"projects"`
 	Folders []string `json:"folders,omitempty"`
+	Share bool `json:"share,omitempty"`
 }
 
 type bootPicker struct {
@@ -94,7 +95,7 @@ func (s *Server) bootShape(project string) *bootShape {
 		Printer   string      `json:"orca.printer"`
 		RailWidth json.Number `json:"orca.web.railWidth"`
 	}
-	out := &bootShape{Network: s.sends.store != nil, Slots: []bootSlot{}}
+	out := &bootShape{Network: s.sends.store != nil, Slots: []bootSlot{}, Share: s.cfg.ShareDir != ""}
 	for _, p := range d.Projects {
 		if !p.Archived && p.Record != nil {
 			out.Projects++

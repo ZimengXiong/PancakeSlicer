@@ -580,7 +580,7 @@ export function fileUse(machine = printerPreset(getState())) {
 
 export const STALE_RESULT_TIP = 'Settings changed since the last slice; slice again';
 
-function exportBlocked(s: State) {
+export function exportBlocked(s: State) {
   if (!s.objects.length) return toast('export_nothing_to_export');
   const outside = outsideVolumeWarning(s);
   if (outside) return toast('export_outside_volume', { detail: outside });

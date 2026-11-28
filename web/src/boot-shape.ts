@@ -8,7 +8,7 @@ export interface BootNotice { project: string; offer: SlotOfferWire }
 export interface BootShape { network: boolean; project?: string; recovered?: 'interrupted' | 'conflict'; printer: string; connected: boolean; slots: BootSlot[]; railWidth?: number;
   picker?: { vendor: string; model: string; variant: string; nozzle?: number; nozzles?: number[] };
   projects?: number;
-  folders?: string[]; notice?: BootNotice }
+  folders?: string[]; notice?: BootNotice; share?: boolean }
 
 const strings = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string');
 const offerValid = (o: SlotOfferWire | undefined) => !!o && !!o.strip && strings(o.strip.filaments) && Array.isArray(o.strip.colours) && typeof o.strip.mixes === 'object'
@@ -36,3 +36,4 @@ export const bootRecovered = (): BootShape['recovered'] => shape?.project && sha
 
 export const bootProjects = (): number | undefined => shape?.projects;
 export const bootFolders = (): string[] => shape?.folders ?? [];
+export const bootShare = (): boolean => shape?.share === true;

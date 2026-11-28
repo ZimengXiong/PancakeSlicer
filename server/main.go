@@ -49,6 +49,7 @@ type Config struct {
 	PrinterNetwork        string
 	ReleaseFeed           string
 	ReleaseToken          string
+	ShareDir              string
 	PrinterStore          *printerStore
 	Options               *cachedResponse
 	Engine                EngineBuild
@@ -113,6 +114,7 @@ func parseConfig() Config {
 	flag.StringVar(&c.PrinterNetwork, "printer-network", env("ORCA_WEB_PRINTER_NETWORK", "lan"), "where printers may live, for printer connections and Send: lan (private IPv4/IPv6 ranges), CIDRs and host names, or off (ORCA_WEB_PRINTER_NETWORK)")
 	flag.StringVar(&c.ReleaseFeed, "release-feed", env("ORCA_WEB_RELEASE_FEED", ""), "GitHub owner/repo whose latest release the update notice offers; empty offers none (ORCA_WEB_RELEASE_FEED)")
 	flag.StringVar(&c.ReleaseToken, "release-token", env("ORCA_WEB_RELEASE_TOKEN", ""), "token for a private -release-feed, sent only to GitHub's API (ORCA_WEB_RELEASE_TOKEN)")
+	flag.StringVar(&c.ShareDir, "share-dir", env("ORCA_WEB_SHARE_DIR", ""), "server folder the browser may open files from and save files to; empty disables (ORCA_WEB_SHARE_DIR)")
 	proxies := flag.String("trusted-proxies", env("ORCA_WEB_TRUSTED_PROXIES", ""), "comma-separated trusted proxy CIDRs (ORCA_WEB_TRUSTED_PROXIES)")
 	flag.Parse()
 	if err := validateSourceURL(c.SourceURL); err != nil {
@@ -146,7 +148,7 @@ func parseConfig() Config {
 			*p = abs
 		}
 	}
-	for _, p := range []*string{&c.SupportFinsNode, &c.SupportFinsCLI} {
+	for _, p := range []*string{&c.SupportFinsNode, &c.SupportFinsCLI, &c.ShareDir} {
 		if *p != "" {
 			if abs, err := filepath.Abs(*p); err == nil {
 				*p = abs
@@ -183,6 +185,12 @@ func main() {
 		if cfg.BearerToken == "" {
 			log.Printf("WARNING: printer connections are on without a bearer token; anyone who can reach this service can add printers and start prints")
 		}
+	}
+	if cfg.ShareDir != "" {
+		if st, err := os.Stat(cfg.ShareDir); err != nil || !st.IsDir() {
+			log.Fatalf("shared folder %s is not a directory", cfg.ShareDir)
+		}
+		log.Printf("shared folder: %s", cfg.ShareDir)
 	}
 	if err := checkEngineBuild(&cfg); err != nil {
 		log.Fatal(err)
