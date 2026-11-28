@@ -641,7 +641,9 @@ NonplanarDeferral plan_nonplanar_deferral(const PrintObject &object, const Nonpl
     std::vector<int> edge_level(all.size(), 0);
     auto chunk_length = [](int l) { return l <= 1 ? 1e30 : scaled<double>(l == 2 ? 1. : l == 3 ? 0.25 : 0.01); };
     std::vector<int> earliest(all.size());
-    bool banded = false;
+    constexpr double height_band_width = 0.099;
+    std::vector<int> height_band(all.size(), 0);
+    bool banded = false, all_height_bands = false;
     auto compute_earliest = [&]() {
         std::vector<std::pair<double, int>> tops;
         for (const Layer *layer : layers)
@@ -650,7 +652,7 @@ NonplanarDeferral plan_nonplanar_deferral(const PrintObject &object, const Nonpl
         for (size_t i = 0; i < all.size(); ++ i) {
             earliest[i] = base[i];
             const ExtrusionPath &path = *sampled[size_t(all[i].path)].path;
-            if (! banded || ! path.nonplanar_source || path.distance_to_top < 0.001f)
+            if (!banded || !path.nonplanar_source || (!all_height_bands && path.distance_to_top < 0.001f))
                 continue;
             auto it = std::upper_bound(tops.begin(), tops.end(), std::make_pair(all[i].z + 0.03, std::numeric_limits<int>::max()));
             if (it != tops.begin())
@@ -677,7 +679,8 @@ NonplanarDeferral plan_nonplanar_deferral(const PrintObject &object, const Nonpl
         spans.clear();
         for (size_t i = 0; i < all.size();) {
             size_t j = i + 1;
-            while (j < all.size() && all[j].path == all[i].path && earliest[j] == earliest[i]) ++j;
+            while (j < all.size() && all[j].path == all[i].path && earliest[j] == earliest[i] &&
+                   height_band[j] == height_band[i]) ++j;
             spans.emplace_back(i, j);
             i = j;
         }
@@ -856,6 +859,9 @@ NonplanarDeferral plan_nonplanar_deferral(const PrintObject &object, const Nonpl
         object.config().nonplanar_curved_max_angle.value > 12. + EPSILON;
     constexpr size_t MaxWork = 2000000000;
     size_t work = 0;
+    std::vector<std::pair<Slot, size_t>> eligible_by_slot;
+    std::vector<char> eligible;
+    std::vector<size_t> eligible_units;
     bool   out_of_work = false;
     for (int attempt = 0;; ++ attempt) {
         throw_if_canceled();
@@ -870,9 +876,9 @@ NonplanarDeferral plan_nonplanar_deferral(const PrintObject &object, const Nonpl
                 if (pending[o])
                     old_known[o] = 0;
             old_unit_of = unit_of;
-            std::unordered_map<std::tuple<int, int, long, int>, int, UnitKeyHash> shells;
+            std::unordered_map<std::tuple<int, int, long, int, int>, int, UnitKeyHash> shells;
             std::unordered_map<const void*, int> entities;
-            std::unordered_map<std::tuple<long, int, long>, int, UnitKeyHash> chunks;
+            std::unordered_map<std::tuple<long, int, long, int>, int, UnitKeyHash> chunks;
             long edge_run = 0;
             int next = 0;
             std::vector<std::array<int, 3>> runs;
@@ -887,7 +893,7 @@ NonplanarDeferral plan_nonplanar_deferral(const PrintObject &object, const Nonpl
                 if (!path_has_edge[size_t(all[first].path)]) {
                     const int u = src.path->nonplanar_source
                         ? shells.try_emplace(std::make_tuple(src.layer, src.path->source_surface_id,
-                            std::lround(src.path->distance_to_top * 1000.f), earliest[first]), next).first->second
+                            std::lround(src.path->distance_to_top * 1000.f), earliest[first], height_band[first]), next).first->second
                         : entities.try_emplace(src.entity, next).first->second;
                     std::fill(unit_of.begin() + first, unit_of.begin() + last, u);
                     add_run(u, int(first), int(last));
@@ -899,17 +905,17 @@ NonplanarDeferral plan_nonplanar_deferral(const PrintObject &object, const Nonpl
                     if (edge_level[i] > 0 && ! (i > 0 && all[i - 1].path == all[i].path && edge_level[i - 1] > 0 && earliest[i - 1] == earliest[i]))
                         ++ edge_run;
                     if (i > 0 && edge_level[i] == 0 && edge_level[i - 1] == 0 &&
-                        all[i].path == all[i - 1].path && earliest[i] == earliest[i - 1]) {
+                        all[i].path == all[i - 1].path && earliest[i] == earliest[i - 1] && height_band[i] == height_band[i - 1]) {
                         unit_of[i] = unit_of[i - 1];
                         add_run(unit_of[i], int(i), int(i) + 1);
                         continue;
                     }
                     if (edge_level[i] > 0) {
-                        const auto key = std::make_tuple(edge_run, edge_level[i], long(all[i].s / chunk_length(edge_level[i])));
+                        const auto key = std::make_tuple(edge_run, edge_level[i], long(all[i].s / chunk_length(edge_level[i])), height_band[i]);
                         unit_of[i] = chunks.try_emplace(key, next).first->second;
                     } else if (src.path->nonplanar_source) {
                         const auto key = std::make_tuple(src.layer, src.path->source_surface_id,
-                            std::lround(src.path->distance_to_top * 1000.f), earliest[i]);
+                            std::lround(src.path->distance_to_top * 1000.f), earliest[i], height_band[i]);
                         unit_of[i] = shells.try_emplace(key, next).first->second;
                     } else {
                         unit_of[i] = entities.try_emplace(src.entity, next).first->second;
@@ -1039,6 +1045,19 @@ NonplanarDeferral plan_nonplanar_deferral(const PrintObject &object, const Nonpl
                 raw_limit[size_t(u)] = old_limit[size_t(o)];
                 pending[size_t(u)] = 1;
             }
+            eligible_by_slot.clear();
+            eligible_by_slot.reserve(members.size());
+            eligible.assign(members.size(), 0);
+            eligible_units.clear();
+            work += members.size();
+            for (size_t v = 0; v < members.size(); ++v) {
+                ++work;
+                eligible_by_slot.emplace_back(Slot{earliest[size_t(members[v].back())], unit_base[v]}, v);
+            }
+            std::sort(eligible_by_slot.begin(), eligible_by_slot.end(), [&](const auto &a, const auto &b) {
+                ++work;
+                return a < b;
+            });
         } else {
             for (size_t u = 0; u < members.size(); ++u) {
                 unit_slot[u] = earliest[size_t(members[u].back())];
@@ -1097,15 +1116,40 @@ NonplanarDeferral plan_nonplanar_deferral(const PrintObject &object, const Nonpl
         tbb::enumerable_thread_specific<std::pair<std::vector<int>, std::vector<int>>> workers(
             [&]() { return std::make_pair(std::vector<int>(collected_for.size(), -1), std::vector<int>()); });
         auto collect_dependents = [&](int u, bool only_changed, Slot from, Slot to, std::vector<int> &out) {
-            work += members.size() + members[size_t(u)].size();
-            std::vector<char> eligible(members.size(), 0);
+            work += eligible_units.size() + members[size_t(u)].size();
+            for (size_t v : eligible_units) eligible[v] = 0;
+            eligible_units.clear();
             double material_top = -std::numeric_limits<double>::max();
-            for (size_t v = 0; v < members.size(); ++v) {
-                const Slot key {earliest[size_t(members[v].back())], unit_base[v]};
-                if (int(v) != u && key > from && key <= to && (!only_changed || changed[v])) {
-                    eligible[v] = 1;
-                    material_top = std::max(material_top, unit_zmax[v]);
+            if (from < to) {
+                auto upper = [&](Slot slot) {
+                    return std::upper_bound(eligible_by_slot.begin(), eligible_by_slot.end(),
+                        std::make_pair(slot, std::numeric_limits<size_t>::max()), [&](const auto &key, const auto &entry) {
+                            ++work;
+                            return key < entry;
+                        });
+                };
+                const auto last = upper(to);
+                for (auto it = upper(from); it != last; ++it) {
+                    ++work;
+                    const size_t v = it->second;
+                    if (int(v) != u && (!only_changed || changed[v])) {
+                        eligible[v] = 1;
+                        eligible_units.push_back(v);
+                        material_top = std::max(material_top, unit_zmax[v]);
+                    }
                 }
+            }
+            if (verify_dependents) {
+                std::vector<size_t> exhaustive;
+                for (size_t v = 0; v < members.size(); ++v) {
+                    const Slot key {earliest[size_t(members[v].back())], unit_base[v]};
+                    if (int(v) != u && key > from && key <= to && (!only_changed || changed[v]))
+                        exhaustive.push_back(v);
+                }
+                auto indexed = eligible_units;
+                std::sort(indexed.begin(), indexed.end());
+                if (indexed != exhaustive)
+                    throw Slic3r::RuntimeError("Nonplanar deposition order: indexed eligibility differs from a full scan");
             }
             if (material_top == -std::numeric_limits<double>::max()) return;
             for (int v : out) collected_for[size_t(v)] = u;
@@ -1124,8 +1168,9 @@ NonplanarDeferral plan_nonplanar_deferral(const PrintObject &object, const Nonpl
                     });
                 };
                 const double grow = max_half_width + model.bead_margin + model.safety_mm + model.sample_step;
-                for (size_t v = 0; v < changed.size(); ++v) {
-                    if (!eligible[v] || collected_for[v] == u) continue;
+                work += eligible_units.size();
+                for (size_t v : eligible_units) {
+                    if (collected_for[v] == u) continue;
                     BoundingBoxf3 &box = unit_bounds[v];
                     if (!box.defined)
                         for (int m : members[v]) box.merge(Vec3d(all[size_t(m)].x, all[size_t(m)].y, all[size_t(m)].z));
@@ -1315,7 +1360,11 @@ NonplanarDeferral plan_nonplanar_deferral(const PrintObject &object, const Nonpl
                 const ExtrusionPath &path = *sampled[size_t(all[size_t(members[size_t(c)].front())].path)].path;
                 lower_shell |= path.nonplanar_source && path.distance_to_top > 0.001f;
             }
-            if (lower_shell) {
+            all_height_bands = threshold >= 0.1;
+            if (lower_shell || all_height_bands) {
+                if (all_height_bands)
+                    for (size_t i = first_conformal; i < all.size(); ++i)
+                        height_band[i] = int(std::floor(all[i].z / height_band_width));
                 banded = true;
                 reset_raw = true;
                 rebuild_units = true;
@@ -1326,7 +1375,8 @@ NonplanarDeferral plan_nonplanar_deferral(const PrintObject &object, const Nonpl
                 dropped.clear();
                 refined_units = 0;
                 dropped_edges = 0;
-                BOOST_LOG_TRIVIAL(info) << "Nonplanar deposition order: a lower shell is in a cycle; planning the lower shells in height bands";
+                BOOST_LOG_TRIVIAL(info) << "Nonplanar deposition order: a cycle requires height bands for "
+                    << (all_height_bands ? "all curved shells" : "lower shells");
                 continue;
             }
         }
@@ -1543,7 +1593,7 @@ NonplanarDeferral plan_nonplanar_deferral(const PrintObject &object, const Nonpl
         << result.planar_samples << " planar samples; " << result.deferred_paths << " paths ("
         << result.deferred_samples << " samples) moved, " << result.cut_paths << " planar paths cut in "
         << result.refined_units << " refined wall units, " << dropped_edges << " marginal access edges dropped"
-        << (banded ? ", lower shells in height bands" : ", all shells whole");
+        << (all_height_bands ? ", all shells in height bands" : banded ? ", lower shells in height bands" : ", all shells whole");
     return result;
 }
 

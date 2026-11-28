@@ -255,6 +255,7 @@ std::string stage_cache_key(const PrintObject &object)
             if (Print::gcode_only_options().count(key) == 0 && PrintObject::gcode_only_options().count(key) == 0)
                 line(key + "=" + c.opt_serialize(key));
     };
+    line("curved-tops-height-bands-1");
     const Print &print = *object.print();
     config("print", print.config());
     config("object", object.config());
