@@ -1,5 +1,5 @@
 import { setState } from '../state/store';
-import { pickFiles } from '../file-picker';
+import { fileAccept } from '../file-accept';
 
 interface StreamLayers { layers: { first: number }[]; layerEnd: number[] }
 let stream: { key: string; data: StreamLayers } | null = null;
@@ -31,8 +31,12 @@ export const setJumpListener = (l: typeof onJump) => { onJump = l; };
 let pendingFile: File | null = null;
 let onFile: ((f: File) => void) | null = null;
 export function openGcode() {
-  pickFiles('.gcode,.GCODE,.gco,.GCO,.g,.G,.3mf,.3MF', (files) => {
-    const f = files[0];
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = fileAccept(['gcode', 'gco', 'g', '3mf']);
+  input.onchange = () => {
+    const f = input.files?.[0];
+    if (!f) return;
     setState({ tab: 'preview' });
     if (onFile) onFile(f); else pendingFile = f;
   });
