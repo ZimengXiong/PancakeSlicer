@@ -66,8 +66,8 @@ export async function addCatalogPrinters(choices: PrinterChoice[]): Promise<AddR
     return { records, restored, existing, skipped, chosen, wanted };
   });
 }
-export async function addCatalogPrinter(vendor: string, model: CatalogModel, nozzle: string, intent: PrinterIntent = 'add'): Promise<string> {
-  const { keys, skipped } = await addCatalogPrinters([{ vendor, model, nozzle, intent }]);
+export async function addCatalogPrinter(vendor: string, model: CatalogModel, nozzle: string, intent: PrinterIntent = 'add', firmware?: string): Promise<string> {
+  const { keys, skipped } = await addCatalogPrinters([{ vendor, model, nozzle, firmware, intent }]);
   if (!keys.length) throw new Error(`${skipped[0]} is already in your printers list.`);
   return keys[0];
 }

@@ -18,7 +18,7 @@ import { addCatalogPrinter, addCatalogPrinters, addCatalogProduct, addCatalogPro
 import type { CatalogModel } from './catalog-reads';
 import type { CatalogEntry } from '../catalog/types';
 import { profileInfo, useAsks, type ProfileBase, type ProfileRecord } from './view';
-import { loadedLine } from '../catalog/read';
+import { firmwareName, loadedLine } from '../catalog/read';
 import { materialRank } from './Pickers';
 import { modelLabel, nozzleField, rowDetail, vendorField, vendorLabel } from './metadata';
 import { Check } from '../components/Check';
@@ -136,17 +136,22 @@ function RemovedDetails({type,record}: {type:PresetType;record:ProfileRecord}) {
   </DetailPane>;
 }
 
-function AddDetails({type,item,busy,onAdd}: {type:PresetType;item:Item;busy:boolean;onAdd(item:Item,nozzle?:string):void}) {
+function AddDetails({type,item,busy,onAdd}: {type:PresetType;item:Item;busy:boolean;onAdd(item:Item,nozzle?:string,firmware?:string):void}) {
   const load=useStore(s=>s.profileLibraryLoad.state);
-  const nozzles=(item.variants ?? []).map(v=>v.nozzle);
-  const [nozzle,setNozzle]=useState(()=>[...nozzles].sort((a,b)=>Math.abs(Number(a)-0.4)-Math.abs(Number(b)-0.4))[0]);
+  const firmwares=type === 'machine' ? (item.catalog as CatalogModel).firmwares ?? [] : [];
+  const [firmware,setFirmware]=useState(firmwares[0]?.id);
+  const nozzles=firmwares.find(f=>f.id === firmware)?.nozzles ?? (item.variants ?? []).map(v=>v.nozzle);
+  const closest=(list:string[])=>[...list].sort((a,b)=>Math.abs(Number(a)-0.4)-Math.abs(Number(b)-0.4))[0];
+  const [nozzle,setNozzle]=useState(()=>closest(nozzles));
+  const pickFirmware=(f:string)=>{setFirmware(f);const list=firmwares.find(x=>x.id === f)?.nozzles ?? [];if(!list.includes(nozzle))setNozzle(closest(list));};
   const product=type === 'filament' ? item.catalog as CatalogEntry : undefined;
   const label=busy ? 'Adding…' : load === 'loading' ? 'Loading…' : `Add ${NOUNS[type][0]}`;
   return <DetailPane label={item.fullName ?? item.name} identity={<><span className="pf-editor-name"><strong>{item.fullName ?? item.name}</strong></span></>}
     summary={<div className="pf-editor-summary">{product ? [product.type, product.brand].filter(Boolean).join(SEP) : vendorLabel({},item.vendor)}</div>}
     controls={<>
+      {firmwares.length > 1 && <Dropdown className="combo" aria-label="Firmware" value={firmware ?? ''} options={firmwares.map(f=>({value:f.id,label:firmwareName(f.id)}))} onValueChange={pickFirmware}/>}
       {nozzles.length > 1 && <Dropdown className="combo" aria-label="Nozzle" value={nozzle} options={nozzles.map(n=>({value:n,label:`${n} mm`}))} onValueChange={setNozzle}/>}
-      <button type="button" className="btn primary" disabled={busy || load !== 'ready'} onClick={()=>onAdd(item,nozzle)}>{label}</button>
+      <button type="button" className="btn primary" disabled={busy || load !== 'ready'} onClick={()=>onAdd(item,nozzle,firmwares.length ? firmware : undefined)}>{label}</button>
     </>}>
     <div className="pf-add-body">
       {item.cover && <img className="pf-add-cover" src={item.cover} alt="" width={240} height={240}/>}
@@ -425,7 +430,7 @@ export function LibraryPage({ hidden }: { hidden: boolean }) {
     return ()=>mounted.current && documentGeneration()===document && getState().api===before.api && selectionRevision.current===revision
       && getState().printer===before.printer && getState().process===before.process && slotFilaments(getState())===slotFilaments(before);
   };
-  const addFromCatalog = async (row:Item,nozzle?:string) => {
+  const addFromCatalog = async (row:Item,nozzle?:string,firmware?:string) => {
     if(getState().profileLibraryLoad.state!=='ready' || !row.catalog)return;
     await run('adding', async () => {
     setBulkError(null);
@@ -433,10 +438,10 @@ export function LibraryPage({ hidden }: { hidden: boolean }) {
     try {
       let key:string,restored:string|undefined;
       if(type === 'machine'){
-        const model=row.catalog as CatalogModel,result=await addCatalogPrinters([{vendor:row.vendor,model,nozzle:nozzle ?? ''}]);
+        const model=row.catalog as CatalogModel,result=await addCatalogPrinters([{vendor:row.vendor,model,nozzle:nozzle ?? '',firmware}]);
         if(!result.keys.length)throw new Error(`${result.skipped[0]} is already in your printers list.`);
         key=result.keys[0];restored=result.restored?.[0];
-        if(restored)toast('brought_back_slots_settings', { restored }, { action: {label:'Add a new one',run:()=>void addCatalogPrinter(row.vendor,model,nozzle ?? '','another').then(k=>{if(mounted.current)added(k);}).catch(e=>toast('couldnt_add_another', { name: row.name, detail: e instanceof Error?e.message:String(e) }))} });
+        if(restored)toast('brought_back_slots_settings', { restored }, { action: {label:'Add a new one',run:()=>void addCatalogPrinter(row.vendor,model,nozzle ?? '','another',firmware).then(k=>{if(mounted.current)added(k);}).catch(e=>toast('couldnt_add_another', { name: row.name, detail: e instanceof Error?e.message:String(e) }))} });
       } else key=await addCatalogProduct(row.catalog as CatalogEntry);
       if(!owns()){if(!restored)toast('added', { name: row.name });return;}
       added(key);
@@ -525,7 +530,7 @@ export function LibraryPage({ hidden }: { hidden: boolean }) {
   const answer=useStore(s=>s.resolved.answer);
   const draft=useMemo(()=>editKey ? sharedDraft(getState(),type,editKey,deltaKey,drafts[JSON.stringify([type,editKey])]) : undefined,[editKey,type,deltaKey,drafts,users,answer]);
   const editor=useMemo(()=>editKey && editUser && <ProfileEditor key={editKey} type={type} name={editKey} draft={draft} update={updateDraft} onSavingChange={editorSaving} onBack={()=>handlers.current.close()} onRemove={() => void handlers.current.deleteSelected([editKey])} onDuplicate={() => void handlers.current.duplicate(editKey)} foldActions={drill} renameRequest={renameRequest}/>,[editKey,editUser,type,draft,drill,updateDraft,renameRequest]);
-  const addDetails=useMemo(()=>adding && item ? <AddDetails key={item.key} type={type} item={item} busy={busy} onAdd={(row,nozzle)=>void handlers.current.addFromCatalog(row,nozzle)}/> : null,[adding,item,type,busy]);
+  const addDetails=useMemo(()=>adding && item ? <AddDetails key={item.key} type={type} item={item} busy={busy} onAdd={(row,nozzle,firmware)=>void handlers.current.addFromCatalog(row,nozzle,firmware)}/> : null,[adding,item,type,busy]);
   const bulk=selected.length > 1, selectionKey=selected.join('\n');
   const canCompare=bulk && !adding && selected.length <= 4 && selectedItems.length === selected.length, comparing=canCompare && compareHidden !== selectionKey;
   const openKey=comparing ? undefined : item?.key;
